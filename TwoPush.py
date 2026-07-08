@@ -162,12 +162,11 @@ def init_self_updater(config, logger):
     )
 
 
-def handle_self_update_verify(args, logger):
+def handle_self_update_verify(args):
     """处理 --self-update-verify（PS1 脚本调用）
 
     Args:
         args: 命令行参数
-        logger: 日志记录器
     """
     from modules.self_updater import SelfUpdater
     exit_code = SelfUpdater.self_update_verify(
@@ -336,7 +335,7 @@ def main():
         add_file_logger(logger, version=VERSION, log_dir='logs', log_prefix='TwoPush')
 
     if args.self_update_verify:
-        handle_self_update_verify(args, logger)
+        handle_self_update_verify(args)
 
     if args.update_failed:
         handle_update_failed(logger)
