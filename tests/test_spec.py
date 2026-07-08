@@ -75,14 +75,14 @@ def test_cleanup_update_residue_only_removes_current_app_files(monkeypatch, tmp_
     from modules.self_config import UpdateState
     from modules.self_updater import SelfUpdater
 
-    target = tmp_path / 'TwoPush.exe'
-    backup = tmp_path / 'TwoPush.backup.exe'
+    target = tmp_path / 'TwoPush-Nuitka-v1.2.3.exe'
+    backup = tmp_path / 'TwoPush-Nuitka-v1.2.3.backup.exe'
     target.write_bytes(b'target')
     backup.write_bytes(b'backup')
 
     own_helper = tmp_path / 'TwoPush_Update_Helper.ps1'
     own_update = tmp_path / 'TwoPush_Update.ps1'
-    own_new = tmp_path / 'TwoPush.new.exe'
+    own_new = tmp_path / 'TwoPush-Nuitka-v1.2.3.new.exe'
     foreign_helper = tmp_path / 'Other_Update_Helper.ps1'
     foreign_update = tmp_path / 'Other_Update.ps1'
     foreign_new = tmp_path / 'Other.new.exe'

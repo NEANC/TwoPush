@@ -1117,14 +1117,15 @@ class SelfUpdater:
         target_path = Path(state["target"])
         script_dir = target_path.parent
 
+        app_name = "TwoPush"
         cleanup_files = [
             Path(state["backup_file"]),
             script_dir / "update_started.lock",
             script_dir / "update.log",
             script_dir / f"{target_path.stem}.new.exe",
             script_dir / f"{target_path.stem}.backup.exe",
-            script_dir / f"{target_path.stem}_Update_Helper.ps1",
-            script_dir / f"{target_path.stem}_Update.ps1",
+            script_dir / f"{app_name}_Update_Helper.ps1",
+            script_dir / f"{app_name}_Update.ps1",
         ]
 
         for f in cleanup_files:
