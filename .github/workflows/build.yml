@@ -192,7 +192,7 @@ jobs:
         uses: Nuitka/Nuitka-Action@main
         with:
           nuitka-version: main
-          script-name: M9A_Update_Assistant.py
+          script-name: TwoPush.py
           mode: onefile
           windows-console-mode: force
           assume-yes-for-downloads: true
@@ -212,8 +212,8 @@ jobs:
       - name: Upload Nuitka artifact
         uses: actions/upload-artifact@v7
         with:
-          name: M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}
-          path: build/M9A_Update_Assistant.exe
+          name: TwoPush-Nuitka-${{ needs.meta.outputs.tag }}
+          path: build/TwoPush.exe
           retention-days: 1
 
   # PyInstaller 构建
@@ -277,14 +277,14 @@ jobs:
       # 打包可执行文件（PyInstaller）
       - name: Build with PyInstaller
         run: |
-          pyinstaller M9A_Update_Assistant.spec --noconfirm
+          pyinstaller --onefile --console --name TwoPush TwoPush.py --noconfirm
 
       # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact
         uses: actions/upload-artifact@v7
         with:
-          name: M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}
-          path: dist/M9A_Update_Assistant.exe
+          name: TwoPush-PyInstaller-${{ needs.meta.outputs.tag }}
+          path: dist/TwoPush.exe
           retention-days: 1
 
   # 发布步骤
@@ -307,13 +307,13 @@ jobs:
           mkdir -p release
           
           # 移动和重命名 Nuitka 构建产物
-          if [ -d "assets/M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}" ]; then
-            cp -f "assets/M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}/M9A_Update_Assistant.exe" "release/M9A_Update_Assistant-Nuitka-${{ needs.meta.outputs.tag }}.exe"
+          if [ -d "assets/TwoPush-Nuitka-${{ needs.meta.outputs.tag }}" ]; then
+            cp -f "assets/TwoPush-Nuitka-${{ needs.meta.outputs.tag }}/TwoPush.exe" "release/TwoPush-Nuitka-${{ needs.meta.outputs.tag }}.exe"
           fi
           
           # 移动和重命名 PyInstaller 构建产物
-          if [ -d "assets/M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}" ]; then
-            cp -f "assets/M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}/M9A_Update_Assistant.exe" "release/M9A_Update_Assistant-PyInstaller-${{ needs.meta.outputs.tag }}.exe"
+          if [ -d "assets/TwoPush-PyInstaller-${{ needs.meta.outputs.tag }}" ]; then
+            cp -f "assets/TwoPush-PyInstaller-${{ needs.meta.outputs.tag }}/TwoPush.exe" "release/TwoPush-PyInstaller-${{ needs.meta.outputs.tag }}.exe"
           fi
           
           # 复制变更日志
