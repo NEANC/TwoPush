@@ -55,8 +55,6 @@ retry_max_count = 3
 auto_check = true
 # 更新通道：preview（含预发布）/ stable（仅正式版）
 channel = stable
-# GitHub 仓库（格式 owner/repo）
-github_repo = NEANC/TwoPush
 
 [Logs]
 # 是否保存日志到文件

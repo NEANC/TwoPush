@@ -9,7 +9,6 @@
 
 import argparse
 import json
-import logging
 import os
 import sys
 
@@ -151,7 +150,7 @@ def init_self_updater(config, logger):
         return None
 
     return SelfUpdater(
-        github_repo=config.get_attr('github_repo'),
+        github_repo='NEANC/TwoPush',
         asset_pattern=r'^TwoPush-(Nuitka|PyInstaller)-v[\d.]+.*\.exe$',
         app_name="TwoPush",
         current_version=VERSION,

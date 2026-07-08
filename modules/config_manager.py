@@ -73,7 +73,6 @@ _DEFAULT_SECTIONS: Dict[str, Dict[str, str]] = {
     'Update': {
         'auto_check': 'true',
         'channel': 'stable',
-        'github_repo': 'your-name/TwoPush',
     },
     'Logs': {
         'save_enabled': 'true',
@@ -88,7 +87,6 @@ _DEFAULT_COMMENTS: Dict[str, str] = {
     'Push.retry_max_count': '默认最大重试次数',
     'Update.auto_check': '是否启用自动更新检查',
     'Update.channel': '更新通道：preview（含预发布）/ stable（仅正式版）',
-    'Update.github_repo': 'GitHub 仓库（格式 owner/repo）',
     'Logs.save_enabled': '是否保存日志到文件',
     'Logs.max_files': '最大日志文件保留数量',
 }

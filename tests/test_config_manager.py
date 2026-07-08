@@ -36,3 +36,55 @@ def test_generate_default_config_pauses_in_interactive_terminal(tmp_path, monkey
         assert e.code == 0
 
     assert prompts == ['按任意键退出...']
+
+
+def test_default_config_excludes_github_repo(tmp_path):
+    """github_repo 应硬编码在程序中，不出现在默认配置文件的 Update 节"""
+    config_file = tmp_path / 'TwoPush.ini'
+    logger = logging.getLogger('test_default_config_excludes_github_repo')
+    manager = ConfigManager(str(config_file), logger)
+
+    try:
+        manager._generate_default_config()
+    except SystemExit:
+        pass
+
+    with open(config_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    assert 'github_repo' not in content
+
+
+def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
+    """init_self_updater 应使用硬编码的 NEANC/TwoPush 而非配置"""
+    import TwoPush as twopush
+    from modules.self_updater import SelfUpdater as _RealUpdater
+
+    class FakeConfig:
+        def get_attr(self, key, default=''):
+            if key == 'channel':
+                return 'stable'
+            if key == 'proxy':
+                return ''
+            raise AssertionError(f'意外读取配置键: {key}')
+
+        def get_attr_bool(self, key, default=False):
+            raise AssertionError(f'意外读取配置键: {key}')
+
+    captured_kwargs = {}
+
+    def _fake_updater(**kwargs):
+        captured_kwargs.update(kwargs)
+        return _RealUpdater.__new__(_RealUpdater)
+
+    monkeypatch.setattr(
+        'modules.self_updater.SelfUpdater',
+        _fake_updater,
+    )
+    monkeypatch.setattr(
+        'modules.self_utils.detect_package_type',
+        lambda: (True, 'Nuitka'),
+    )
+
+    twopush.init_self_updater(FakeConfig(), logging.getLogger('test'))
+    assert captured_kwargs['github_repo'] == 'NEANC/TwoPush'
