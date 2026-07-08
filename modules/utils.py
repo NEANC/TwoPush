@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import sys
 import logging
-import subprocess
 
 from onepush import all_providers, get_notifier
-from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedMap, CommentedSeq
 
 LOGGER = logging.getLogger(__name__)
 
@@ -17,9 +12,6 @@ PROGRAM_FILLED_PARAMS = {'title', 'content'}
 
 # OnePush 已知推送渠道名单（小写），用于在无参数头写法中定位 provider 名称
 KNOWN_PROVIDERS = {str(name).strip().lower() for name in all_providers()}
-
-# 解析推送通道片段时复用的 YAML 实例（仅用于解析单个 {..} / [..] 片段）
-_FRAGMENT_YAML = YAML()
 
 # 支持剥离的成对包裹引号（直引号与中文弯引号）
 QUOTE_PAIRS = {
@@ -68,7 +60,7 @@ def correct_channel_aliases(provider, params):
 
     根据 provider 名称查找别名映射表，将用户使用的通用键名（如 key）
     纠正为对应渠道要求的参数名（如 serverchan 的 sckey）直接在传入的
-    params 上修改，因此对 dict 与 ruamel 的 CommentedMap 均可保留原有结构
+    params 上修改
 
     Args:
         provider (str): 推送通道名称，大小写不敏感，允许带包裹引号
@@ -352,7 +344,7 @@ def _fragment_to_channel(parsed):
     """将单个已解析的通道片段（结构化对象）转换为标准通道字典
 
     Args:
-        parsed: 由 YAML 解析得到的对象，可能为 dict、list 或裸标量
+        parsed: 已解析的结构化对象，可能为 dict、list 或裸标量
 
     Returns:
         dict: 标准通道字典；无法解析时返回空字典
@@ -367,33 +359,6 @@ def _fragment_to_channel(parsed):
     return {}
 
 
-def _load_fragment(fragment):
-    """将单个通道片段字符串解析为结构化对象
-
-    Args:
-        fragment (str): 单个通道片段文本，如 "{provider: serverchan, sckey: SCTxxxx}"
-
-    Returns:
-        解析后的对象（dict / list / 标量）；解析失败时返回原始字符串
-    """
-    try:
-        return _FRAGMENT_YAML.load(fragment)
-    except Exception:
-        return fragment
-
-
-def _split_channel_fragments(text):
-    """将多通道字符串按 ';' 拆分为单个通道片段
-
-    Args:
-        text (str): 多通道配置字符串
-
-    Returns:
-        list[str]: 去除首尾空白后的非空片段列表
-    """
-    text = strip_wrapping_quotes(text)
-    return [fragment.strip() for fragment in text.split(';') if fragment.strip()]
-
 
 def parse_push_channels(raw_value):
     """将用户填写的 push_channel 配置解析为标准通道字典列表
@@ -402,11 +367,10 @@ def parse_push_channels(raw_value):
     - 标准字典 {provider: serverchan, sckey: SCTxxxx}（允许键乱序）；
     - 无参数头写法 [serverchan, SCTxxxx] / [serverchan: SCTxxxx] /
       {serverchan, SCTxxxx} / {serverchan: SCTxxxx}；
-    - 多通道 YAML 块序列（block list，每个元素均为映射，无需引号包裹）；
-    - 以 ';' 分割的多通道字符串（向后兼容）
+    - 多通道 block list，每个元素均为映射
 
     Args:
-        raw_value: 配置文件中 push_channel 的原始值（字符串 / dict / list）
+        raw_value: push_channel 的原始值（dict / list）
 
     Returns:
         list[dict]: 标准通道字典列表，每项 provider 键排在最前
@@ -414,16 +378,7 @@ def parse_push_channels(raw_value):
     if raw_value is None:
         return []
 
-    # 字符串形式：可能为多通道（以 ; 分割）或单个片段
-    if isinstance(raw_value, str):
-        channels = []
-        for fragment in _split_channel_fragments(raw_value):
-            channel = _fragment_to_channel(_load_fragment(fragment))
-            if channel:
-                channels.append(channel)
-        return channels
-
-    # 列表且所有元素均为映射：视为多通道 block list（如 - {provider: a}）
+    # 列表且所有元素均为映射：视为多通道 block list
     if isinstance(raw_value, (list, tuple)) and _is_multi_channel_list(raw_value):
         channels = []
         for element in raw_value:
@@ -452,66 +407,6 @@ def _is_multi_channel_list(raw_value):
     if len(raw_value) == 0:
         return False
     return all(isinstance(element, dict) for element in raw_value)
-
-
-def _build_flow_map(channel):
-    """将单个标准通道字典构建为流式渲染的 CommentedMap
-
-    Args:
-        channel (dict): 标准通道字典
-
-    Returns:
-        CommentedMap: 设置了流式风格、provider 键在最前的映射节点
-    """
-    flow_map = CommentedMap()
-    flow_map['provider'] = channel.get('provider', '')
-    for key, value in channel.items():
-        if key == 'provider':
-            continue
-        flow_map[key] = value
-    flow_map.fa.set_flow_style()
-    return flow_map
-
-
-def build_push_channel_node(channels):
-    """根据标准通道字典列表构建用于写回配置文件的 push_channel 节点
-
-    统一使用 YAML 原生块序列（CommentedSeq），其每个元素为单行花括号流式
-    CommentedMap，无论单通道还是多通道均无需用引号包裹整行
-
-    Args:
-        channels (list[dict]): 标准通道字典列表
-
-    Returns:
-        构建好的节点：空配置为 CommentedMap，其余为元素均为流式 CommentedMap
-        的 CommentedSeq
-    """
-    if not channels:
-        return CommentedMap()
-    block_seq = CommentedSeq()
-    for channel in channels:
-        block_seq.append(_build_flow_map(channel))
-    return block_seq
-
-
-def push_channel_signature(node):
-    """计算 push_channel 节点的规范化签名，用于判断配置是否需要回写
-
-    Args:
-        node: push_channel 的值（dict / list / 字符串 / 其他）
-
-    Returns:
-        tuple: 可用于相等比较的规范化签名
-    """
-    if isinstance(node, dict):
-        return ('map', tuple(
-            (str(key), str(value)) for key, value in node.items()
-        ))
-    if isinstance(node, (list, tuple)):
-        return ('seq', tuple(push_channel_signature(element) for element in node))
-    if isinstance(node, str):
-        return ('str', strip_wrapping_quotes(node).replace(' ', ''))
-    return ('other', node)
 
 
 def parse_time_string(time_str):
