@@ -175,7 +175,8 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
 
     channel_names = ', '.join(c.get('provider', '?') for c in channels)
     log.info(f"共 {len(channels)} 个推送通道: {channel_names}")
-    log.info(f"通知标题: {title}\r\n通知内容: {content}")
+    log.info(f"通知标题: {title}")
+    log.debug(f"通知内容长度: {len(content)}")
 
     with ThreadPoolExecutor() as executor:
         futures = [

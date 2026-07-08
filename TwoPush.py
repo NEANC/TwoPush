@@ -283,10 +283,12 @@ def execute_push(json_path, config, logger):
         retry_settings['max_count'] = config.get_attr_int('retry_max_count', 3)
 
     proxy = resolve_proxy(template, config)
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
     if proxy:
         os.environ['HTTP_PROXY'] = proxy
         os.environ['HTTPS_PROXY'] = proxy
-        logger.info(f"使用代理: {proxy}")
+        logger.info("已启用推送代理")
 
     vars_ = render_template_vars()
     try:
@@ -296,13 +298,24 @@ def execute_push(json_path, config, logger):
         logger.error(f"模板变量缺失: {e}")
         return 2
 
-    results = send_notification(
-        title=title,
-        content=content,
-        channels=channels,
-        retry_settings=retry_settings,
-        logger=logger,
-    )
+    try:
+        results = send_notification(
+            title=title,
+            content=content,
+            channels=channels,
+            retry_settings=retry_settings,
+            logger=logger,
+        )
+    finally:
+        if proxy:
+            if old_http_proxy is None:
+                os.environ.pop('HTTP_PROXY', None)
+            else:
+                os.environ['HTTP_PROXY'] = old_http_proxy
+            if old_https_proxy is None:
+                os.environ.pop('HTTPS_PROXY', None)
+            else:
+                os.environ['HTTPS_PROXY'] = old_https_proxy
 
     success_count = sum(1 for _, ok in results if ok)
     fail_count = len(results) - success_count
