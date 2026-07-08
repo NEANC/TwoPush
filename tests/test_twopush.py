@@ -3,6 +3,7 @@
 
 """TwoPush 主流程与通道解析测试"""
 
+import json
 import logging
 import os
 import sys
@@ -262,3 +263,195 @@ def test_execute_push_does_not_set_proxy_when_template_invalid(monkeypatch):
             os.environ.pop('HTTPS_PROXY', None)
         else:
             os.environ['HTTPS_PROXY'] = old_https_proxy
+
+
+def test_parse_args_accepts_template_options(monkeypatch):
+    """模板生成参数应支持 README 中定义的形式"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])
+    args = TwoPush.parse_args()
+    assert args.template == 'TwoPush.templates.json'
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template', 'custom.json'])
+    args = TwoPush.parse_args()
+    assert args.template == 'custom.json'
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--Template', 'X:/TEST/custom.json'])
+    args = TwoPush.parse_args()
+    assert args.template == 'X:/TEST/custom.json'
+
+
+def test_parse_args_accepts_template_force_options(monkeypatch):
+    """模板强制生成参数应支持可选路径"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template-force'])
+    args = TwoPush.parse_args()
+    assert args.template_force == 'TwoPush.templates.json'
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template-force', 'custom.json'])
+    args = TwoPush.parse_args()
+    assert args.template_force == 'custom.json'
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--Template-Force', 'X:/TEST/custom.json'])
+    args = TwoPush.parse_args()
+    assert args.template_force == 'X:/TEST/custom.json'
+
+
+def test_build_default_json_template_matches_readme_example():
+    """默认 JSON 模板内容应使用 README 示例结构"""
+    template = TwoPush.build_default_json_template()
+
+    assert template == {
+        'title': '每日报告 - {host_name}',
+        'content': '截止 {current_time}，系统运行正常',
+        'proxy': 'http://127.0.0.1:7890',
+        'retry': {
+            'interval': '5s',
+            'max_count': 2,
+        },
+        'channels': [
+            {'provider': 'serverchan', 'sckey': 'SCTxxxx'},
+            {'provider': 'qmsg', 'key': 'xxx', 'qq': 'xxx'},
+            {'provider': 'dingtalk', 'token': 'xxx', 'secret': 'xxx'},
+            {'provider': 'lark', 'webhook': 'xxx', 'sign': 'xxx'},
+            {
+                'provider': 'smtp',
+                'host': 'xxx',
+                'user': 'xxx',
+                'password': 'xxx',
+                'port': 587,
+                'ssl': True,
+            },
+        ],
+    }
+
+
+def test_write_json_template_file_creates_file(tmp_path, caplog):
+    """模板写入函数应创建 UTF-8 JSON 文件"""
+    template_file = tmp_path / 'custom.json'
+    logger = logging.getLogger('TwoPush')
+
+    with caplog.at_level(logging.INFO, logger='TwoPush'):
+        result = TwoPush.write_json_template_file(str(template_file), logger)
+
+    assert result is True
+    assert template_file.exists()
+    loaded = json.loads(template_file.read_text(encoding='utf-8'))
+    assert loaded['title'] == '每日报告 - {host_name}'
+    assert loaded['channels'][0]['provider'] == 'serverchan'
+    assert f'已生成 JSON 模板文件: {template_file}' in caplog.text
+
+
+def test_template_command_creates_default_file(monkeypatch, tmp_path):
+    """-T 不传路径时应在程序目录生成默认模板文件"""
+    script_file = tmp_path / 'TwoPush.py'
+    script_file.write_text('', encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', [str(script_file), '-T'])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    template_file = tmp_path / 'TwoPush.templates.json'
+    assert exc_info.value.code == 0
+    assert template_file.exists()
+
+
+def test_template_command_creates_custom_file(monkeypatch, tmp_path):
+    """--template path 应生成指定模板文件"""
+    template_file = tmp_path / 'custom.json'
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template', str(template_file)])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert template_file.exists()
+
+
+def test_template_command_refuses_existing_file_without_force(monkeypatch, tmp_path, caplog):
+    """模板文件已存在且无 Force 时不应覆盖"""
+    template_file = tmp_path / 'custom.json'
+    template_file.write_text('{"keep": true}\n', encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template', str(template_file)])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with caplog.at_level(logging.CRITICAL, logger='TwoPush'):
+        with pytest.raises(SystemExit) as exc_info:
+            TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert template_file.read_text(encoding='utf-8') == '{"keep": true}\n'
+    assert 'JSON 模板文件已存在' in caplog.text
+
+
+def test_template_force_command_overwrites_existing_file(monkeypatch, tmp_path):
+    """--template-force path 应覆盖已有模板文件"""
+    template_file = tmp_path / 'custom.json'
+    template_file.write_text('{"keep": true}\n', encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--template-force', str(template_file)])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    loaded = json.loads(template_file.read_text(encoding='utf-8'))
+    assert loaded['title'] == '每日报告 - {host_name}'
+
+
+def test_default_config_initialization_creates_json_template(monkeypatch, tmp_path):
+    """默认配置首次初始化时应同时生成 JSON 模板"""
+    script_file = tmp_path / 'TwoPush.py'
+    script_file.write_text('', encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', [str(script_file)])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert (tmp_path / 'config.ini').exists()
+    assert (tmp_path / 'TwoPush.templates.json').exists()
+
+
+def test_default_config_initialization_does_not_overwrite_existing_template(monkeypatch, tmp_path):
+    """默认配置首次初始化不应覆盖已有 JSON 模板"""
+    script_file = tmp_path / 'TwoPush.py'
+    script_file.write_text('', encoding='utf-8')
+    template_file = tmp_path / 'TwoPush.templates.json'
+    template_file.write_text('{"keep": true}\n', encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, 'argv', [str(script_file)])
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert (tmp_path / 'config.ini').exists()
+    assert template_file.read_text(encoding='utf-8') == '{"keep": true}\n'
+
+
+def test_main_exits_when_push_json_missing(monkeypatch, tmp_path, caplog):
+    """显式指定的推送 JSON 不存在时应 CRITICAL 退出且不生成模板"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'missing.json'
+    template_file = tmp_path / 'TwoPush.templates.json'
+    config_file.write_text('[Update]\nauto_check = false\n', encoding='utf-8')
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        ['TwoPush.py', '--config', str(config_file), '--push', str(push_file)],
+    )
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
+    monkeypatch.setattr(TwoPush, 'auto_update_check', lambda config, logger: None)
+
+    with caplog.at_level(logging.CRITICAL, logger='TwoPush'):
+        with pytest.raises(SystemExit) as exc_info:
+            TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert not push_file.exists()
+    assert not template_file.exists()
+    assert f'指定的 JSON 推送文件不存在: {push_file}' in caplog.text

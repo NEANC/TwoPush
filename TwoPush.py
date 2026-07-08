@@ -26,6 +26,7 @@ from modules.utils import parse_push_channels, parse_time_string
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
+DEFAULT_TEMPLATE_FILE = "TwoPush.templates.json"
 
 
 def parse_args():
@@ -66,6 +67,22 @@ def parse_args():
         '--update-force', '--UpdateForce', action='store_true', dest='update_force',
         help='强制更新到最新版本',
     )
+    parser.add_argument(
+        '-T', '--template', '--Template',
+        nargs='?',
+        const=DEFAULT_TEMPLATE_FILE,
+        default=None,
+        dest='template',
+        help='生成 JSON 模板文件，未指定路径时生成 TwoPush.templates.json',
+    )
+    parser.add_argument(
+        '--template-force', '--Template-Force',
+        nargs='?',
+        const=DEFAULT_TEMPLATE_FILE,
+        default=None,
+        dest='template_force',
+        help='生成 JSON 模板文件并允许覆盖已有文件',
+    )
 
     parser.add_argument('--self-update-verify', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--expected-sha256', type=str, default='', help=argparse.SUPPRESS)
@@ -74,6 +91,116 @@ def parse_args():
     parser.add_argument('--update-failed', action='store_true', help=argparse.SUPPRESS)
 
     return parser.parse_args()
+
+
+def build_default_json_template():
+    """构建默认 JSON 推送模板
+
+    Returns:
+        dict: README 示例对应的 JSON 模板数据
+    """
+    return {
+        'title': '每日报告 - {host_name}',
+        'content': '截止 {current_time}，系统运行正常',
+        'proxy': 'http://127.0.0.1:7890',
+        'retry': {
+            'interval': '5s',
+            'max_count': 2,
+        },
+        'channels': [
+            {'provider': 'serverchan', 'sckey': 'SCTxxxx'},
+            {'provider': 'qmsg', 'key': 'xxx', 'qq': 'xxx'},
+            {'provider': 'dingtalk', 'token': 'xxx', 'secret': 'xxx'},
+            {'provider': 'lark', 'webhook': 'xxx', 'sign': 'xxx'},
+            {
+                'provider': 'smtp',
+                'host': 'xxx',
+                'user': 'xxx',
+                'password': 'xxx',
+                'port': 587,
+                'ssl': True,
+            },
+        ],
+    }
+
+
+def write_json_template_file(path, logger, force=False):
+    """写入 JSON 模板文件
+
+    Args:
+        path: 模板文件路径
+        logger: 日志记录器
+        force: 文件存在时是否覆盖
+
+    Returns:
+        bool: 写入成功返回 True，否则返回 False
+    """
+    if os.path.exists(path) and not force:
+        logger.critical(f"JSON 模板文件已存在，请使用 --template-force 覆盖: {path}")
+        return False
+
+    tmp_path = f'{path}.tmp'
+    try:
+        with open(tmp_path, 'w', encoding='utf-8') as f:
+            json.dump(build_default_json_template(), f, ensure_ascii=False, indent=4)
+            f.write('\n')
+        os.replace(tmp_path, path)
+    except OSError as e:
+        logger.critical(f"生成 JSON 模板文件失败: {e}")
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return False
+
+    logger.info(f"已生成 JSON 模板文件: {path}")
+    return True
+
+
+def resolve_default_template_path():
+    """解析程序目录下的默认 JSON 模板路径
+
+    Returns:
+        str: 默认模板文件路径
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), DEFAULT_TEMPLATE_FILE)
+
+
+def resolve_template_command(args):
+    """解析模板命令目标路径和覆盖策略
+
+    Args:
+        args: 命令行参数
+
+    Returns:
+        tuple[str | None, bool]: 目标路径和是否覆盖；未触发模板命令时路径为 None
+    """
+    if args.template_force:
+        path = args.template_force
+        if path == DEFAULT_TEMPLATE_FILE:
+            path = resolve_default_template_path()
+        return path, True
+    if args.template:
+        path = args.template
+        if path == DEFAULT_TEMPLATE_FILE:
+            path = resolve_default_template_path()
+        return path, False
+    return None, False
+
+
+def handle_template_command(args, logger):
+    """处理 JSON 模板生成命令
+
+    Args:
+        args: 命令行参数
+        logger: 日志记录器
+    """
+    template_path, force = resolve_template_command(args)
+    if not template_path:
+        return
+    if write_json_template_file(template_path, logger, force=force):
+        sys.exit(0)
+    sys.exit(1)
 
 
 def is_config_path_explicit(argv):
@@ -379,14 +506,25 @@ def main():
     if args.update_failed:
         handle_update_failed(logger)
 
+    handle_template_command(args, logger)
+
     if is_config_path_explicit(sys.argv) and not os.path.exists(args.config):
         logger.critical(f"指定的配置文件不存在: {args.config}")
         sys.exit(1)
+
+    def create_default_template_on_first_run():
+        """首次生成默认配置时同步生成 JSON 模板"""
+        template_path = resolve_default_template_path()
+        if os.path.exists(template_path):
+            logger.info(f"JSON 模板文件已存在，跳过生成: {template_path}")
+            return
+        write_json_template_file(template_path, logger, force=False)
 
     config = ConfigManager(
         config_file=args.config,
         logger=logger,
         app_name="TwoPush",
+        first_run_callback=create_default_template_on_first_run,
     )
     config.load()
     if not config.validate():
@@ -409,6 +547,9 @@ def main():
     auto_update_check(config, logger)
 
     if args.push:
+        if not os.path.exists(args.push):
+            logger.critical(f"指定的 JSON 推送文件不存在: {args.push}")
+            sys.exit(1)
         exit_code = execute_push(args.push, config, logger)
         sys.exit(exit_code)
 
