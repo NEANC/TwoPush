@@ -30,16 +30,21 @@ def test_twopush_spec_declares_required_hidden_imports():
         'requests',
         'socks',
         'colorama',
-        'tqdm',
         'modules.config_manager',
         'modules.config_migration',
         'modules.logger_manager',
         'modules.notification',
         'modules.self_config',
-        'modules.self_progress',
         'modules.self_updater',
         'modules.self_utils',
         'modules.utils',
         'modules.version',
     ]:
         assert repr(module_name) in content
+
+
+def test_self_updater_static_methods_exist():
+    """SelfUpdater 应保留 clean_update_cache 和 rollback 静态方法"""
+    from modules.self_updater import SelfUpdater
+    assert hasattr(SelfUpdater, 'rollback')
+    assert hasattr(SelfUpdater, 'clean_update_cache')

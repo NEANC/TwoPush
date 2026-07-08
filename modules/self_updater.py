@@ -26,7 +26,7 @@ import time
 import requests
 
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 from modules.self_config import UpdateState
 from modules.self_utils import (

@@ -8,7 +8,7 @@ import re
 import sys
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 def calculate_sha256(file_path: Path) -> str:
