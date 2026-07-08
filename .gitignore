@@ -200,6 +200,7 @@ logs/
 log/
 /.trae/
 docs/superpowers/
+/.venv-review/
 
 # 日志文件夹
 logs/
