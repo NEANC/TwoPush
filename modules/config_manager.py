@@ -81,12 +81,12 @@ _DEFAULT_SECTIONS: Dict[str, Dict[str, str]] = {
 }
 
 _DEFAULT_COMMENTS: Dict[str, str] = {
-    'Network.proxy': 'HTTP/HTTPS 代理地址（例如 http://127.0.0.1:7890）',
+    'Network.proxy': '代理服务器地址（例如：http://127.0.0.1:7890 或 socks5://127.0.0.1:1080），留空表示不使用代理',
     'Network.enable_proxy_for_push': '是否对推送启用代理（仅当 JSON 模板未显式设置 proxy 时生效）',
     'Push.retry_interval': '默认重试间隔（支持 1h / 15m / 30s）',
     'Push.retry_max_count': '默认最大重试次数',
     'Update.auto_check': '是否启用自动更新检查',
-    'Update.channel': '更新通道：preview（含预发布）/ stable（仅正式版）',
+    'Update.channel': '更新通道: preview 包括预发布版本 (Alpha/Beta/RC) 或 stable 仅正式发布版本',
     'Logs.save_enabled': '是否保存日志到文件',
     'Logs.max_files': '最大日志文件保留数量',
 }
