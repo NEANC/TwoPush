@@ -25,7 +25,7 @@ from modules.notification import render_template_vars, send_notification
 from modules.utils import parse_push_channels, parse_time_string
 from modules.version import VERSION
 
-DEFAULT_CONFIG_FILE = "TwoPush.ini"
+DEFAULT_CONFIG_FILE = "config.ini"
 
 
 def parse_args():
@@ -47,7 +47,7 @@ def parse_args():
     parser.add_argument(
         '-c', '-C', '-config', '-Config', '--config', '--Config',
         default=DEFAULT_CONFIG_FILE,
-        help='指定配置文件路径，示例 -c C:\\path\\TwoPush.ini',
+        help='指定配置文件路径，示例 -c C:\\path\\config.ini',
     )
     parser.add_argument(
         '-p', '-P', '-push', '-Push',
@@ -344,6 +344,9 @@ def main():
         print(f"TwoPush {VERSION}")
         sys.exit(0)
 
+    print("TwoPush - 基于 onepush 的通知推送工具")
+    print(f"版本: {VERSION}")
+
     save_enabled = raw_read_save_enabled(args.config)
     logger = setup_logger("TwoPush")
     if save_enabled:
@@ -384,9 +387,6 @@ def main():
         exit_code = execute_push(args.p, config, logger)
         sys.exit(exit_code)
 
-    print("TwoPush - 基于 onepush 的通知推送工具")
-    print(f"版本: {VERSION}")
-    print("使用 -h 查看帮助")
     sys.exit(0)
 
 

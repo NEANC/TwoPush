@@ -115,7 +115,7 @@ max_files = 15
 | 参数 | 说明 |
 | --- | --- |
 | `-p` / `-P` / `-push` / `-Push` | 指定 JSON 推送文件路径 |
-| `-c` / `-C` / `-config` / `-Config` | 指定 INI 配置文件路径，默认 `TwoPush.ini` |
+| `-c` / `-C` / `-config` / `-Config` | 指定 INI 配置文件路径，默认 `config.ini` |
 | `-h` / `-H` / `-help` / `-Help` | 查看帮助信息 |
 | `--version` | 查看版本号 |
 | `--update` | 手动检查并执行自我更新 |

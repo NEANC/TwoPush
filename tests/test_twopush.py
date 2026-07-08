@@ -13,6 +13,15 @@ import TwoPush
 from modules.utils import parse_push_channels
 
 
+def test_parse_args_uses_config_ini_by_default(monkeypatch):
+    """未指定配置路径时应默认使用 config.ini"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py'])
+
+    args = TwoPush.parse_args()
+
+    assert args.config == 'config.ini'
+
+
 class FakeConfig:
     """用于测试代理解析的配置对象"""
 
