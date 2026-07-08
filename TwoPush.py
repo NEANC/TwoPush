@@ -282,14 +282,6 @@ def execute_push(json_path, config, logger):
             retry_settings['interval'] = 3
         retry_settings['max_count'] = config.get_attr_int('retry_max_count', 3)
 
-    proxy = resolve_proxy(template, config)
-    old_http_proxy = os.environ.get('HTTP_PROXY')
-    old_https_proxy = os.environ.get('HTTPS_PROXY')
-    if proxy:
-        os.environ['HTTP_PROXY'] = proxy
-        os.environ['HTTPS_PROXY'] = proxy
-        logger.info("已启用推送代理")
-
     vars_ = render_template_vars()
     try:
         title = template['title'].format(**vars_)
@@ -297,6 +289,14 @@ def execute_push(json_path, config, logger):
     except KeyError as e:
         logger.error(f"模板变量缺失: {e}")
         return 2
+
+    proxy = resolve_proxy(template, config)
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    if proxy:
+        os.environ['HTTP_PROXY'] = proxy
+        os.environ['HTTPS_PROXY'] = proxy
+        logger.info("已启用推送代理")
 
     try:
         results = send_notification(

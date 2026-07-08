@@ -92,3 +92,33 @@ def test_execute_push_restores_proxy_environment(monkeypatch):
             os.environ.pop('HTTPS_PROXY', None)
         else:
             os.environ['HTTPS_PROXY'] = old_https_proxy
+
+
+def test_execute_push_does_not_set_proxy_when_template_invalid(monkeypatch):
+    """模板变量错误时不应设置新的推送代理环境变量"""
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    os.environ['HTTP_PROXY'] = 'http://old-http.proxy'
+    os.environ['HTTPS_PROXY'] = 'http://old-https.proxy'
+
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {missing_var}',
+        'content': '内容 {current_time}',
+        'proxy': 'http://secret:token@new.proxy',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+    logger = logging.getLogger('test_execute_push_does_not_set_proxy_when_template_invalid')
+
+    try:
+        assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+        assert os.environ.get('HTTP_PROXY') == 'http://old-http.proxy'
+        assert os.environ.get('HTTPS_PROXY') == 'http://old-https.proxy'
+    finally:
+        if old_http_proxy is None:
+            os.environ.pop('HTTP_PROXY', None)
+        else:
+            os.environ['HTTP_PROXY'] = old_http_proxy
+        if old_https_proxy is None:
+            os.environ.pop('HTTPS_PROXY', None)
+        else:
+            os.environ['HTTPS_PROXY'] = old_https_proxy
