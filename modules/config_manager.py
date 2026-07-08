@@ -180,6 +180,8 @@ class ConfigManager:
             sys.exit(1)
         if self._first_run_callback:
             self._first_run_callback()
+        elif sys.stdin.isatty():
+            input("按任意键退出...")
         sys.exit(0)
 
     def _regenerate_config_file(self) -> None:
