@@ -178,7 +178,8 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
     log.info(f"通知标题: {title}")
     log.debug(f"通知内容长度: {len(content)}")
 
-    with ThreadPoolExecutor() as executor:
+    max_workers = min(len(channels), 8)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             (
                 channel.get('provider', '?'),

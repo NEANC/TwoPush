@@ -12,6 +12,8 @@ import json
 import os
 import sys
 
+from contextlib import contextmanager
+
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
     add_file_logger,
@@ -129,6 +131,36 @@ def resolve_proxy(json_template, config):
     if config.get_attr_bool('enable_proxy_for_push', False):
         return config.get_attr('proxy', '') or None
     return None
+
+
+@contextmanager
+def push_proxy_environment(proxy, logger):
+    """临时设置推送代理环境变量，仅适合同进程串行推送
+
+    Args:
+        proxy: HTTP/HTTPS 代理地址，为空时不修改环境变量
+        logger: 日志记录器
+    """
+    if not proxy:
+        yield
+        return
+
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    os.environ['HTTP_PROXY'] = proxy
+    os.environ['HTTPS_PROXY'] = proxy
+    logger.info("已启用推送代理")
+    try:
+        yield
+    finally:
+        if old_http_proxy is None:
+            os.environ.pop('HTTP_PROXY', None)
+        else:
+            os.environ['HTTP_PROXY'] = old_http_proxy
+        if old_https_proxy is None:
+            os.environ.pop('HTTPS_PROXY', None)
+        else:
+            os.environ['HTTPS_PROXY'] = old_https_proxy
 
 
 def init_self_updater(config, logger):
@@ -289,14 +321,7 @@ def execute_push(json_path, config, logger):
         return 2
 
     proxy = resolve_proxy(template, config)
-    old_http_proxy = os.environ.get('HTTP_PROXY')
-    old_https_proxy = os.environ.get('HTTPS_PROXY')
-    if proxy:
-        os.environ['HTTP_PROXY'] = proxy
-        os.environ['HTTPS_PROXY'] = proxy
-        logger.info("已启用推送代理")
-
-    try:
+    with push_proxy_environment(proxy, logger):
         results = send_notification(
             title=title,
             content=content,
@@ -304,16 +329,6 @@ def execute_push(json_path, config, logger):
             retry_settings=retry_settings,
             logger=logger,
         )
-    finally:
-        if proxy:
-            if old_http_proxy is None:
-                os.environ.pop('HTTP_PROXY', None)
-            else:
-                os.environ['HTTP_PROXY'] = old_http_proxy
-            if old_https_proxy is None:
-                os.environ.pop('HTTPS_PROXY', None)
-            else:
-                os.environ['HTTPS_PROXY'] = old_https_proxy
 
     success_count = sum(1 for _, ok in results if ok)
     fail_count = len(results) - success_count

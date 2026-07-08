@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_manager import ConfigManager
+from modules.logger_manager import raw_read_save_enabled
 
 
 class FakeStdin:
@@ -55,13 +56,38 @@ def test_default_config_excludes_github_repo(tmp_path):
     assert 'github_repo' not in content
 
 
+def test_default_config_enables_file_logs_by_default(tmp_path):
+    """默认配置应启用文件日志保存"""
+    config_file = tmp_path / 'TwoPush.ini'
+    logger = logging.getLogger('test_default_config_enables_file_logs_by_default')
+    manager = ConfigManager(str(config_file), logger)
+
+    try:
+        manager._generate_default_config()
+    except SystemExit:
+        pass
+
+    with open(config_file, 'r', encoding='utf-8') as f:
+        content = f.read()
+
+    assert 'save_enabled = true' in content
+
+
+def test_raw_read_save_enabled_defaults_to_true_when_config_missing(tmp_path):
+    """配置文件不存在时应默认保存日志"""
+    assert raw_read_save_enabled(str(tmp_path / 'missing.ini')) is True
+
+
 def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
     """init_self_updater 应使用硬编码的 NEANC/TwoPush 而非配置"""
     import TwoPush as twopush
     from modules.self_updater import SelfUpdater as _RealUpdater
 
     class FakeConfig:
+        """用于捕获自更新初始化参数的配置替身"""
+
         def get_attr(self, key, default=''):
+            """返回指定配置键对应的测试值"""
             if key == 'channel':
                 return 'stable'
             if key == 'proxy':
@@ -69,6 +95,7 @@ def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
             raise AssertionError(f'意外读取配置键: {key}')
 
         def get_attr_bool(self, key, default=False):
+            """禁止读取未预期的布尔配置键"""
             raise AssertionError(f'意外读取配置键: {key}')
 
     captured_kwargs = {}

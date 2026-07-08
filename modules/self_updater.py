@@ -1051,7 +1051,7 @@ class SelfUpdater:
             expected_sha256: 期望的 SHA256（不传则从状态文件读取）
             expected_version: 期望的版本号（不传则从状态文件读取）
             sha256_calc: SHA256 计算函数（不传则使用内建）
-            version_func: 获取当前版本号的函数（不传则从状态文件读取）
+            version_func: 获取当前版本号的函数（不传则读取 modules.version.VERSION）
 
         Returns:
             0 表示验证通过，非 0 表示失败
@@ -1080,8 +1080,12 @@ class SelfUpdater:
             )
             return 2
 
-        if expected_version and version_func:
-            actual_version = version_func()
+        if expected_version:
+            if version_func:
+                actual_version = version_func()
+            else:
+                from modules.version import VERSION
+                actual_version = VERSION
             if actual_version and actual_version != expected_version:
                 logger.critical(
                     f"版本号不匹配:\n"
@@ -1117,11 +1121,11 @@ class SelfUpdater:
             Path(state["backup_file"]),
             script_dir / "update_started.lock",
             script_dir / "update.log",
+            script_dir / f"{target_path.stem}.new.exe",
+            script_dir / f"{target_path.stem}.backup.exe",
+            script_dir / f"{target_path.stem}_Update_Helper.ps1",
+            script_dir / f"{target_path.stem}_Update.ps1",
         ]
-        # 通配删除所有可能的中间产物
-        for pattern in ["*_Update_Helper.ps1", "*_Update.ps1", "*.new.exe", "*.backup.exe"]:
-            for f in script_dir.glob(pattern):
-                cleanup_files.append(f)
 
         for f in cleanup_files:
             try:
