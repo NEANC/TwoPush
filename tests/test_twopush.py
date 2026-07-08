@@ -455,3 +455,109 @@ def test_main_exits_when_push_json_missing(monkeypatch, tmp_path, caplog):
     assert not push_file.exists()
     assert not template_file.exists()
     assert f'指定的 JSON 推送文件不存在: {push_file}' in caplog.text
+
+
+def test_resolve_proxy_passes_socks5_from_json():
+    """JSON proxy 为 socks5:// 时应原样返回"""
+    config = FakeConfig(enable_proxy=False, proxy='http://ini.proxy')
+    assert TwoPush.resolve_proxy(
+        {'proxy': 'socks5://127.0.0.1:1080'}, config,
+    ) == 'socks5://127.0.0.1:1080'
+
+
+def test_resolve_proxy_passes_socks5_from_json_with_auth():
+    """JSON proxy 含认证信息的 socks5:// 应原样返回"""
+    config = FakeConfig()
+    assert TwoPush.resolve_proxy(
+        {'proxy': 'socks5://user:pass@192.168.1.100:1080'}, config,
+    ) == 'socks5://user:pass@192.168.1.100:1080'
+
+
+def test_resolve_proxy_passes_socks5_from_ini():
+    """INI 代理为 socks5:// 且 enable_proxy_for_push=true 时应返回"""
+    config = FakeConfig(enable_proxy=True, proxy='socks5://127.0.0.1:1080')
+    assert TwoPush.resolve_proxy({}, config) == 'socks5://127.0.0.1:1080'
+
+
+def test_push_proxy_environment_sets_socks5():
+    """push_proxy_environment 应正确设置 socks5:// 代理环境变量并恢复"""
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    os.environ['HTTP_PROXY'] = 'http://old-http.proxy'
+    os.environ['HTTPS_PROXY'] = 'http://old-https.proxy'
+
+    proxy = 'socks5://127.0.0.1:1080'
+    logger = logging.getLogger('test_push_proxy_environment_sets_socks5')
+
+    try:
+        with TwoPush.push_proxy_environment(proxy, logger):
+            assert os.environ.get('HTTP_PROXY') == proxy
+            assert os.environ.get('HTTPS_PROXY') == proxy
+        assert os.environ.get('HTTP_PROXY') == 'http://old-http.proxy'
+        assert os.environ.get('HTTPS_PROXY') == 'http://old-https.proxy'
+    finally:
+        if old_http_proxy is None:
+            os.environ.pop('HTTP_PROXY', None)
+        else:
+            os.environ['HTTP_PROXY'] = old_http_proxy
+        if old_https_proxy is None:
+            os.environ.pop('HTTPS_PROXY', None)
+        else:
+            os.environ['HTTPS_PROXY'] = old_https_proxy
+
+
+def test_execute_push_sets_socks5_proxy_environment(monkeypatch):
+    """execute_push 应正确设置和恢复 socks5:// 代理环境变量"""
+    proxy = 'socks5://secret:token@127.0.0.1:1080'
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    os.environ['HTTP_PROXY'] = 'http://old-http.proxy'
+    os.environ['HTTPS_PROXY'] = 'http://old-https.proxy'
+
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'proxy': proxy,
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+    monkeypatch.setattr(TwoPush, 'send_notification', lambda **kwargs: [('serverchan', True)])
+    logger = logging.getLogger('test_execute_push_sets_socks5_proxy_environment')
+
+    try:
+        assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 0
+        assert os.environ.get('HTTP_PROXY') == 'http://old-http.proxy'
+        assert os.environ.get('HTTPS_PROXY') == 'http://old-https.proxy'
+    finally:
+        if old_http_proxy is None:
+            os.environ.pop('HTTP_PROXY', None)
+        else:
+            os.environ['HTTP_PROXY'] = old_http_proxy
+        if old_https_proxy is None:
+            os.environ.pop('HTTPS_PROXY', None)
+        else:
+            os.environ['HTTPS_PROXY'] = old_https_proxy
+
+
+def test_push_proxy_environment_noop_when_proxy_is_none():
+    """proxy 为 None 时 push_proxy_environment 不修改环境变量"""
+    old_http_proxy = os.environ.get('HTTP_PROXY')
+    old_https_proxy = os.environ.get('HTTPS_PROXY')
+    os.environ['HTTP_PROXY'] = 'http://old-http.proxy'
+    os.environ['HTTPS_PROXY'] = 'http://old-https.proxy'
+
+    logger = logging.getLogger('test_push_proxy_environment_noop_when_proxy_is_none')
+    try:
+        with TwoPush.push_proxy_environment(None, logger):
+            assert os.environ.get('HTTP_PROXY') == 'http://old-http.proxy'
+            assert os.environ.get('HTTPS_PROXY') == 'http://old-https.proxy'
+        assert os.environ.get('HTTP_PROXY') == 'http://old-http.proxy'
+        assert os.environ.get('HTTPS_PROXY') == 'http://old-https.proxy'
+    finally:
+        if old_http_proxy is None:
+            os.environ.pop('HTTP_PROXY', None)
+        else:
+            os.environ['HTTP_PROXY'] = old_http_proxy
+        if old_https_proxy is None:
+            os.environ.pop('HTTPS_PROXY', None)
+        else:
+            os.environ['HTTPS_PROXY'] = old_https_proxy
