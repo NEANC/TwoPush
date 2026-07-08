@@ -7,6 +7,8 @@ import logging
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TwoPush
@@ -20,6 +22,135 @@ def test_parse_args_uses_config_ini_by_default(monkeypatch):
     args = TwoPush.parse_args()
 
     assert args.config == 'config.ini'
+
+
+def test_parse_args_rejects_legacy_single_dash_long_options(monkeypatch):
+    """命令行参数应以 README 中列出的形式为准"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'config.ini'])
+
+    with pytest.raises(SystemExit):
+        TwoPush.parse_args()
+
+
+def test_parse_args_accepts_readme_config_options(monkeypatch):
+    """README 中列出的配置参数形式应可用"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--config', 'custom.ini'])
+
+    args = TwoPush.parse_args()
+
+    assert args.config == 'custom.ini'
+
+
+def test_parse_args_accepts_readme_push_options(monkeypatch):
+    """README 中列出的推送参数形式应可用"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--push', 'push.json'])
+
+    args = TwoPush.parse_args()
+
+    assert args.push == 'push.json'
+
+
+def test_parse_args_accepts_readme_version_short_option(monkeypatch):
+    """README 中列出的版本短参数形式应可用"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-v'])
+
+    args = TwoPush.parse_args()
+
+    assert args.version is True
+
+
+def test_parse_args_accepts_readme_update_pascal_options(monkeypatch):
+    """README 中列出的更新参数大小写形式应可用"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--UpdateForce'])
+
+    args = TwoPush.parse_args()
+
+    assert args.update_force is True
+
+
+def test_main_exits_when_explicit_config_file_missing(monkeypatch, tmp_path, caplog):
+    """显式指定的配置文件不存在时应报错退出且不自动生成"""
+    config_file = tmp_path / 'missing.ini'
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-c', str(config_file)])
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+
+    with caplog.at_level(logging.CRITICAL, logger='TwoPush'):
+        with pytest.raises(SystemExit) as exc_info:
+            TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert not config_file.exists()
+    assert f'指定的配置文件不存在: {config_file}' in caplog.text
+
+
+def test_main_rejects_equals_style_explicit_config(monkeypatch, tmp_path):
+    """等号形式显式配置路径不存在时应退出且不自动生成"""
+    config_file = tmp_path / 'missing.ini'
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', f'--config={config_file}'])
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert not config_file.exists()
+
+
+def test_main_exits_for_missing_attached_short_config(monkeypatch, tmp_path):
+    """短配置参数贴合路径形式不存在时应退出且不自动生成"""
+    config_file = tmp_path / 'missing.ini'
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', f'-c{config_file}'])
+    monkeypatch.setattr(sys.stdin, 'isatty', lambda: False)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert not config_file.exists()
+
+
+def test_main_uses_push_argument_without_args_p(monkeypatch, tmp_path):
+    """主流程应使用 README 参数表对应的 push 属性"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'push.json'
+    config_file.write_text('[SelfUpdate]\nenabled = false\n', encoding='utf-8')
+    push_file.write_text('{}', encoding='utf-8')
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        ['TwoPush.py', '--config', str(config_file), '--push', str(push_file)],
+    )
+    monkeypatch.setattr(TwoPush, 'auto_update_check', lambda config, logger: None)
+    monkeypatch.setattr(TwoPush, 'execute_push', lambda json_path, config, logger: 3)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 3
+
+
+def test_self_update_verify_runs_before_explicit_config_check(monkeypatch, tmp_path):
+    """自更新验证不依赖配置，应先于显式配置缺失检查执行"""
+    config_file = tmp_path / 'missing.ini'
+    called = {}
+    monkeypatch.setattr(
+        sys,
+        'argv',
+        ['TwoPush.py', '--self-update-verify', '-c', str(config_file)],
+    )
+    def fake_handle_self_update_verify(args):
+        """模拟自更新验证命令会自行退出"""
+        called['verify'] = True
+        raise SystemExit(7)
+
+    monkeypatch.setattr(TwoPush, 'handle_self_update_verify', fake_handle_self_update_verify)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 7
+    assert called == {'verify': True}
+    assert not config_file.exists()
 
 
 class FakeConfig:

@@ -39,31 +39,31 @@ def parse_args():
         add_help=False,
     )
     parser.add_argument(
-        '-h', '-H', '-help', '-Help', '--help', '--Help',
+        '-h', '-H', '--help', '--Help',
         action='help',
         default=argparse.SUPPRESS,
         help='显示帮助信息并退出',
     )
     parser.add_argument(
-        '-c', '-C', '-config', '-Config', '--config', '--Config',
+        '-c', '-C', '--config', '--Config',
         default=DEFAULT_CONFIG_FILE,
         help='指定配置文件路径，示例 -c C:\\path\\config.ini',
     )
     parser.add_argument(
-        '-p', '-P', '-push', '-Push',
+        '-p', '-P', '--push', '--Push',
         default=None,
         help='指定推送 JSON 文件路径，示例 -p C:\\path\\report.json',
     )
     parser.add_argument(
-        '--version', action='store_true',
+        '-v', '--version', action='store_true',
         help='打印版本号',
     )
     parser.add_argument(
-        '--update', action='store_true',
+        '--update', '--Update', action='store_true', dest='update',
         help='检查并执行自我更新',
     )
     parser.add_argument(
-        '--update-force', action='store_true', dest='update_force',
+        '--update-force', '--UpdateForce', action='store_true', dest='update_force',
         help='强制更新到最新版本',
     )
 
@@ -74,6 +74,27 @@ def parse_args():
     parser.add_argument('--update-failed', action='store_true', help=argparse.SUPPRESS)
 
     return parser.parse_args()
+
+
+def is_config_path_explicit(argv):
+    """判断命令行是否显式指定了配置文件路径
+
+    Args:
+        argv: 命令行参数列表，通常为 sys.argv
+
+    Returns:
+        bool: 显式传入配置文件参数时返回 True
+    """
+    config_flags = {'-c', '-C', '--config', '--Config'}
+    short_config_flags = {'-c', '-C'}
+    for arg in argv[1:]:
+        if arg in config_flags:
+            return True
+        if any(arg.startswith(f'{flag}=') for flag in config_flags):
+            return True
+        if any(arg.startswith(flag) and arg != flag for flag in short_config_flags):
+            return True
+    return False
 
 
 def load_json_template(json_path, logger):
@@ -358,6 +379,10 @@ def main():
     if args.update_failed:
         handle_update_failed(logger)
 
+    if is_config_path_explicit(sys.argv) and not os.path.exists(args.config):
+        logger.critical(f"指定的配置文件不存在: {args.config}")
+        sys.exit(1)
+
     config = ConfigManager(
         config_file=args.config,
         logger=logger,
@@ -383,8 +408,8 @@ def main():
 
     auto_update_check(config, logger)
 
-    if args.p:
-        exit_code = execute_push(args.p, config, logger)
+    if args.push:
+        exit_code = execute_push(args.push, config, logger)
         sys.exit(exit_code)
 
     sys.exit(0)
