@@ -180,9 +180,7 @@ class ConfigManager:
             sys.exit(1)
         if self._first_run_callback:
             self._first_run_callback()
-        else:
-            input("按任意键退出...")
-            sys.exit(0)
+        sys.exit(0)
 
     def _regenerate_config_file(self) -> None:
         """
@@ -398,7 +396,6 @@ class ConfigManager:
                     self.logger.critical(f"配置文件无法修复: {e}")
                     self.logger.critical(f"配置文件 {self.config_file} 已损坏且无法自动修复。")
                     self.logger.critical("请检查文件内容或删除后重新运行软件以生成默认配置。")
-                    input("按任意键退出...")
                     raise SystemExit(1)
 
         # ── 应用迁移 ──
