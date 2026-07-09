@@ -134,6 +134,7 @@ python TwoPush.py --template-force custom.json
 | `-v` / `--version` | 查看版本号 |
 | `--update` / `--Update` | 手动检查并执行自我更新 |
 | `--update-force` / `--UpdateForce` | 强制检查并执行自我更新 |
+| `-S`, `--silent`, `--Silent` | 静默模式，不输出控制台日志 |
 
 ---
 
