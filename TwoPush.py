@@ -424,6 +424,10 @@ def main():
     from modules.self_updater import SelfUpdater
     SelfUpdater._cleanup_update_residue(logger)
 
+    # push 失败时提前退出，避免退出码被更新命令覆盖
+    if push_exit_code is not None and push_exit_code != 0:
+        sys.exit(push_exit_code)
+
     if args.retry_update:
         handle_retry_update(config, logger)
 
