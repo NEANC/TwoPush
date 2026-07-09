@@ -27,8 +27,8 @@ def test_parse_args_uses_config_ini_by_default(monkeypatch):
     assert args.config == 'config.ini'
 
 
-def test_parse_args_rejects_legacy_single_dash_long_options(monkeypatch):
-    """位置参数会截获裸文本，因此 -config 会被解析而非拒绝"""
+def test_parse_args_single_dash_long_option_abbreviated_by_argparse(monkeypatch):
+    """argparse 短选项缩写与位置参数共存时，裸文本会被位置参数截获"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'value'])
 
     args = TwoPush.parse_args()
