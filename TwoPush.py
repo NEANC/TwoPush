@@ -420,16 +420,18 @@ def main():
             print(f"\n推送完成，退出码: {push_exit_code}")
             input("按任意键退出...")
 
-    from modules.self_updater import SelfUpdater
-    SelfUpdater._cleanup_update_residue(logger)
+    # 命令行 -p 模式不执行检查更新，直接退出
+    if not args.push:
+        from modules.self_updater import SelfUpdater
+        SelfUpdater._cleanup_update_residue(logger)
 
-    if args.retry_update:
-        handle_retry_update(config, logger)
+        if args.retry_update:
+            handle_retry_update(config, logger)
 
-    if args.update or args.update_force:
-        handle_update_command(config, logger, force=args.update_force)
+        if args.update or args.update_force:
+            handle_update_command(config, logger, force=args.update_force)
 
-    auto_update_check(config, logger)
+        auto_update_check(config, logger)
 
     if push_exit_code is not None:
         sys.exit(push_exit_code)
