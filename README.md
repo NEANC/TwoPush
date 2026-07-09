@@ -135,6 +135,15 @@ python TwoPush.py --template-force custom.json
 | `--update` / `--Update` | 手动检查并执行自我更新 |
 | `--update-force` / `--UpdateForce` | 强制检查并执行自我更新 |
 | `-S`, `--silent`, `--Silent` | 静默模式，不输出控制台日志 |
+| `jsonfile`（位置参数） | 直接拖动 JSON 文件到 exe 上自动推送，完成后按任意键退出 |
+
+---
+
+### 拖放使用
+
+将 `.json` 推送文件直接拖动到 `TwoPush.exe` 上即可自动执行推送。推送完成后窗口会显示结果并等待按键退出。
+
+如果同时使用 `-p` 参数，以 `-p` 指定的文件为准，且不会停顿等待按键。
 
 ---
 
