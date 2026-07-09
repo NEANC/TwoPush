@@ -43,12 +43,14 @@ class ColoredFormatter(logging.Formatter):
         return f"{color}{result}{colorama.Style.RESET_ALL}"
 
 
-def setup_logger(name: str = "TwoPush") -> logging.Logger:
+def setup_logger(name: str = "TwoPush",
+                console_enabled: bool = True) -> logging.Logger:
     """
     创建并配置控制台日志记录器
 
     Args:
         name: 日志记录器名称
+        console_enabled: 是否启用控制台输出，默认 True
 
     Returns:
         配置好的日志记录器
@@ -56,6 +58,9 @@ def setup_logger(name: str = "TwoPush") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
     if logger.handlers:
+        return logger
+
+    if not console_enabled:
         return logger
 
     console_handler = logging.StreamHandler()

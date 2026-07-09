@@ -130,3 +130,15 @@ def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
 
     twopush.init_self_updater(FakeConfig(), logging.getLogger('test'))
     assert captured_kwargs['github_repo'] == 'NEANC/TwoPush'
+
+
+def test_setup_logger_silent_mode_does_not_add_stream_handler():
+    """关闭控制台输出时不应添加 StreamHandler"""
+    logger = logging.getLogger("TwoPushSilentTest")
+    logger.handlers.clear()
+
+    result = setup_logger("TwoPushSilentTest", console_enabled=False)
+
+    assert result is logger
+    assert logger.handlers == []
+    logger.handlers.clear()
