@@ -18,6 +18,15 @@ from modules.json_manager import build_default_json_template
 from modules.utils import parse_push_channels
 
 
+@pytest.fixture
+def mock_cleanup_residue(monkeypatch):
+    """mock _cleanup_update_residue，避免测试中触发文件系统副作用"""
+    monkeypatch.setattr(
+        'modules.self_updater.SelfUpdater._cleanup_update_residue',
+        lambda logger: None,
+    )
+
+
 def test_parse_args_uses_config_ini_by_default(monkeypatch):
     """未指定配置路径时应默认使用 config.ini"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py'])
@@ -114,7 +123,7 @@ def test_main_exits_for_missing_attached_short_config(monkeypatch, tmp_path):
     assert not config_file.exists()
 
 
-def test_main_uses_push_argument_without_args_p(monkeypatch, tmp_path):
+def test_main_uses_push_argument_without_args_p(monkeypatch, tmp_path, mock_cleanup_residue):
     """主流程应使用 README 参数表对应的 push 属性"""
     config_file = tmp_path / 'config.ini'
     push_file = tmp_path / 'push.json'
@@ -493,7 +502,7 @@ def test_template_force_command_overwrites_existing_file(monkeypatch, tmp_path):
     assert loaded['title'] == '每日报告 - {host_name}'
 
 
-def test_default_config_initialization_creates_json_template(monkeypatch, tmp_path):
+def test_default_config_initialization_creates_json_template(monkeypatch, tmp_path, mock_cleanup_residue):
     """默认配置首次初始化时应同时生成 JSON 模板"""
     script_file = tmp_path / 'TwoPush.py'
     script_file.write_text('', encoding='utf-8')
@@ -509,7 +518,7 @@ def test_default_config_initialization_creates_json_template(monkeypatch, tmp_pa
     assert (tmp_path / 'TwoPush.templates.json').exists()
 
 
-def test_default_config_initialization_does_not_overwrite_existing_template(monkeypatch, tmp_path):
+def test_default_config_initialization_does_not_overwrite_existing_template(monkeypatch, tmp_path, mock_cleanup_residue):
     """默认配置首次初始化不应覆盖已有 JSON 模板"""
     script_file = tmp_path / 'TwoPush.py'
     script_file.write_text('', encoding='utf-8')
@@ -694,7 +703,7 @@ def test_json_manager_module_exposes_all_functions():
     assert jm.DEFAULT_TEMPLATE_FILE == "TwoPush.templates.json"
 
 
-def test_main_passes_silent_to_setup_logger(monkeypatch, tmp_path):
+def test_main_passes_silent_to_setup_logger(monkeypatch, tmp_path, mock_cleanup_residue):
     """静默模式下 setup_logger 应收到 console_enabled=False"""
     config_file = tmp_path / 'config.ini'
     config_file.write_text(
@@ -747,7 +756,7 @@ def test_main_passes_silent_to_setup_logger(monkeypatch, tmp_path):
     assert calls == [False]
 
 
-def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path):
+def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path, mock_cleanup_residue):
     """静默模式下文件日志配置应不受影响"""
     config_file = tmp_path / 'config.ini'
     config_file.write_text(
@@ -806,7 +815,7 @@ def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path):
     assert calls == [(fake_logger, TwoPush.VERSION)]
 
 
-def test_main_drag_drop_executes_push_and_pauses(monkeypatch, tmp_path):
+def test_main_drag_drop_executes_push_and_pauses(monkeypatch, tmp_path, mock_cleanup_residue):
     json_file = tmp_path / 'push.json'
     json_file.write_text(
         '{"title": "test", "content": "drag", "channels": []}',
@@ -901,7 +910,7 @@ def test_main_drag_drop_missing_file_pauses_and_exits(monkeypatch, tmp_path):
     assert any('按任意键退出' in p for p in input_calls)
 
 
-def test_main_push_flag_overrides_drag_drop_no_pause(monkeypatch, tmp_path):
+def test_main_push_flag_overrides_drag_drop_no_pause(monkeypatch, tmp_path, mock_cleanup_residue):
     json_file = tmp_path / 'drag.json'
     json_file.write_text(
         '{"title": "test", "content": "drag", "channels": []}',
@@ -953,7 +962,7 @@ def test_main_push_flag_overrides_drag_drop_no_pause(monkeypatch, tmp_path):
     assert input_called[0] is False
 
 
-def test_main_push_mode_skips_auto_update_check(monkeypatch, tmp_path):
+def test_main_push_mode_skips_auto_update_check(monkeypatch, tmp_path, mock_cleanup_residue):
     """-p 模式应跳过 auto_update_check"""
     config_file = tmp_path / 'config.ini'
     push_file = tmp_path / 'push.json'
@@ -988,7 +997,7 @@ def test_main_push_mode_skips_auto_update_check(monkeypatch, tmp_path):
     assert 'auto_check' not in call_log
 
 
-def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path):
+def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path, mock_cleanup_residue):
     """-p --update 组合时 handle_update_command 仍应被调用"""
     config_file = tmp_path / 'config.ini'
     push_file = tmp_path / 'push.json'
@@ -1009,7 +1018,6 @@ def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path):
     def fake_handle_update(config, logger, force=False):
         call_log['update'] = True
         call_log['force'] = force
-        raise SystemExit(0)
 
     def fake_auto_check(config, logger):
         call_log['auto_check'] = True
@@ -1031,7 +1039,7 @@ def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path):
     assert 'auto_check' not in call_log
 
 
-def test_main_push_failed_exits_before_update(monkeypatch, tmp_path):
+def test_main_push_failed_exits_before_update(monkeypatch, tmp_path, mock_cleanup_residue):
     """push 失败时应提前退出，不执行更新命令，退出码为 push 退出码"""
     config_file = tmp_path / 'config.ini'
     push_file = tmp_path / 'push.json'
