@@ -4,11 +4,8 @@
 """JSON 模板构建、读写与命令处理"""
 
 import json
-import logging
 import os
 import sys
-
-LOGGER = logging.getLogger(__name__)
 
 DEFAULT_TEMPLATE_FILE = "TwoPush.templates.json"
 
