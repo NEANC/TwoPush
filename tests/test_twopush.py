@@ -362,6 +362,21 @@ def test_write_json_template_file_creates_file(tmp_path, caplog):
     assert f'已生成 JSON 模板文件: {template_file}' in caplog.text
 
 
+def test_write_json_template_file_verbose_path_false_shows_basename(tmp_path, caplog):
+    """verbose_path=False 时日志应仅显示文件名"""
+    template_file = tmp_path / 'custom.json'
+    logger = logging.getLogger('TwoPush')
+
+    with caplog.at_level(logging.INFO, logger='TwoPush'):
+        result = TwoPush.write_json_template_file(
+            str(template_file), logger, verbose_path=False,
+        )
+
+    assert result is True
+    assert '已生成 JSON 模板文件: custom.json' in caplog.text
+    assert str(template_file) not in caplog.text
+
+
 def test_template_command_creates_default_file(monkeypatch, tmp_path):
     """-T 不传路径时应在程序目录生成默认模板文件"""
     script_file = tmp_path / 'TwoPush.py'

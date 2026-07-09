@@ -124,13 +124,14 @@ def build_default_json_template():
     }
 
 
-def write_json_template_file(path, logger, force=False):
+def write_json_template_file(path, logger, force=False, verbose_path=True):
     """写入 JSON 模板文件
 
     Args:
         path: 模板文件路径
         logger: 日志记录器
         force: 文件存在时是否覆盖
+        verbose_path: 成功日志显示完整路径还是仅文件名
 
     Returns:
         bool: 写入成功返回 True，否则返回 False
@@ -153,7 +154,8 @@ def write_json_template_file(path, logger, force=False):
             pass
         return False
 
-    logger.info(f"已生成 JSON 模板文件: {path}")
+    display_path = path if verbose_path else os.path.basename(path)
+    logger.info(f"已生成 JSON 模板文件: {display_path}")
     return True
 
 
@@ -339,7 +341,7 @@ def init_self_updater(config, logger):
 
     is_bundled, package_type = detect_package_type()
     if not is_bundled:
-        logger.debug("源码运行模式，跳过自我更新初始化")
+        logger.debug("源码运行，跳过自我更新")
         return None
 
     return SelfUpdater(
@@ -531,7 +533,7 @@ def main():
         if os.path.exists(template_path):
             logger.info(f"JSON 模板文件已存在，跳过生成: {template_path}")
             return
-        write_json_template_file(template_path, logger, force=False)
+        write_json_template_file(template_path, logger, force=False, verbose_path=False)
 
     config = ConfigManager(
         config_file=args.config,

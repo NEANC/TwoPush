@@ -168,7 +168,6 @@ class ConfigManager:
                 f.write(default_config)
             os.replace(tmp_path, self.config_file)
             self.logger.info(f"已生成默认配置文件: {self.config_file}")
-            self.logger.info("请修改配置文件后重新运行软件。")
         except OSError as e:
             self.logger.error(f"生成配置文件失败: {e}")
             try:
@@ -178,7 +177,8 @@ class ConfigManager:
             sys.exit(1)
         if self._first_run_callback:
             self._first_run_callback()
-        elif sys.stdin.isatty():
+        self.logger.info("请修改配置文件后重新运行软件。")
+        if not self._first_run_callback and sys.stdin.isatty():
             input("按任意键退出...")
         sys.exit(0)
 
