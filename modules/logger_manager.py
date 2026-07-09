@@ -55,6 +55,8 @@ def setup_logger(name: str = "TwoPush") -> logging.Logger:
     """
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
+    if logger.handlers:
+        return logger
 
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)

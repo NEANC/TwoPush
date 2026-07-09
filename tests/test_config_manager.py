@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_manager import ConfigManager
-from modules.logger_manager import raw_read_save_enabled
+from modules.logger_manager import raw_read_save_enabled, setup_logger
 
 
 class FakeStdin:
@@ -19,6 +19,21 @@ class FakeStdin:
     def isatty(self):
         """返回当前标准输入是否为交互终端"""
         return True
+def test_setup_logger_reuse_does_not_duplicate_stream_handlers():
+    """重复获取同名日志记录器不应叠加控制台 handler"""
+    logger_name = 'test_setup_logger_reuse_does_not_duplicate_stream_handlers'
+    logger = logging.getLogger(logger_name)
+    logger.handlers.clear()
+
+    first_logger = setup_logger(logger_name)
+    second_logger = setup_logger(logger_name)
+
+    stream_handlers = [
+        handler for handler in second_logger.handlers
+        if isinstance(handler, logging.StreamHandler)
+    ]
+    assert first_logger is second_logger
+    assert len(stream_handlers) == 1
 
 
 def test_generate_default_config_pauses_in_interactive_terminal(tmp_path, monkeypatch):
