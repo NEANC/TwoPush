@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TwoPush
+from modules.json_manager import build_default_json_template
 from modules.utils import parse_push_channels
 
 
@@ -319,7 +320,7 @@ def test_parse_args_accepts_template_force_options(monkeypatch):
 
 def test_build_default_json_template_matches_readme_example():
     """默认 JSON 模板内容应使用 README 示例结构"""
-    template = TwoPush.build_default_json_template()
+    template = build_default_json_template()
 
     assert template == {
         'title': '每日报告 - {host_name}',
