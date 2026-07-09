@@ -50,6 +50,10 @@ def parse_args():
         help='显示帮助信息',
     )
     parser.add_argument(
+        '-v', '--version', action='store_true',
+        help='显示版本号',
+    )
+    parser.add_argument(
         '-c', '-C', '--config', '--Config',
         default=DEFAULT_CONFIG_FILE,
         help='指定配置文件路径，示例 -c C:\\path\\config.ini',
@@ -58,10 +62,6 @@ def parse_args():
         '-p', '-P', '--push', '--Push',
         default=None,
         help='指定推送 JSON 文件路径，示例 -p C:\\path\\report.json',
-    )
-    parser.add_argument(
-        '-v', '--version', action='store_true',
-        help='显示版本号',
     )
     parser.add_argument(
         '--update', '--Update', action='store_true', dest='update',
@@ -93,19 +93,14 @@ def parse_args():
         dest='template_force',
         help='生成 JSON 模板文件并允许覆盖已有文件，示例 --Template-Force C:\\path\\template.json',
     )
-
+    # 自更新相关参数
     parser.add_argument('--self-update-verify', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--expected-sha256', type=str, default='', help=argparse.SUPPRESS)
     parser.add_argument('--expected-version', type=str, default='', help=argparse.SUPPRESS)
     parser.add_argument('--retry-update', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--update-failed', action='store_true', help=argparse.SUPPRESS)
-
-    parser.add_argument(
-        'jsonfile',
-        nargs='?',
-        default=None,
-        help='用于文件拖放',
-    )
+    # 用于文件拖放
+    parser.add_argument('jsonfile',nargs='?',default=None,help=argparse.SUPPRESS)
 
     return parser.parse_args()
 
