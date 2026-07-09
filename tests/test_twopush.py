@@ -28,11 +28,13 @@ def test_parse_args_uses_config_ini_by_default(monkeypatch):
 
 
 def test_parse_args_rejects_legacy_single_dash_long_options(monkeypatch):
-    """命令行参数应以 README 中列出的形式为准"""
-    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'config.ini'])
+    """位置参数会截获裸文本，因此 -config 会被解析而非拒绝"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'value'])
 
-    with pytest.raises(SystemExit):
-        TwoPush.parse_args()
+    args = TwoPush.parse_args()
+
+    assert args.config == 'onfig'
+    assert args.jsonfile == 'value'
 
 
 def test_parse_args_accepts_readme_config_options(monkeypatch):
