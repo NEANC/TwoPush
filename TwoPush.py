@@ -146,7 +146,7 @@ def write_json_template_file(path, logger, force=False):
             f.write('\n')
         os.replace(tmp_path, path)
     except OSError as e:
-        logger.critical(f"生成 JSON 模板文件失败: {e}")
+        logger.critical(f"生成 JSON 模板文件失败 (路径: {path}): {e}")
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -168,6 +168,10 @@ def resolve_default_template_path():
 
 def resolve_template_command(args):
     """解析模板命令目标路径和覆盖策略
+
+    注意：当用户显式指定与 DEFAULT_TEMPLATE_FILE 同名的路径时（如
+    `-T TwoPush.templates.json`），无法区分这是 const 默认值还是用户
+    显式传入，路径均解析到脚本所在目录。
 
     Args:
         args: 命令行参数
@@ -285,8 +289,11 @@ def resolve_proxy(json_template, config):
 def push_proxy_environment(proxy, logger):
     """临时设置推送代理环境变量，仅适合同进程串行推送
 
+    支持 HTTP/HTTPS/SOCKS5 代理协议。同时设置 HTTP_PROXY、HTTPS_PROXY
+    和 ALL_PROXY，确保 DNS 解析也走代理隧道，避免 DNS 泄漏。
+
     Args:
-        proxy: HTTP/HTTPS 代理地址，为空时不修改环境变量
+        proxy: HTTP/HTTPS/SOCKS5 代理服务器地址，为空时不修改环境变量
         logger: 日志记录器
     """
     if not proxy:
@@ -295,8 +302,10 @@ def push_proxy_environment(proxy, logger):
 
     old_http_proxy = os.environ.get('HTTP_PROXY')
     old_https_proxy = os.environ.get('HTTPS_PROXY')
+    old_all_proxy = os.environ.get('ALL_PROXY')
     os.environ['HTTP_PROXY'] = proxy
     os.environ['HTTPS_PROXY'] = proxy
+    os.environ['ALL_PROXY'] = proxy
     logger.info("已启用推送代理")
     try:
         yield
@@ -309,6 +318,10 @@ def push_proxy_environment(proxy, logger):
             os.environ.pop('HTTPS_PROXY', None)
         else:
             os.environ['HTTPS_PROXY'] = old_https_proxy
+        if old_all_proxy is None:
+            os.environ.pop('ALL_PROXY', None)
+        else:
+            os.environ['ALL_PROXY'] = old_all_proxy
 
 
 def init_self_updater(config, logger):
