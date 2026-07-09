@@ -951,3 +951,121 @@ def test_main_push_flag_overrides_drag_drop_no_pause(monkeypatch, tmp_path):
     assert exc_info.value.code == 0
     assert push_calls == [str(cli_file)]
     assert input_called[0] is False
+
+
+def test_main_push_mode_skips_auto_update_check(monkeypatch, tmp_path):
+    """-p 模式应跳过 auto_update_check"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'push.json'
+    config_file.write_text(
+        '[Network]\nproxy = \nenable_proxy_for_push = false\n'
+        '[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '[Update]\nauto_check = false\nchannel = stable\n'
+        '[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    push_file.write_text('{}', encoding='utf-8')
+
+    call_log = {}
+
+    def fake_execute_push(push_file, config, logger):
+        return 0
+
+    def fake_auto_check(config, logger):
+        call_log['auto_check'] = True
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['TwoPush.py', '-c', str(config_file), '-p', str(push_file)],
+    )
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr(TwoPush, 'auto_update_check', fake_auto_check)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert 'auto_check' not in call_log
+
+
+def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path):
+    """-p --update 组合时 handle_update_command 仍应被调用"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'push.json'
+    config_file.write_text(
+        '[Network]\nproxy = \nenable_proxy_for_push = false\n'
+        '[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '[Update]\nauto_check = false\nchannel = stable\n'
+        '[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    push_file.write_text('{}', encoding='utf-8')
+
+    call_log = {}
+
+    def fake_execute_push(push_file, config, logger):
+        return 0
+
+    def fake_handle_update(config, logger, force=False):
+        call_log['update'] = True
+        call_log['force'] = force
+        raise SystemExit(0)
+
+    def fake_auto_check(config, logger):
+        call_log['auto_check'] = True
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['TwoPush.py', '-c', str(config_file), '-p', str(push_file), '--update'],
+    )
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr(TwoPush, 'handle_update_command', fake_handle_update)
+    monkeypatch.setattr(TwoPush, 'auto_update_check', fake_auto_check)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert call_log.get('update') is True
+    assert call_log.get('force') is False
+    assert 'auto_check' not in call_log
+
+
+def test_main_push_failed_exits_before_update(monkeypatch, tmp_path):
+    """push 失败时应提前退出，不执行更新命令，退出码为 push 退出码"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'push.json'
+    config_file.write_text(
+        '[Network]\nproxy = \nenable_proxy_for_push = false\n'
+        '[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '[Update]\nauto_check = false\nchannel = stable\n'
+        '[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    push_file.write_text('{}', encoding='utf-8')
+
+    call_log = {}
+
+    def fake_execute_push(push_file, config, logger):
+        return 2  # push 失败
+
+    def fake_handle_update(config, logger, force=False):
+        call_log['update'] = True
+
+    def fake_auto_check(config, logger):
+        call_log['auto_check'] = True
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['TwoPush.py', '-c', str(config_file), '-p', str(push_file), '--update'],
+    )
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr(TwoPush, 'handle_update_command', fake_handle_update)
+    monkeypatch.setattr(TwoPush, 'auto_update_check', fake_auto_check)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 2
+    assert 'update' not in call_log
+    assert 'auto_check' not in call_log

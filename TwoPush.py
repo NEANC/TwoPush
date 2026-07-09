@@ -420,7 +420,7 @@ def main():
             print(f"\n推送完成，退出码: {push_exit_code}")
             input("按任意键退出...")
 
-    # 清理更新残留，无论是否 -p 模式都执行
+    # 检查并清理更新残留
     from modules.self_updater import SelfUpdater
     SelfUpdater._cleanup_update_residue(logger)
 
