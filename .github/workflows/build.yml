@@ -207,6 +207,7 @@ jobs:
           upx-binary: upx
           onefile-no-compression: true
           module-parameter: --include-windows-runtime-dlls=no
+          windows-icon-from-ico: IMG/logo.png
 
       # 上传 Nuitka 编译的可执行文件
       - name: Upload Nuitka artifact
@@ -277,7 +278,7 @@ jobs:
       # 打包可执行文件（PyInstaller）
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --console --name TwoPush TwoPush.py --noconfirm
+          pyinstaller --onefile --console --name TwoPush TwoPush.py --noconfirm --icon IMG/logo.png
 
       # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact
