@@ -27,7 +27,6 @@ from modules.json_manager import (
     ensure_default_template_on_first_run,
     handle_template_command,
     load_json_template,
-    write_json_template_file,
 )
 from modules.version import VERSION
 
