@@ -621,3 +621,17 @@ def test_push_proxy_environment_noop_when_proxy_is_none():
             os.environ.pop('ALL_PROXY', None)
         else:
             os.environ['ALL_PROXY'] = old_all_proxy
+
+
+def test_json_manager_module_exposes_all_functions():
+    """新模块应导出全部 7 个函数 + 常量"""
+    import modules.json_manager as jm
+
+    assert callable(jm.build_default_json_template)
+    assert callable(jm.write_json_template_file)
+    assert callable(jm.resolve_default_template_path)
+    assert callable(jm.resolve_template_command)
+    assert callable(jm.handle_template_command)
+    assert callable(jm.load_json_template)
+    assert callable(jm.ensure_default_template_on_first_run)
+    assert jm.DEFAULT_TEMPLATE_FILE == "TwoPush.templates.json"
