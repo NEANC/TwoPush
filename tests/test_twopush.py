@@ -349,6 +349,29 @@ def test_parse_args_accepts_silent_options(monkeypatch):
         assert args.silent is True
 
 
+def test_parse_args_captures_positional_jsonfile(monkeypatch):
+    """位置参数 jsonfile 应捕获拖放的文件路径"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', 'report.json'])
+    args = TwoPush.parse_args()
+    assert args.jsonfile == 'report.json'
+    assert args.push is None
+
+
+def test_parse_args_jsonfile_none_when_no_positional_arg(monkeypatch):
+    """无位置参数时 jsonfile 应为 None"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py'])
+    args = TwoPush.parse_args()
+    assert args.jsonfile is None
+
+
+def test_parse_args_push_takes_priority_over_jsonfile(monkeypatch):
+    """-p 参数应正常解析，同时位置参数捕获拖放文件"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-p', 'cli.json', 'drag.json'])
+    args = TwoPush.parse_args()
+    assert args.push == 'cli.json'
+    assert args.jsonfile == 'drag.json'
+
+
 def test_build_default_json_template_matches_readme_example():
     """默认 JSON 模板内容应使用 README 示例结构"""
     template = build_default_json_template()

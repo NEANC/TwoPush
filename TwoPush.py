@@ -100,6 +100,13 @@ def parse_args():
     parser.add_argument('--retry-update', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument('--update-failed', action='store_true', help=argparse.SUPPRESS)
 
+    parser.add_argument(
+        'jsonfile',
+        nargs='?',
+        default=None,
+        help='用于文件拖放',
+    )
+
     return parser.parse_args()
 
 
