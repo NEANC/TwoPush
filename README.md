@@ -8,7 +8,7 @@
 
 ---
 
-# Two Push
+# TwoPush
 
 TwoPush 是个基于 [OnePush](https://github.com/y1ndan/onepush) 再封装的命令行通知推送程序。
 
