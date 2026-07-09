@@ -15,7 +15,7 @@ import sys
 import configparser
 
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, Optional
 
 from modules.config_migration import apply_migrations
 
@@ -135,12 +135,6 @@ class ConfigManager:
         self.comments = merged_comments
         self.app_name = app_name
         self._first_run_callback = first_run_callback
-
-        # ── 缓存所有「路径类」键名，用于 load() 中 resolve_temp_folder ──
-        self._path_keys: set = set()
-        self._list_keys: set = set()
-        self._int_keys: set = set()
-        self._bool_keys: set = set()
 
         # 动态属性字典
         self._attrs: Dict[str, str] = {}
@@ -337,22 +331,6 @@ class ConfigManager:
             self.logger.info(f"使用系统临时文件夹: {fallback}")
             os.makedirs(fallback, exist_ok=True)
 
-    def register_path_key(self, key: str) -> None:
-        """将配置键标记为路径类型（load 时会自动调用 resolve_temp_folder）"""
-        self._path_keys.add(key)
-
-    def register_list_key(self, key: str) -> None:
-        """将配置键标记为逗号分隔列表类型（load 时会自动 split）"""
-        self._list_keys.add(key)
-
-    def register_int_key(self, key: str) -> None:
-        """将配置键标记为 int 类型"""
-        self._int_keys.add(key)
-
-    def register_bool_key(self, key: str) -> None:
-        """将配置键标记为 bool 类型"""
-        self._bool_keys.add(key)
-
     def get_attr(self, key: str, default: str = '') -> str:
         """读取已加载的配置属性"""
         return self._attrs.get(key, default)
@@ -366,12 +344,6 @@ class ConfigManager:
     def get_attr_bool(self, key: str, default: bool = False) -> bool:
         val = self._attrs.get(key, str(default).lower())
         return val.lower() in ('true', '1', 'yes', 'on')
-
-    def get_attr_list(self, key: str) -> List[str]:
-        val = self._attrs.get(key, '')
-        if val:
-            return [item.strip() for item in val.split(',') if item.strip()]
-        return []
 
     def load(self) -> None:
         """加载配置文件并填充内部属性"""
@@ -430,25 +402,12 @@ class ConfigManager:
                 self._attrs[key] = val
 
         # ── 临时文件夹特殊处理 ──
-        if 'temp_folder' in self._path_keys or 'temp_folder' in self._attrs:
+        if 'temp_folder' in self._attrs:
             temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp').strip()
             self._attrs['temp_folder'] = resolve_temp_folder(
                 temp_folder_config, self.app_name, _get_program_dir(), self.logger
             )
             self._ensure_temp_folder_exists()
-
-        # ── 类型转换 ──
-        for key in self._int_keys:
-            if key in self._attrs:
-                try:
-                    self._attrs[key] = str(int(self._attrs[key]))
-                except ValueError:
-                    pass
-
-        for key in self._bool_keys:
-            if key in self._attrs:
-                val = self._attrs[key].lower()
-                self._attrs[key] = str(val in ('true', '1', 'yes', 'on'))
 
     def validate(self) -> bool:
         """
