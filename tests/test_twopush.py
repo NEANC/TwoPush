@@ -13,6 +13,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import TwoPush
+import modules.json_manager as json_manager
 from modules.json_manager import build_default_json_template
 from modules.utils import parse_push_channels
 
@@ -353,7 +354,7 @@ def test_write_json_template_file_creates_file(tmp_path, caplog):
     logger = logging.getLogger('TwoPush')
 
     with caplog.at_level(logging.INFO, logger='TwoPush'):
-        result = TwoPush.write_json_template_file(str(template_file), logger)
+        result = json_manager.write_json_template_file(str(template_file), logger)
 
     assert result is True
     assert template_file.exists()
@@ -369,7 +370,7 @@ def test_write_json_template_file_verbose_path_false_shows_basename(tmp_path, ca
     logger = logging.getLogger('TwoPush')
 
     with caplog.at_level(logging.INFO, logger='TwoPush'):
-        result = TwoPush.write_json_template_file(
+        result = json_manager.write_json_template_file(
             str(template_file), logger, verbose_path=False,
         )
 
