@@ -47,7 +47,7 @@ def parse_args():
         '-h', '-H', '--help', '--Help',
         action='help',
         default=argparse.SUPPRESS,
-        help='显示帮助信息并退出',
+        help='显示帮助信息',
     )
     parser.add_argument(
         '-c', '-C', '--config', '--Config',
@@ -61,7 +61,7 @@ def parse_args():
     )
     parser.add_argument(
         '-v', '--version', action='store_true',
-        help='打印版本号',
+        help='显示版本号',
     )
     parser.add_argument(
         '--update', '--Update', action='store_true', dest='update',
@@ -83,7 +83,7 @@ def parse_args():
         const=DEFAULT_TEMPLATE_FILE,
         default=None,
         dest='template',
-        help='生成 JSON 模板文件，未指定路径时生成 TwoPush.templates.json',
+        help='生成 JSON 模板文件，未指定路径时生成 TwoPush.templates.json，示例 -T C:\\path\\template.json',
     )
     parser.add_argument(
         '--template-force', '--Template-Force',
@@ -91,7 +91,7 @@ def parse_args():
         const=DEFAULT_TEMPLATE_FILE,
         default=None,
         dest='template_force',
-        help='生成 JSON 模板文件并允许覆盖已有文件',
+        help='生成 JSON 模板文件并允许覆盖已有文件，示例 --Template-Force C:\\path\\template.json',
     )
 
     parser.add_argument('--self-update-verify', action='store_true', help=argparse.SUPPRESS)
@@ -108,9 +108,6 @@ def parse_args():
     )
 
     return parser.parse_args()
-
-
-
 
 
 def is_config_path_explicit(argv):
