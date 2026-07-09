@@ -321,7 +321,10 @@ def execute_push(json_path, config, logger):
             retry_settings['interval'] = int(parse_time_string(interval_str))
         except (TypeError, ValueError):
             retry_settings['interval'] = 3
-        retry_settings['max_count'] = max(int(json_retry.get('max_count', 3)), 1)
+        try:
+            retry_settings['max_count'] = max(int(json_retry.get('max_count', 3)), 1)
+        except (TypeError, ValueError):
+            retry_settings['max_count'] = 3
     else:
         interval_str = config.get_attr('retry_interval', '3s')
         try:

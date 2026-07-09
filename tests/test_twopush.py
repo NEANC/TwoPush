@@ -289,6 +289,28 @@ def test_execute_push_does_not_set_proxy_when_template_invalid(monkeypatch):
             os.environ['ALL_PROXY'] = old_all_proxy
 
 
+def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
+    """JSON retry.max_count 非整数时应回退默认重试次数"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'retry': {'interval': '1s', 'max_count': 'abc'},
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_invalid_json_retry_max_count_falls_back')
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 0
+    assert captured['retry_settings']['max_count'] == 3
+
+
 def test_parse_args_accepts_template_options(monkeypatch):
     """模板生成参数应支持 README 中定义的形式"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])
