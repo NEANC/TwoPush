@@ -377,8 +377,9 @@ def main():
         print(f"TwoPush {VERSION}")
         sys.exit(0)
 
-    print("TwoPush - 基于 onepush 的通知推送工具")
-    print(f"版本: {VERSION}")
+    if not args.silent:
+        print("TwoPush - 基于 onepush 的通知推送工具")
+        print(f"版本: {VERSION}")
 
     save_enabled = raw_read_save_enabled(args.config)
     logger = setup_logger(console_enabled=not args.silent)
