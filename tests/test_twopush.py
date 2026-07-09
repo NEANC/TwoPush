@@ -341,6 +341,14 @@ def test_parse_args_accepts_template_force_options(monkeypatch):
     assert args.template_force == 'X:/TEST/custom.json'
 
 
+def test_parse_args_accepts_silent_options(monkeypatch):
+    """静默模式参数应支持 README 中定义的形式"""
+    for option in ("-S", "--silent", "--Silent"):
+        monkeypatch.setattr(sys, 'argv', ['TwoPush.py', option])
+        args = TwoPush.parse_args()
+        assert args.silent is True
+
+
 def test_build_default_json_template_matches_readme_example():
     """默认 JSON 模板内容应使用 README 示例结构"""
     template = build_default_json_template()

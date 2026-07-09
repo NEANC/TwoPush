@@ -72,6 +72,12 @@ def parse_args():
         help='强制更新到最新版本',
     )
     parser.add_argument(
+        '-S', '--silent', '--Silent',
+        action='store_true',
+        dest='silent',
+        help='静默模式，不输出控制台日志',
+    )
+    parser.add_argument(
         '-T', '--template', '--Template',
         nargs='?',
         const=DEFAULT_TEMPLATE_FILE,
