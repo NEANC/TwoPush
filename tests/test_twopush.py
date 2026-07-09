@@ -667,3 +667,115 @@ def test_json_manager_module_exposes_all_functions():
     assert callable(jm.load_json_template)
     assert callable(jm.ensure_default_template_on_first_run)
     assert jm.DEFAULT_TEMPLATE_FILE == "TwoPush.templates.json"
+
+
+def test_main_passes_silent_to_setup_logger(monkeypatch, tmp_path):
+    """静默模式下 setup_logger 应收到 console_enabled=False"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\n'
+        'proxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n'
+        '[Push]\n'
+        'retry_interval = 3s\n'
+        'retry_max_count = 3\n'
+        '\n'
+        '[Update]\n'
+        'auto_check = false\n'
+        'channel = stable\n'
+        '\n'
+        '[Logs]\n'
+        'save_enabled = false\n'
+        'max_files = 15\n',
+        encoding='utf-8',
+    )
+    calls = []
+
+    class FakeLogger:
+        def debug(self, message):
+            pass
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            pass
+
+        def error(self, message):
+            pass
+
+        def critical(self, message):
+            pass
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        calls.append(console_enabled)
+        return FakeLogger()
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-S', '-c', str(config_file)])
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert calls == [False]
+
+
+def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path):
+    """静默模式下文件日志配置应不受影响"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\n'
+        'proxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n'
+        '[Push]\n'
+        'retry_interval = 3s\n'
+        'retry_max_count = 3\n'
+        '\n'
+        '[Update]\n'
+        'auto_check = false\n'
+        'channel = stable\n'
+        '\n'
+        '[Logs]\n'
+        'save_enabled = true\n'
+        'max_files = 15\n',
+        encoding='utf-8',
+    )
+    calls = []
+
+    class FakeLogger:
+        def debug(self, message):
+            pass
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            pass
+
+        def error(self, message):
+            pass
+
+        def critical(self, message):
+            pass
+
+    fake_logger = FakeLogger()
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        return fake_logger
+
+    def fake_add_file_logger(logger, version='', **kwargs):
+        calls.append((logger, version))
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-S', '-c', str(config_file)])
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+    monkeypatch.setattr(TwoPush, 'add_file_logger', fake_add_file_logger)
+    monkeypatch.setattr(TwoPush, 'cleanup_old_logs', lambda logger, max_files, **kwargs: None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert calls == [(fake_logger, TwoPush.VERSION)]
