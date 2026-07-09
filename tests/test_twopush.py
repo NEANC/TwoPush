@@ -804,3 +804,150 @@ def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path):
 
     assert exc_info.value.code == 0
     assert calls == [(fake_logger, TwoPush.VERSION)]
+
+
+def test_main_drag_drop_executes_push_and_pauses(monkeypatch, tmp_path):
+    json_file = tmp_path / 'push.json'
+    json_file.write_text(
+        '{"title": "test", "content": "drag", "channels": []}',
+        encoding='utf-8',
+    )
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\n'
+        'proxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n'
+        '[Push]\n'
+        'retry_interval = 3s\n'
+        'retry_max_count = 3\n'
+        '\n'
+        '[Update]\n'
+        'auto_check = false\n'
+        'channel = stable\n'
+        '\n'
+        '[Logs]\n'
+        'save_enabled = false\n'
+        'max_files = 15\n',
+        encoding='utf-8',
+    )
+    push_calls = []
+    input_calls = []
+
+    class FakeLogger:
+        def debug(self, message):
+            pass
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            pass
+
+        def error(self, message):
+            pass
+
+        def critical(self, message):
+            pass
+
+    def fake_execute_push(push_file, config, logger):
+        push_calls.append(push_file)
+        return 0
+
+    def fake_input(prompt=''):
+        input_calls.append(str(prompt))
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', str(json_file), '-c', str(config_file)])
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr('builtins.input', fake_input)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert push_calls == [str(json_file)]
+    assert any('按任意键退出' in p for p in input_calls)
+
+
+def test_main_drag_drop_missing_file_pauses_and_exits(monkeypatch, tmp_path):
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\nproxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '\n[Update]\nauto_check = false\nchannel = stable\n'
+        '\n[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    input_calls = []
+
+    class FakeLogger:
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg): pass
+        def error(self, msg): pass
+        def critical(self, msg): pass
+
+    def fake_input(prompt=''):
+        input_calls.append(str(prompt))
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', 'nonexistent.json', '-c', str(config_file)])
+    monkeypatch.setattr('builtins.input', fake_input)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert any('按任意键退出' in p for p in input_calls)
+
+
+def test_main_push_flag_overrides_drag_drop_no_pause(monkeypatch, tmp_path):
+    json_file = tmp_path / 'drag.json'
+    json_file.write_text(
+        '{"title": "test", "content": "drag", "channels": []}',
+        encoding='utf-8',
+    )
+    cli_file = tmp_path / 'cli.json'
+    cli_file.write_text(
+        '{"title": "test", "content": "cli", "channels": []}',
+        encoding='utf-8',
+    )
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\nproxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '\n[Update]\nauto_check = false\nchannel = stable\n'
+        '\n[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    push_calls = []
+    input_called = [False]
+
+    class FakeLogger:
+        def debug(self, msg): pass
+        def info(self, msg): pass
+        def warning(self, msg): pass
+        def error(self, msg): pass
+        def critical(self, msg): pass
+
+    def fake_execute_push(push_file, config, logger):
+        push_calls.append(push_file)
+        return 0
+
+    def fake_input(prompt=''):
+        input_called[0] = True
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['TwoPush.py', '-p', str(cli_file), str(json_file), '-c', str(config_file)]
+    )
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr('builtins.input', fake_input)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert push_calls == [str(cli_file)]
+    assert input_called[0] is False

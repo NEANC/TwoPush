@@ -423,11 +423,19 @@ def main():
 
     auto_update_check(config, logger)
 
-    if args.push:
-        if not os.path.exists(args.push):
-            logger.critical(f"指定的 JSON 推送文件不存在: {args.push}")
+    push_file = args.push or args.jsonfile
+    is_drag_drop = bool(args.jsonfile and not args.push)
+
+    if push_file:
+        if not os.path.exists(push_file):
+            logger.critical(f"指定的 JSON 推送文件不存在: {push_file}")
+            if is_drag_drop:
+                input("按任意键退出...")
             sys.exit(1)
-        exit_code = execute_push(args.push, config, logger)
+        exit_code = execute_push(push_file, config, logger)
+        if is_drag_drop:
+            print(f"\n推送完成，退出码: {exit_code}")
+            input("按任意键退出...")
         sys.exit(exit_code)
 
     sys.exit(0)
