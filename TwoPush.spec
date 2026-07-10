@@ -154,4 +154,4 @@ exe = EXE(pyz,
           target_arch=None,
           codesign_identity=None,
           entitlements_file=None,
-          icon='IMG\\logo.png')
+          icon='IMG\\logo.ico')
