@@ -107,8 +107,42 @@ def test_cleanup_update_residue_only_removes_current_app_files(monkeypatch, tmp_
     assert foreign_new.exists()
 
 
+def _assert_sha256_fallbacks(content, script_name):
+    """验证 Get-SHA256 函数包含多路径 fallback 结构"""
+    assert 'function Get-SHA256($filePath)' in content, (
+        f'{script_name}: 缺少 Get-SHA256 函数定义'
+    )
+    assert '[System.IO.File]::OpenRead' in content, (
+        f'{script_name}: 缺少 .NET 文件流读取'
+    )
+    assert '[System.Security.Cryptography.SHA256]::Create()' in content, (
+        f'{script_name}: 缺少 .NET SHA256 创建'
+    )
+    assert '$sha256.Dispose()' in content, (
+        f'{script_name}: 缺少 SHA256 资源释放'
+    )
+    assert '$stream.Dispose()' in content, (
+        f'{script_name}: 缺少文件流资源释放'
+    )
+    assert 'Get-Command Get-FileHash -ErrorAction SilentlyContinue' in content, (
+        f'{script_name}: 缺少 Get-FileHash 可用性探测'
+    )
+    assert 'Get-FileHash -Algorithm SHA256 -LiteralPath $filePath' in content, (
+        f'{script_name}: 缺少 Get-FileHash fallback 调用'
+    )
+    assert 'certutil.exe -hashfile' in content, (
+        f'{script_name}: 缺少 certutil.exe fallback'
+    )
+    assert "'^[0-9A-Fa-f]{64}$'" in content, (
+        f'{script_name}: 缺少 certutil 输出正则解析'
+    )
+    assert 'throw "Get-SHA256 failed:' in content, (
+        f'{script_name}: 缺少最终失败明确错误'
+    )
+
+
 def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_path):
-    """生成的 PowerShell 更新脚本应使用 BOM 编码并保留关键函数"""
+    """生成的 PowerShell 更新脚本应使用 BOM 编码并包含多路径 SHA256 fallback"""
     from modules.self_updater import SelfUpdater
 
     updater = SelfUpdater(
@@ -130,9 +164,15 @@ def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_pat
 
     helper_text = helper.read_text(encoding='utf-8-sig')
     update_text = update.read_text(encoding='utf-8-sig')
+
+    _assert_sha256_fallbacks(helper_text, 'Helper.ps1')
+    _assert_sha256_fallbacks(update_text, 'Update.ps1')
+
     assert 'function Restore-Backup' in helper_text
     assert 'function Start-ProcWait' in helper_text
     assert 'function Move-WithRetry' in helper_text
     assert 'function Move-WithRetry' in update_text
     assert 'Read-IniValue "Files" "target"' in update_text
     assert 'Read-IniValue "Version" "new_sha256"' in update_text
+    assert 'Get-SHA256 $target' in helper_text
+    assert 'Get-SHA256 $newFile' in update_text

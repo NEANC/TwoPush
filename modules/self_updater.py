@@ -554,17 +554,48 @@ class SelfUpdater:
             }
 
             function Get-SHA256($filePath) {
-                $stream = [System.IO.File]::OpenRead($filePath)
+                $errors = @()
+
+                $stream = $null
+                $sha256 = $null
                 try {
+                    $stream = [System.IO.File]::OpenRead($filePath)
                     $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    try {
-                        return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
-                    } finally {
-                        $sha256.Dispose()
-                    }
+                    $hash = $sha256.ComputeHash($stream)
+                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+                } catch {
+                    $errors += ".NET: $($_.Exception.Message)"
                 } finally {
-                    $stream.Dispose()
+                    if ($sha256) { $sha256.Dispose() }
+                    if ($stream) { $stream.Dispose() }
                 }
+
+                try {
+                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
+                    }
+                } catch {
+                    $errors += "Get-FileHash: $($_.Exception.Message)"
+                }
+
+                try {
+                    $LASTEXITCODE = 0
+                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        throw ($certOutput -join "`n")
+                    }
+                    foreach ($line in $certOutput) {
+                        $hex = $line -replace '\s', ''
+                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
+                            return $hex.ToLowerInvariant()
+                        }
+                    }
+                    throw "certutil output did not contain a SHA256 hash"
+                } catch {
+                    $errors += "certutil: $($_.Exception.Message)"
+                }
+
+                throw "Get-SHA256 failed: $($errors -join ' | ')"
             }
 
             function Read-IniValue($section, $key) {
@@ -907,17 +938,48 @@ class SelfUpdater:
             }
 
             function Get-SHA256($filePath) {
-                $stream = [System.IO.File]::OpenRead($filePath)
+                $errors = @()
+
+                $stream = $null
+                $sha256 = $null
                 try {
+                    $stream = [System.IO.File]::OpenRead($filePath)
                     $sha256 = [System.Security.Cryptography.SHA256]::Create()
-                    try {
-                        return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
-                    } finally {
-                        $sha256.Dispose()
-                    }
+                    $hash = $sha256.ComputeHash($stream)
+                    return [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+                } catch {
+                    $errors += ".NET: $($_.Exception.Message)"
                 } finally {
-                    $stream.Dispose()
+                    if ($sha256) { $sha256.Dispose() }
+                    if ($stream) { $stream.Dispose() }
                 }
+
+                try {
+                    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
+                        return (Get-FileHash -Algorithm SHA256 -LiteralPath $filePath -ErrorAction Stop).Hash.ToLowerInvariant()
+                    }
+                } catch {
+                    $errors += "Get-FileHash: $($_.Exception.Message)"
+                }
+
+                try {
+                    $LASTEXITCODE = 0
+                    $certOutput = & certutil.exe -hashfile $filePath SHA256 2>&1
+                    if ($LASTEXITCODE -ne 0) {
+                        throw ($certOutput -join "`n")
+                    }
+                    foreach ($line in $certOutput) {
+                        $hex = $line -replace '\s', ''
+                        if ($hex -match '^[0-9A-Fa-f]{64}$') {
+                            return $hex.ToLowerInvariant()
+                        }
+                    }
+                    throw "certutil output did not contain a SHA256 hash"
+                } catch {
+                    $errors += "certutil: $($_.Exception.Message)"
+                }
+
+                throw "Get-SHA256 failed: $($errors -join ' | ')"
             }
 
             function Read-IniValue($section, $key) {
