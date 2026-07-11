@@ -298,7 +298,7 @@ class SelfUpdater:
         Returns:
             bool: 是否需要退出以完成更新
         """
-        self.logger.info("开始检查软件版本...")
+        self.logger.info("正在检查软件更新...")
 
         # ── 系统环境检查 ──
         if not self._check_system_environment():
