@@ -365,6 +365,12 @@ def main():
     """主入口"""
     args = parse_args()
 
+    # 自更新内部参数
+    if args.self_update_verify:
+        handle_self_update_verify(args)
+    if args.update_failed:
+        handle_update_failed(setup_logger())
+
     if args.version:
         print(f"TwoPush {VERSION}")
         sys.exit(0)
@@ -377,12 +383,6 @@ def main():
     logger = setup_logger(console_enabled=not args.silent)
     if save_enabled:
         add_file_logger(logger, version=VERSION, log_dir='logs', log_prefix='TwoPush')
-
-    if args.self_update_verify:
-        handle_self_update_verify(args)
-
-    if args.update_failed:
-        handle_update_failed(logger)
 
     handle_template_command(args, logger)
 
