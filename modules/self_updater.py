@@ -553,6 +553,20 @@ class SelfUpdater:
                 } catch {}
             }
 
+            function Get-SHA256($filePath) {
+                $stream = [System.IO.File]::OpenRead($filePath)
+                try {
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    try {
+                        return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+                    } finally {
+                        $sha256.Dispose()
+                    }
+                } finally {
+                    $stream.Dispose()
+                }
+            }
+
             function Read-IniValue($section, $key) {
                 try {
                     $content = Get-Content -LiteralPath $stateFile -Raw -Encoding UTF8 -ErrorAction Stop
@@ -822,7 +836,7 @@ class SelfUpdater:
                 $newSha256 = Read-IniValue "Version" "new_sha256"
                 Assert-NotEmpty "Files.target" $target
                 if ($newSha256) {
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $target).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $target
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         Restore-Backup "target hash mismatch after replace"
                     }
@@ -890,6 +904,20 @@ class SelfUpdater:
                     $line = "{0} -> {1} | {2} | {3}" -f $scriptTag, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff'), $level, $message
                     Add-Content -LiteralPath $logFile -Value $line -Encoding UTF8
                 } catch {}
+            }
+
+            function Get-SHA256($filePath) {
+                $stream = [System.IO.File]::OpenRead($filePath)
+                try {
+                    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+                    try {
+                        return [BitConverter]::ToString($sha256.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+                    } finally {
+                        $sha256.Dispose()
+                    }
+                } finally {
+                    $stream.Dispose()
+                }
             }
 
             function Read-IniValue($section, $key) {
@@ -1006,7 +1034,7 @@ class SelfUpdater:
 
                 if ($newSha256) {
                     Set-UpdateStatus "replacing" "verify_new_file_hash" "校验新版本文件 SHA256" 45 "INFO"
-                    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $newFile).Hash.ToLowerInvariant()
+                    $actual = Get-SHA256 $newFile
                     if ($actual -ne $newSha256.ToLowerInvariant()) {
                         throw "new file SHA256 mismatch: expected $newSha256, got $actual"
                     }
