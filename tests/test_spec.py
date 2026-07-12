@@ -166,7 +166,7 @@ def test_self_update_verify_checks_expected_version_without_injected_func(monkey
     assert result == 3
 
 
-def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path):
+def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path, caplog):
     """清理 verified 状态残留时应仅删除状态文件记录的运行时文件"""
     from modules.self_config import UpdateState
     from modules.self_updater import SelfUpdater
@@ -209,7 +209,9 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     state['backup_file'] = str(backup_file)
     state.save()
 
-    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_update_residue'))
+    logger = logging.getLogger('test_cleanup_update_residue')
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        SelfUpdater._cleanup_update_residue(logger)
 
     assert not helper_ps1.exists()
     assert not update_ps1.exists()
@@ -220,6 +222,10 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     assert not (program_dir / 'update_state.ini').exists()
     assert not update_log.exists()
     assert foreign_helper.exists()
+    assert '清理上次更新残留文件...' in caplog.text
+    assert f'已删除残留文件: {helper_ps1}' in caplog.text
+    assert f'已删除残留文件: {update_ps1}' in caplog.text
+    assert f'已删除残留文件: {update_log}' in caplog.text
 
 
 def test_cleanup_update_residue_removes_legacy_residue_when_verified(monkeypatch, tmp_path):
