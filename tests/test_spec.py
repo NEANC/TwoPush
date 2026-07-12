@@ -52,6 +52,91 @@ def test_self_updater_static_methods_exist():
     assert hasattr(SelfUpdater, 'clean_update_cache')
 
 
+
+def test_self_updater_build_runtime_paths_uses_localappdata(monkeypatch, tmp_path):
+    """默认应使用 LOCALAPPDATA 下的应用 SelfUpdate 目录作为 runtime 根目录"""
+    from modules.self_updater import SelfUpdater
+
+    local_appdata = tmp_path / 'LocalAppData'
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    monkeypatch.setenv('LOCALAPPDATA', str(local_appdata))
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        logger=logging.getLogger('test_runtime_paths'),
+    )
+
+    paths = updater._build_update_runtime_paths(exe, 'v2.0.0')
+
+    assert paths['program_dir'] == exe.parent
+    assert paths['state_file'] == exe.parent / 'update_state.ini'
+    assert paths['log_file'] == exe.parent / 'update.log'
+    assert paths['temp_folder'] == local_appdata / 'TwoPush' / 'SelfUpdate'
+    assert paths['runtime_dir'] == local_appdata / 'TwoPush' / 'SelfUpdate' / 'v2.0.0'
+    assert paths['helper_ps1'] == paths['runtime_dir'] / 'TwoPush_Update_Helper.ps1'
+    assert paths['update_ps1'] == paths['runtime_dir'] / 'TwoPush_Update.ps1'
+    assert paths['lock_file'] == paths['runtime_dir'] / 'update_started.lock'
+    assert paths['new_file'] == paths['runtime_dir'] / 'TwoPush.new.exe'
+    assert paths['backup_file'] == paths['runtime_dir'] / 'TwoPush.backup.exe'
+
+
+
+def test_self_updater_build_runtime_paths_uses_custom_temp_folder(tmp_path):
+    """传入 temp_folder 时 runtime_dir 应为 temp_folder / version"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    custom_temp = tmp_path / 'custom-self-update'
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(custom_temp),
+        logger=logging.getLogger('test_runtime_paths_custom'),
+    )
+
+    paths = updater._build_update_runtime_paths(exe, 'v2.0.0')
+
+    assert paths['temp_folder'] == custom_temp
+    assert paths['runtime_dir'] == custom_temp / 'v2.0.0'
+
+
+
+def test_self_updater_build_runtime_paths_falls_back_to_program_dir(monkeypatch, tmp_path):
+    """LOCALAPPDATA 不可用时应 fallback 到程序目录 SelfUpdate"""
+    from modules.self_updater import SelfUpdater
+
+    exe = tmp_path / 'program' / 'TwoPush.exe'
+    exe.parent.mkdir()
+    exe.write_bytes(b'exe')
+    monkeypatch.delenv('LOCALAPPDATA', raising=False)
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        logger=logging.getLogger('test_runtime_paths_fallback'),
+    )
+
+    paths = updater._build_update_runtime_paths(exe, 'v2.0.0')
+
+    assert paths['temp_folder'] == exe.parent / 'SelfUpdate'
+    assert paths['runtime_dir'] == exe.parent / 'SelfUpdate' / 'v2.0.0'
+
+
 def test_self_update_verify_checks_expected_version_without_injected_func(monkeypatch, tmp_path):
     """自更新验证应在未注入版本函数时仍校验当前程序版本"""
     from modules.self_updater import SelfUpdater
