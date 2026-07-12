@@ -816,6 +816,78 @@ class SelfUpdater:
         return 0
 
     @staticmethod
+    def _unlink_update_residue_file(file_path: Path,
+                                    logger: logging.Logger) -> None:
+        """删除自更新残留文件，忽略清理失败。"""
+        try:
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+                logger.debug(f"已删除残留文件: {file_path}")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _rmtree_update_residue_dir(dir_path: Path,
+                                   logger: logging.Logger) -> None:
+        """删除明确白名单中的自更新残留目录，忽略清理失败。"""
+        try:
+            if dir_path.exists() and dir_path.is_dir():
+                shutil.rmtree(dir_path)
+                logger.debug(f"已删除残留目录: {dir_path}")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _infer_legacy_app_name(state: UpdateState) -> str:
+        """从旧状态记录的脚本文件名推断应用名称，失败时回退 TwoPush。"""
+        for file_key in ["helper_ps1", "update_ps1"]:
+            file_value = state.get("Files", file_key, fallback="")
+            if not file_value:
+                continue
+            name = Path(file_value).name
+            for suffix in ["_Update_Helper.ps1", "_Update.ps1"]:
+                if name.endswith(suffix):
+                    app_name = name[:-len(suffix)]
+                    if app_name:
+                        return app_name
+        return "TwoPush"
+
+    @staticmethod
+    def _cleanup_legacy_update_residue(target_path: Path,
+                                       state: UpdateState,
+                                       logger: logging.Logger) -> None:
+        """按固定白名单清理旧版自更新残留文件和旧缓存目录。"""
+        program_dir = target_path.parent
+        app_names = {"TwoPush", SelfUpdater._infer_legacy_app_name(state)}
+        for app_name in app_names:
+            for file_name in [
+                f"{app_name}_Update_Helper.ps1",
+                f"{app_name}_Update.ps1",
+            ]:
+                SelfUpdater._unlink_update_residue_file(program_dir / file_name, logger)
+
+        for file_name in [
+            "update_started.lock",
+            f"{target_path.stem}.new.exe",
+            f"{target_path.stem}.backup.exe",
+            "update.log",
+        ]:
+            SelfUpdater._unlink_update_residue_file(program_dir / file_name, logger)
+
+        legacy_cache_dir = program_dir / "UpdateCache"
+        legacy_temp_dir = program_dir / "TEMP"
+        legacy_temp_cache_dir = legacy_temp_dir / "UpdateCache"
+        SelfUpdater._rmtree_update_residue_dir(legacy_cache_dir, logger)
+        SelfUpdater._rmtree_update_residue_dir(legacy_temp_cache_dir, logger)
+
+        try:
+            if legacy_temp_dir.exists() and legacy_temp_dir.is_dir():
+                legacy_temp_dir.rmdir()
+                logger.debug(f"已删除空临时目录: {legacy_temp_dir}")
+        except OSError:
+            pass
+
+    @staticmethod
     def _cleanup_update_residue(logger: logging.Logger) -> None:
         """
         清理上次成功更新后的残留文件
@@ -845,13 +917,7 @@ class SelfUpdater:
             file_value = state.get("Files", file_key, fallback="")
             if not file_value:
                 continue
-            file_path = Path(file_value)
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-                    logger.debug(f"已删除残留文件: {file_path}")
-            except OSError:
-                pass
+            SelfUpdater._unlink_update_residue_file(Path(file_value), logger)
 
         runtime_dir_value = state.get("Files", "runtime_dir", fallback="")
         if runtime_dir_value:
@@ -863,14 +929,8 @@ class SelfUpdater:
             except OSError:
                 pass
 
-        if target_path:
-            log_file = target_path.parent / "update.log"
-            try:
-                if log_file.exists():
-                    log_file.unlink()
-                    logger.debug(f"已删除残留文件: {log_file}")
-            except OSError:
-                pass
+        if target_path and target_path.exists():
+            SelfUpdater._cleanup_legacy_update_residue(target_path, state, logger)
 
         try:
             state.delete()
