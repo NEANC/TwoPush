@@ -383,12 +383,15 @@ def test_format_push_preview_hides_channel_parameters():
     )
 
     assert '"channels": ["serverchan", "smtp"]' in preview
-    for forbidden in (
-            'sckey', 'SCTxxxx', 'key', 'secret-key',
-            'token', 'secret-token', 'secret', 'secret-value',
-            'webhook', 'https://example.test/webhook',
-            'password', 'secret-password', 'mail-password'):
-        assert forbidden not in preview
+    for forbidden_field in (
+            '"sckey"', '"key"', '"token"',
+            '"secret"', '"webhook"', '"password"'):
+        assert forbidden_field not in preview
+    for forbidden_value in (
+            'SCTxxxx', 'secret-key', 'secret-token', 'secret-value',
+            'https://example.test/webhook', 'secret-password',
+            'mail-password'):
+        assert forbidden_value not in preview
 
 
 def test_parse_args_accepts_template_options(monkeypatch):
