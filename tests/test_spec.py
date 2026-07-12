@@ -252,6 +252,35 @@ def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch,
     assert (program_dir / 'update_state.ini').exists()
 
 
+
+def test_rollback_uses_backup_file_in_runtime_dir(monkeypatch, tmp_path):
+    """回滚应使用状态文件中 runtime_dir 内的 backup_file"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime' / 'v2.0.0'
+    program_dir.mkdir()
+    runtime_dir.mkdir(parents=True)
+    target = program_dir / 'TwoPush.exe'
+    backup = runtime_dir / 'TwoPush.backup.exe'
+    target.write_bytes(b'broken')
+    backup.write_bytes(b'old')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'failed_disabled'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['backup_file'] = str(backup)
+    state.save()
+
+    assert SelfUpdater.rollback(logging.getLogger('test_rollback_runtime')) is True
+    assert target.read_bytes() == b'old'
+    assert not backup.exists()
+
+
+
 def _assert_sha256_fallbacks(content, script_name):
     """验证 Get-SHA256 函数包含多路径 fallback 结构"""
     assert 'function Get-SHA256($filePath)' in content, (
