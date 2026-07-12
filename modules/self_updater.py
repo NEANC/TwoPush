@@ -482,7 +482,7 @@ class SelfUpdater:
     @staticmethod
     def _ps_quote(path: Path) -> str:
         """将路径转换为 PowerShell 双引号字符串内容。"""
-        return str(path).replace('`', '``').replace('"', '`"')
+        return str(path).replace('`', '``').replace('"', '`"').replace('$', '`$')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
