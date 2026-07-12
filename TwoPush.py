@@ -374,6 +374,14 @@ def execute_push(json_path, config, logger):
         return 2
 
     proxy = resolve_proxy(template, config)
+    preview = format_push_preview(
+        title=title,
+        content=content,
+        proxy=proxy,
+        retry_settings=retry_settings,
+        channels=channels,
+    )
+    logger.info("推送预览：\n" + preview)
     with push_proxy_environment(proxy, logger):
         results = send_notification(
             title=title,

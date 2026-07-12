@@ -322,6 +322,48 @@ def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
     assert captured['retry_settings']['max_count'] == 3
 
 
+def test_execute_push_logs_rendered_push_preview_before_send(monkeypatch, caplog):
+    """execute_push 应在发送前记录渲染后的推送预览"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '每日报告 - {host_name}',
+        'content': '截止 {current_time}，系统运行正常',
+        'proxy': 'http://127.0.0.1:7890',
+        'retry': {'interval': '5s', 'max_count': 2},
+        'channels': [
+            {'provider': 'serverchan', 'sckey': 'SCTxxxx'},
+            {'provider': 'qmsg', 'key': 'secret-key'},
+        ],
+    })
+    monkeypatch.setattr(TwoPush, 'render_template_vars', lambda: {
+        'host_name': 'HOST',
+        'current_time': '2026/07/12 12:00:00',
+        'short_current_time': '12:00:00',
+    })
+
+    send_called = []
+
+    def fake_send_notification(**kwargs):
+        """记录发送调用并模拟成功"""
+        send_called.append(kwargs)
+        return [('serverchan', True), ('qmsg', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_logs_rendered_push_preview_before_send')
+
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 0
+
+    assert send_called
+    assert '推送预览：' in caplog.text
+    assert '"title": "每日报告 - HOST"' in caplog.text
+    assert '"content": "截止 2026/07/12 12:00:00，系统运行正常"' in caplog.text
+    assert '"proxy": "http://127.0.0.1:7890"' in caplog.text
+    assert '"retry": {"interval": 5, "max_count": 2}' in caplog.text
+    assert '"channels": ["serverchan", "qmsg"]' in caplog.text
+    assert 'SCTxxxx' not in caplog.text
+    assert 'secret-key' not in caplog.text
+
+
 def test_format_push_preview_outputs_stable_shape():
     """推送预览应输出无外层大括号的稳定 5 行结构"""
     preview = TwoPush.format_push_preview(
