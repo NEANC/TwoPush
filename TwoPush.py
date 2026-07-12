@@ -13,6 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
+from urllib.parse import urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -186,6 +187,37 @@ def push_proxy_environment(proxy, logger):
             os.environ['ALL_PROXY'] = old_all_proxy
 
 
+def mask_proxy_authentication(proxy):
+    """脱敏代理 URL 中的认证信息。
+
+    Args:
+        proxy: 代理地址。
+
+    Returns:
+        str | None: 脱敏后的代理地址。
+    """
+    if not proxy:
+        return proxy
+
+    parsed = urlsplit(proxy)
+    if not parsed.username and parsed.password is None:
+        return proxy
+
+    host = parsed.hostname or ''
+    if ':' in host and not host.startswith('['):
+        host = f'[{host}]'
+    if parsed.port is not None:
+        host = f'{host}:{parsed.port}'
+    netloc = f'***:***@{host}'
+    return urlunsplit((
+        parsed.scheme,
+        netloc,
+        parsed.path,
+        parsed.query,
+        parsed.fragment,
+    ))
+
+
 def format_push_preview(title, content, proxy, retry_settings, channels):
     """格式化推送前预览内容。
 
@@ -204,10 +236,11 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
         'interval': retry_settings.get('interval'),
         'max_count': retry_settings.get('max_count'),
     }
+    proxy_preview = mask_proxy_authentication(proxy)
     return '\n'.join([
         f'"title": {json.dumps(title, ensure_ascii=False)},',
         f'"content": {json.dumps(content, ensure_ascii=False)},',
-        f'"proxy": {json.dumps(proxy, ensure_ascii=False)},',
+        f'"proxy": {json.dumps(proxy_preview, ensure_ascii=False)},',
         f'"retry": {json.dumps(retry_preview, ensure_ascii=False)},',
         f'"channels": {json.dumps(channel_names, ensure_ascii=False)}',
     ])

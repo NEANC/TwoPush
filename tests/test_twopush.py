@@ -389,6 +389,21 @@ def test_format_push_preview_outputs_stable_shape():
     assert all(not line.startswith(' ') for line in preview.splitlines())
 
 
+def test_format_push_preview_masks_proxy_authentication():
+    """推送预览应脱敏代理认证信息"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='socks5://user:password@127.0.0.1:7890',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "socks5://***:***@127.0.0.1:7890"' in preview
+    assert 'user:password' not in preview
+    assert 'socks5://user:password@127.0.0.1:7890' not in preview
+
+
 def test_format_push_preview_keeps_retry_order_with_reversed_settings():
     """推送预览应固定 retry 字段顺序，不受传入字典顺序影响"""
     preview = TwoPush.format_push_preview(
