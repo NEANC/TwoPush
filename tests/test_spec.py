@@ -283,6 +283,52 @@ def test_ps1_fragments_generate_helper_only_function_groups():
     assert 'function Start-NormalAppVisible' in lifecycle
 
 
+def _make_update_runtime_paths(updater, tmp_path):
+    """构造用于生成更新脚本的运行时路径。"""
+    current_exe = tmp_path / 'program' / 'TwoPush.exe'
+    current_exe.parent.mkdir()
+    current_exe.write_bytes(b'exe')
+    return updater._build_update_runtime_paths(current_exe, 'v2.0.0')
+
+
+
+def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
+    """生成的更新脚本应使用注入的绝对路径访问运行时文件与状态文件。"""
+    from modules.self_updater import SelfUpdater
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        logger=logging.getLogger('test_generated_update_scripts_paths'),
+    )
+    paths = _make_update_runtime_paths(updater, tmp_path)
+    paths['runtime_dir'].mkdir(parents=True, exist_ok=True)
+
+    updater._generate_helper_ps1(paths)
+    updater._generate_update_ps1(paths)
+
+    helper_text = paths['helper_ps1'].read_text(encoding='utf-8-sig')
+    update_text = paths['update_ps1'].read_text(encoding='utf-8-sig')
+
+    assert f'$runtimeDir = "{SelfUpdater._ps_quote(paths["runtime_dir"])}"' in helper_text
+    assert f'$lockFile   = "{SelfUpdater._ps_quote(paths["lock_file"])}"' in helper_text
+    assert f'$stateFile = "{SelfUpdater._ps_quote(paths["state_file"])}"' in helper_text
+    assert f'$logFile   = "{SelfUpdater._ps_quote(paths["log_file"])}"' in helper_text
+    assert f'$updatePs1 = "{SelfUpdater._ps_quote(paths["update_ps1"])}"' in helper_text
+    assert 'Join-Path $scriptDir "update_state.ini"' not in helper_text
+    assert 'Join-Path $scriptDir "update.log"' not in helper_text
+
+    assert f'$runtimeDir = "{SelfUpdater._ps_quote(paths["runtime_dir"])}"' in update_text
+    assert f'$stateFile = "{SelfUpdater._ps_quote(paths["state_file"])}"' in update_text
+    assert f'$logFile   = "{SelfUpdater._ps_quote(paths["log_file"])}"' in update_text
+    assert 'Join-Path $scriptDir "update_state.ini"' not in update_text
+    assert 'Join-Path $scriptDir "update.log"' not in update_text
+
+
+
 def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_path):
     """生成的 PowerShell 更新脚本应使用 BOM 编码并包含多路径 SHA256 fallback"""
     from modules.self_updater import SelfUpdater
@@ -296,11 +342,14 @@ def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_pat
         logger=logging.getLogger('test_generated_update_scripts'),
     )
 
-    updater._generate_helper_ps1(tmp_path)
-    updater._generate_update_ps1(tmp_path)
+    paths = _make_update_runtime_paths(updater, tmp_path)
+    paths['runtime_dir'].mkdir(parents=True, exist_ok=True)
 
-    helper = tmp_path / 'TwoPush_Update_Helper.ps1'
-    update = tmp_path / 'TwoPush_Update.ps1'
+    updater._generate_helper_ps1(paths)
+    updater._generate_update_ps1(paths)
+
+    helper = paths['helper_ps1']
+    update = paths['update_ps1']
     assert helper.read_bytes().startswith(b'\xef\xbb\xbf')
     assert update.read_bytes().startswith(b'\xef\xbb\xbf')
 
@@ -329,3 +378,69 @@ def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_pat
     assert 'Read-IniValue "Version" "new_sha256"' in update_text
     assert 'Get-SHA256 $target' in helper_text
     assert 'Get-SHA256 $newFile' in update_text
+
+
+
+def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path):
+    """替换准备阶段应将隔离 runtime_dir 的绝对路径写入状态文件。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    current_exe = program_dir / 'TwoPush.exe'
+    source_exe = tmp_path / 'downloaded.exe'
+    sha_file = tmp_path / 'downloaded.sha256'
+    custom_temp = tmp_path / 'custom_temp'
+    program_dir.mkdir()
+    current_exe.write_bytes(b'old exe')
+    source_exe.write_bytes(b'new exe')
+    sha_file.write_text('sha256', encoding='utf-8')
+    monkeypatch.setattr(sys, 'argv', [str(current_exe)])
+    monkeypatch.setattr('modules.self_updater.get_exe_path', lambda: current_exe)
+
+    class FakeProcess:
+        """模拟 PowerShell helper 进程。"""
+
+        returncode = None
+
+        def __init__(self, args, **kwargs):
+            lock_index = args.index('-File') + 1
+            self.helper_ps1 = args[lock_index]
+            (custom_temp / 'v2.0.0' / 'update_started.lock').write_text(
+                'started', encoding='utf-8'
+            )
+
+        def poll(self):
+            """返回进程状态。"""
+            return None
+
+        def kill(self):
+            """模拟终止进程。"""
+            return None
+
+    monkeypatch.setattr('modules.self_updater.subprocess.Popen', FakeProcess)
+
+    updater = SelfUpdater(
+        github_repo='NEANC/TwoPush',
+        asset_pattern=r'^TwoPush-.*\.exe$',
+        app_name='TwoPush',
+        current_version='v1.0.0',
+        proxy='',
+        temp_folder=str(custom_temp),
+        logger=logging.getLogger('test_replace_executable_state'),
+    )
+
+    updater._replace_executable(source_exe, sha_file, 'v2.0.0', 'oldhash', 'newhash')
+
+    state = UpdateState.load()
+    assert state is not None
+    runtime_dir = custom_temp / 'v2.0.0'
+    assert state.get('Runtime', 'runtime_dir') == str(runtime_dir)
+    assert state.get('Runtime', 'helper_ps1') == str(runtime_dir / 'TwoPush_Update_Helper.ps1')
+    assert state.get('Runtime', 'update_ps1') == str(runtime_dir / 'TwoPush_Update.ps1')
+    assert state.get('Runtime', 'lock_file') == str(runtime_dir / 'update_started.lock')
+    assert state['new_file'] == str(runtime_dir / 'TwoPush.new.exe')
+    assert state['backup_file'] == str(runtime_dir / 'TwoPush.backup.exe')
+    assert (runtime_dir / 'TwoPush.new.exe').read_bytes() == b'new exe'
+    assert (runtime_dir / 'TwoPush_Update_Helper.ps1').exists()
+    assert (runtime_dir / 'TwoPush_Update.ps1').exists()

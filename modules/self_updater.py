@@ -479,6 +479,11 @@ class SelfUpdater:
             'backup_file': runtime_dir / f'{current_exe.stem}.backup.exe',
         }
 
+    @staticmethod
+    def _ps_quote(path: Path) -> str:
+        """将路径转换为 PowerShell 双引号字符串内容。"""
+        return str(path).replace('`', '``').replace('"', '`"')
+
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
                              new_sha256: str) -> None:
@@ -489,9 +494,10 @@ class SelfUpdater:
             RuntimeError: helper.ps1 启动失败
         """
         current_exe = get_exe_path()
-        base_dir = current_exe.parent
-        new_exe = base_dir / f"{current_exe.stem}.new.exe"
-        backup_exe = base_dir / f"{current_exe.stem}.backup.exe"
+        paths = self._build_update_runtime_paths(current_exe, new_version)
+        paths['runtime_dir'].mkdir(parents=True, exist_ok=True)
+        new_exe = paths['new_file']
+        backup_exe = paths['backup_file']
 
         shutil.copy2(tmp_path, new_exe)
         self.logger.info(f"新版本已暂存: {new_exe}")
@@ -505,22 +511,28 @@ class SelfUpdater:
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256
         state["new_sha256"] = new_sha256
+        if not state._config.has_section("Runtime"):
+            state._config.add_section("Runtime")
+        state.set("Runtime", "runtime_dir", str(paths['runtime_dir']))
+        state.set("Runtime", "helper_ps1", str(paths['helper_ps1']))
+        state.set("Runtime", "update_ps1", str(paths['update_ps1']))
+        state.set("Runtime", "lock_file", str(paths['lock_file']))
         state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
         state.save()
 
-        self._generate_helper_ps1(base_dir)
-        self._generate_update_ps1(base_dir)
-        self.logger.info(f"已生成更新脚本到目录: {base_dir}")
+        self._generate_helper_ps1(paths)
+        self._generate_update_ps1(paths)
+        self.logger.info(f"已生成更新脚本到目录: {paths['runtime_dir']}")
 
         state.transition("helper_started")
 
         self.logger.info("启动更新进程...")
-        lock_file = base_dir / "update_started.lock"
+        lock_file = paths['lock_file']
         if lock_file.exists():
             lock_file.unlink()
 
-        helper_ps1 = base_dir / f"{self.app_name}_Update_Helper.ps1"
+        helper_ps1 = paths['helper_ps1']
         proc = subprocess.Popen(
             [
                 "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
@@ -549,10 +561,17 @@ class SelfUpdater:
 
     # ── PS1 脚本生成（从 modules/self_updater.py 完整复用） ──
 
-    def _generate_helper_ps1(self, script_dir: Path) -> None:
+    def _generate_helper_ps1(self, paths: dict[str, Path]) -> None:
         """
         生成 {app}_Update_Helper.ps1
         """.format(app=self.app_name)
+        replacements = {
+            "__RUNTIME_DIR__": self._ps_quote(paths['runtime_dir']),
+            "__LOCK_FILE__": self._ps_quote(paths['lock_file']),
+            "__STATE_FILE__": self._ps_quote(paths['state_file']),
+            "__LOG_FILE__": self._ps_quote(paths['log_file']),
+            "__UPDATE_PS1__": self._ps_quote(paths['update_ps1']),
+        }
         ps1_content = textwrap.dedent(r"""
             <#
             .SYNOPSIS
@@ -562,17 +581,20 @@ class SelfUpdater:
             #>
             param([int]$ParentPid)
 
-            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $runtimeDir = "__RUNTIME_DIR__"
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
             $scriptTag  = ($scriptName -split '_')[-1]
-            $lockFile   = Join-Path $scriptDir "update_started.lock"
+            $lockFile   = "__LOCK_FILE__"
 
             try { New-Item -Path $lockFile -ItemType File -Force | Out-Null } catch {}
 
-            $stateFile = Join-Path $scriptDir "update_state.ini"
-            $logFile   = Join-Path $scriptDir "update.log"
-            $updatePs1 = Join-Path $scriptDir "__APP___Update.ps1"
-        """).replace("__APP__", self.app_name) + "\n".join([
+            $stateFile = "__STATE_FILE__"
+            $logFile   = "__LOG_FILE__"
+            $updatePs1 = "__UPDATE_PS1__"
+        """).replace("__APP__", self.app_name)
+        for placeholder, value in replacements.items():
+            ps1_content = ps1_content.replace(placeholder, value)
+        ps1_content += "\n".join([
             generate_common_base_functions_ps1(),
             generate_helper_argument_functions_ps1(),
             generate_sha256_function_ps1(),
@@ -636,13 +658,18 @@ class SelfUpdater:
         """).lstrip("\n"),
         ])
 
-        script_path = script_dir / f"{self.app_name}_Update_Helper.ps1"
+        script_path = paths['helper_ps1']
         script_path.write_text(ps1_content, encoding='utf-8-sig')
 
-    def _generate_update_ps1(self, script_dir: Path) -> None:
+    def _generate_update_ps1(self, paths: dict[str, Path]) -> None:
         """
         生成 {app}_Update.ps1
         """.format(app=self.app_name)
+        replacements = {
+            "__RUNTIME_DIR__": self._ps_quote(paths['runtime_dir']),
+            "__STATE_FILE__": self._ps_quote(paths['state_file']),
+            "__LOG_FILE__": self._ps_quote(paths['log_file']),
+        }
         ps1_content = textwrap.dedent(r"""
             <#
             .SYNOPSIS
@@ -651,12 +678,15 @@ class SelfUpdater:
                 替换 app.exe 为新版本：app.exe - app.backup.exe, app.new.exe - app.exe
             #>
 
-            $scriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $runtimeDir = "__RUNTIME_DIR__"
             $scriptName = Split-Path -Leaf $MyInvocation.MyCommand.Path
             $scriptTag  = ($scriptName -split '_')[-1]
-            $stateFile  = Join-Path $scriptDir "update_state.ini"
-            $logFile    = Join-Path $scriptDir "update.log"
-        """).replace("__APP__", self.app_name) + "\n".join([
+            $stateFile = "__STATE_FILE__"
+            $logFile   = "__LOG_FILE__"
+        """).replace("__APP__", self.app_name)
+        for placeholder, value in replacements.items():
+            ps1_content = ps1_content.replace(placeholder, value)
+        ps1_content += "\n".join([
             generate_common_base_functions_ps1(),
             generate_sha256_function_ps1(),
             generate_common_state_functions_ps1(),
@@ -713,7 +743,7 @@ class SelfUpdater:
         """).lstrip("\n"),
         ])
 
-        script_path = script_dir / f"{self.app_name}_Update.ps1"
+        script_path = paths['update_ps1']
         script_path.write_text(ps1_content, encoding='utf-8-sig')
 
     # ── 静态工具方法 ──
