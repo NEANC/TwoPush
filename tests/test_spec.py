@@ -141,6 +141,63 @@ def _assert_sha256_fallbacks(content, script_name):
     )
 
 
+def test_ps1_fragments_generate_sha256_function():
+    """PS1 片段模块应生成 SHA256 多路径 fallback 函数"""
+    from modules.ps1_fragments import generate_sha256_function_ps1
+
+    content = generate_sha256_function_ps1()
+
+    _assert_sha256_fallbacks(content, 'ps1_fragments.generate_sha256_function_ps1')
+    assert content.count('function Get-SHA256') == 1
+    assert '$errors = @()' in content
+    assert '$LASTEXITCODE = 0' in content
+
+
+def test_ps1_fragments_generate_common_function_groups():
+    """公共 PS1 片段应包含基础、状态与移动函数"""
+    from modules.ps1_fragments import (
+        generate_common_base_functions_ps1,
+        generate_common_state_functions_ps1,
+        generate_move_with_retry_ps1,
+    )
+
+    base = generate_common_base_functions_ps1()
+    state = generate_common_state_functions_ps1()
+    move = generate_move_with_retry_ps1()
+
+    assert 'function Normalize-IniValue' in base
+    assert 'function Assert-NotEmpty' in base
+    assert 'function Write-Log' in base
+    assert 'function Read-IniValue' in state
+    assert 'function Write-IniValue' in state
+    assert 'function Set-UpdateStatus' in state
+    assert 'function Move-WithRetry' in move
+    assert 'function Get-SHA256' not in base + state + move
+
+
+def test_ps1_fragments_generate_helper_only_function_groups():
+    """Helper 独有 PS1 片段应按职责分组且不进入 Update 公共片段"""
+    from modules.ps1_fragments import (
+        generate_helper_argument_functions_ps1,
+        generate_helper_file_cleanup_functions_ps1,
+        generate_helper_lifecycle_functions_ps1,
+        generate_helper_retry_functions_ps1,
+    )
+
+    argument = generate_helper_argument_functions_ps1()
+    retry = generate_helper_retry_functions_ps1()
+    cleanup = generate_helper_file_cleanup_functions_ps1()
+    lifecycle = generate_helper_lifecycle_functions_ps1()
+
+    assert 'function Quote-Arg' in argument
+    assert 'function Get-RetryOrDefault' in retry
+    assert 'function Remove-WithRetry' in cleanup
+    assert 'function Commit-Update' in lifecycle
+    assert 'function Restore-Backup' in lifecycle
+    assert 'function Start-ProcWait' in lifecycle
+    assert 'function Start-NormalAppVisible' in lifecycle
+
+
 def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_path):
     """生成的 PowerShell 更新脚本应使用 BOM 编码并包含多路径 SHA256 fallback"""
     from modules.self_updater import SelfUpdater
@@ -168,10 +225,21 @@ def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_pat
     _assert_sha256_fallbacks(helper_text, 'Helper.ps1')
     _assert_sha256_fallbacks(update_text, 'Update.ps1')
 
+    assert 'function Quote-Arg' in helper_text
+    assert 'function Quote-Arg' not in update_text
     assert 'function Restore-Backup' in helper_text
+    assert 'function Restore-Backup' not in update_text
     assert 'function Start-ProcWait' in helper_text
     assert 'function Move-WithRetry' in helper_text
     assert 'function Move-WithRetry' in update_text
+    assert 'function Start-NormalAppVisible' in helper_text
+    assert 'function Start-NormalAppVisible' not in update_text
+    assert helper_text.count('function Get-SHA256') == 1
+    assert update_text.count('function Get-SHA256') == 1
+    assert helper_text.count('function Move-WithRetry') == 1
+    assert update_text.count('function Move-WithRetry') == 1
+    assert helper_text.count('function Set-UpdateStatus') == 1
+    assert update_text.count('function Set-UpdateStatus') == 1
     assert 'Read-IniValue "Files" "target"' in update_text
     assert 'Read-IniValue "Version" "new_sha256"' in update_text
     assert 'Get-SHA256 $target' in helper_text
