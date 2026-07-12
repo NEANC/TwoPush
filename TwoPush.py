@@ -200,11 +200,15 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
         str: 无最外层大括号的 5 行 JSON 风格预览。
     """
     channel_names = [channel.get('provider', '?') for channel in channels]
+    retry_preview = {
+        'interval': retry_settings.get('interval'),
+        'max_count': retry_settings.get('max_count'),
+    }
     return '\n'.join([
         f'"title": {json.dumps(title, ensure_ascii=False)},',
         f'"content": {json.dumps(content, ensure_ascii=False)},',
         f'"proxy": {json.dumps(proxy, ensure_ascii=False)},',
-        f'"retry": {json.dumps(retry_settings, ensure_ascii=False)},',
+        f'"retry": {json.dumps(retry_preview, ensure_ascii=False)},',
         f'"channels": {json.dumps(channel_names, ensure_ascii=False)}',
     ])
 

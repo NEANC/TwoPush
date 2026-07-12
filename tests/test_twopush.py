@@ -347,6 +347,20 @@ def test_format_push_preview_outputs_stable_shape():
     assert all(not line.startswith(' ') for line in preview.splitlines())
 
 
+def test_format_push_preview_keeps_retry_order_with_reversed_settings():
+    """推送预览应固定 retry 字段顺序，不受传入字典顺序影响"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy=None,
+        retry_settings={'max_count': 2, 'interval': 5},
+        channels=[{}],
+    )
+
+    assert '"retry": {"interval": 5, "max_count": 2},' in preview
+    assert '"channels": ["?"]' in preview
+
+
 def test_parse_args_accepts_template_options(monkeypatch):
     """模板生成参数应支持 README 中定义的形式"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])
