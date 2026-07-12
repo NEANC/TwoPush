@@ -298,6 +298,15 @@ class SelfUpdater:
 
         return True
 
+    def _get_popen_creation_flags(self) -> int:
+        """返回启动 helper.ps1 的 subprocess.creationflags。"""
+        if sys.platform != 'win32':
+            return 0
+        return (
+            subprocess.CREATE_NO_WINDOW
+            | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+        )
+
     def check_self_update(self, force: bool = False) -> bool:
         """
         检查并准备自身更新
@@ -482,7 +491,10 @@ class SelfUpdater:
     @staticmethod
     def _ps_quote(path: Path) -> str:
         """将路径转换为 PowerShell 双引号字符串内容。"""
-        return str(path).replace('`', '``').replace('"', '`"').replace('$', '`$')
+        path_str = str(path)
+        if re.match(r'^[A-Za-z]:', path_str) or '\\' in path_str:
+            path_str = path_str.replace('/', '\\\\')
+        return path_str.replace('`', '``').replace('"', '`"').replace('$', '`$')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
                              new_version: str, old_sha256: str,
@@ -537,8 +549,7 @@ class SelfUpdater:
                 "-File", str(helper_ps1),
                 "-ParentPid", str(os.getpid()),
             ],
-            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            | subprocess.CREATE_NO_WINDOW,
+            creationflags=self._get_popen_creation_flags(),
         )
 
         deadline = time.time() + 15
