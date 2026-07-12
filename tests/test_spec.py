@@ -55,10 +55,10 @@ def test_self_updater_static_methods_exist():
 
 def test_self_updater_ps_quote_escapes_powershell_interpolation_chars():
     """PowerShell 双引号路径注入应转义会触发插值的字符"""
-    from pathlib import Path
+    from pathlib import PurePosixPath
     from modules.self_updater import SelfUpdater
 
-    quoted = SelfUpdater._ps_quote(Path('C:/A$B/Name`Part/Quote"Part'))
+    quoted = SelfUpdater._ps_quote(PurePosixPath('C:/A$B/Name`Part/Quote"Part'))
 
     assert quoted == 'C:\\A`$B\\Name``Part\\Quote`"Part'
 

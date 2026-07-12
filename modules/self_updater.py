@@ -493,7 +493,7 @@ class SelfUpdater:
         """将路径转换为 PowerShell 双引号字符串内容。"""
         path_str = str(path)
         if re.match(r'^[A-Za-z]:', path_str) or '\\' in path_str:
-            path_str = path_str.replace('/', '\\\\')
+            path_str = path_str.replace('/', '\\')
         return path_str.replace('`', '``').replace('"', '`"').replace('$', '`$')
 
     def _replace_executable(self, tmp_path: Path, sha_path: Path,
