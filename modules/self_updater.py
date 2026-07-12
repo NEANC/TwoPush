@@ -512,7 +512,7 @@ class SelfUpdater:
         backup_exe = paths['backup_file']
 
         shutil.copy2(tmp_path, new_exe)
-        self.logger.info(f"新版本已暂存: {new_exe}")
+        self.logger.debug(f"新版本已暂存: {new_exe}")
 
         state = UpdateState()
         state["state"] = "downloaded_verified"
@@ -533,6 +533,8 @@ class SelfUpdater:
 
         self._generate_helper_ps1(paths)
         self._generate_update_ps1(paths)
+        self.logger.debug(f"已生成更新脚本: {paths['helper_ps1']}")
+        self.logger.debug(f"已生成更新脚本: {paths['update_ps1']}")
         self.logger.info(f"已生成更新脚本到目录: {paths['runtime_dir']}")
 
         state.transition("helper_started")
