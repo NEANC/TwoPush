@@ -361,6 +361,36 @@ def test_format_push_preview_keeps_retry_order_with_reversed_settings():
     assert '"channels": ["?"]' in preview
 
 
+def test_format_push_preview_hides_channel_parameters():
+    """推送预览的 channels 只应显示通道名，不泄露参数"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy=None,
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[
+            {
+                'provider': 'serverchan',
+                'sckey': 'SCTxxxx',
+                'key': 'secret-key',
+                'token': 'secret-token',
+                'secret': 'secret-value',
+                'webhook': 'https://example.test/webhook',
+                'password': 'secret-password',
+            },
+            {'provider': 'smtp', 'password': 'mail-password'},
+        ],
+    )
+
+    assert '"channels": ["serverchan", "smtp"]' in preview
+    for forbidden in (
+            'sckey', 'SCTxxxx', 'key', 'secret-key',
+            'token', 'secret-token', 'secret', 'secret-value',
+            'webhook', 'https://example.test/webhook',
+            'password', 'secret-password', 'mail-password'):
+        assert forbidden not in preview
+
+
 def test_parse_args_accepts_template_options(monkeypatch):
     """模板生成参数应支持 README 中定义的形式"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])
