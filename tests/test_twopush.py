@@ -322,6 +322,31 @@ def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
     assert captured['retry_settings']['max_count'] == 3
 
 
+def test_format_push_preview_outputs_stable_shape():
+    """推送预览应输出无外层大括号的稳定 5 行结构"""
+    preview = TwoPush.format_push_preview(
+        title='每日报告 - HOST',
+        content='截止 2026/07/12 12:00:00，系统运行正常',
+        proxy='http://127.0.0.1:7890',
+        retry_settings={'interval': 5, 'max_count': 2},
+        channels=[
+            {'provider': 'serverchan', 'sckey': 'SCTxxxx'},
+            {'provider': 'qmsg', 'key': 'xxx'},
+        ],
+    )
+
+    assert preview == (
+        '"title": "每日报告 - HOST",\n'
+        '"content": "截止 2026/07/12 12:00:00，系统运行正常",\n'
+        '"proxy": "http://127.0.0.1:7890",\n'
+        '"retry": {"interval": 5, "max_count": 2},\n'
+        '"channels": ["serverchan", "qmsg"]'
+    )
+    assert not preview.startswith('{')
+    assert not preview.endswith('}')
+    assert all(not line.startswith(' ') for line in preview.splitlines())
+
+
 def test_parse_args_accepts_template_options(monkeypatch):
     """模板生成参数应支持 README 中定义的形式"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])

@@ -8,6 +8,7 @@
 """
 
 import argparse
+import json
 import os
 import sys
 
@@ -183,6 +184,29 @@ def push_proxy_environment(proxy, logger):
             os.environ.pop('ALL_PROXY', None)
         else:
             os.environ['ALL_PROXY'] = old_all_proxy
+
+
+def format_push_preview(title, content, proxy, retry_settings, channels):
+    """格式化推送前预览内容。
+
+    Args:
+        title: 渲染后的通知标题。
+        content: 渲染后的通知内容。
+        proxy: 最终生效的代理值。
+        retry_settings: 最终重试配置。
+        channels: 标准通道字典列表。
+
+    Returns:
+        str: 无最外层大括号的 5 行 JSON 风格预览。
+    """
+    channel_names = [channel.get('provider', '?') for channel in channels]
+    return '\n'.join([
+        f'"title": {json.dumps(title, ensure_ascii=False)},',
+        f'"content": {json.dumps(content, ensure_ascii=False)},',
+        f'"proxy": {json.dumps(proxy, ensure_ascii=False)},',
+        f'"retry": {json.dumps(retry_settings, ensure_ascii=False)},',
+        f'"channels": {json.dumps(channel_names, ensure_ascii=False)}',
+    ])
 
 
 def init_self_updater(config, logger):
