@@ -929,7 +929,7 @@ class SelfUpdater:
             except OSError:
                 pass
 
-        if target_path and target_path.exists():
+        if target_path:
             SelfUpdater._cleanup_legacy_update_residue(target_path, state, logger)
 
         try:

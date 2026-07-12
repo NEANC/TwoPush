@@ -275,20 +275,92 @@ def test_cleanup_update_residue_removes_legacy_residue_when_verified(monkeypatch
     assert not (program_dir / 'update_state.ini').exists()
 
 
+
+def test_cleanup_update_residue_removes_legacy_residue_when_target_missing(
+        monkeypatch, tmp_path):
+    """verified 状态下 target 不存在时仍应按 target 路径清理旧版残留"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    legacy_cache = program_dir / 'UpdateCache'
+    legacy_temp = program_dir / 'TEMP'
+    legacy_temp_cache = legacy_temp / 'UpdateCache'
+    unknown_cache = program_dir / 'OtherUpdateCache'
+
+    for path in [program_dir, legacy_cache, legacy_temp_cache, unknown_cache]:
+        path.mkdir(parents=True)
+
+    target = program_dir / 'TwoPush.exe'
+    legacy_files = [
+        program_dir / 'LegacyApp_Update_Helper.ps1',
+        program_dir / 'LegacyApp_Update.ps1',
+        program_dir / 'update_started.lock',
+        program_dir / 'TwoPush.new.exe',
+        program_dir / 'TwoPush.backup.exe',
+        program_dir / 'update.log',
+    ]
+    temp_keep = legacy_temp / 'keep.txt'
+    unknown_file = unknown_cache / 'keep.bin'
+
+    for path in [temp_keep, unknown_file, *legacy_files]:
+        path.write_text('test', encoding='utf-8')
+    (legacy_cache / 'old.bin').write_text('cache', encoding='utf-8')
+    (legacy_temp_cache / 'old.bin').write_text('cache', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'verified'
+    state['target'] = str(target)
+    state['helper_ps1'] = str(program_dir / 'LegacyApp_Update_Helper.ps1')
+    state.save()
+
+    assert not target.exists()
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_legacy_missing_target')
+    )
+
+    for path in legacy_files:
+        assert not path.exists()
+    assert not legacy_cache.exists()
+    assert not legacy_temp_cache.exists()
+    assert legacy_temp.exists()
+    assert temp_keep.exists()
+    assert unknown_file.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+
+
+
 def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch, tmp_path):
-    """非 verified 状态不应清理运行时目录和状态文件"""
+    """非 verified 状态不应清理运行时目录、旧残留和状态文件"""
     from modules.self_config import UpdateState
     from modules.self_updater import SelfUpdater
 
     program_dir = tmp_path / 'program'
     runtime_dir = tmp_path / 'runtime'
-    program_dir.mkdir()
-    runtime_dir.mkdir()
+    legacy_cache = program_dir / 'UpdateCache'
+    legacy_temp = program_dir / 'TEMP'
+    legacy_temp_cache = legacy_temp / 'UpdateCache'
+
+    for path in [program_dir, runtime_dir, legacy_cache, legacy_temp_cache]:
+        path.mkdir(parents=True)
 
     target = program_dir / 'TwoPush.exe'
     backup_file = runtime_dir / 'TwoPush.backup.exe'
-    target.write_text('target', encoding='utf-8')
-    backup_file.write_text('backup', encoding='utf-8')
+    legacy_files = [
+        program_dir / 'TwoPush_Update_Helper.ps1',
+        program_dir / 'TwoPush_Update.ps1',
+        program_dir / 'update_started.lock',
+        program_dir / f'{target.stem}.new.exe',
+        program_dir / f'{target.stem}.backup.exe',
+        program_dir / 'update.log',
+    ]
+
+    for path in [target, backup_file, *legacy_files]:
+        path.write_text('test', encoding='utf-8')
+    (legacy_cache / 'old.bin').write_text('cache', encoding='utf-8')
+    (legacy_temp_cache / 'old.bin').write_text('cache', encoding='utf-8')
 
     monkeypatch.setattr(sys, 'argv', [str(target)])
     state = UpdateState()
@@ -303,6 +375,12 @@ def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch,
     assert runtime_dir.exists()
     assert backup_file.exists()
     assert (program_dir / 'update_state.ini').exists()
+    for path in legacy_files:
+        assert path.exists()
+    assert legacy_cache.exists()
+    assert (legacy_cache / 'old.bin').exists()
+    assert legacy_temp_cache.exists()
+    assert (legacy_temp_cache / 'old.bin').exists()
 
 
 
