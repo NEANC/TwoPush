@@ -511,12 +511,10 @@ class SelfUpdater:
         state["new_version"] = new_version
         state["old_sha256"] = old_sha256
         state["new_sha256"] = new_sha256
-        if not state._config.has_section("Runtime"):
-            state._config.add_section("Runtime")
-        state.set("Runtime", "runtime_dir", str(paths['runtime_dir']))
-        state.set("Runtime", "helper_ps1", str(paths['helper_ps1']))
-        state.set("Runtime", "update_ps1", str(paths['update_ps1']))
-        state.set("Runtime", "lock_file", str(paths['lock_file']))
+        state["runtime_dir"] = str(paths['runtime_dir'])
+        state["helper_ps1"] = str(paths['helper_ps1'])
+        state["update_ps1"] = str(paths['update_ps1'])
+        state["lock_file"] = str(paths['lock_file'])
         state.set("Retry", "retry_count", _get_existing_retry_count())
         state.set("Retry", "max_retry", "3")
         state.save()

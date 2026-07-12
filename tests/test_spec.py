@@ -435,10 +435,11 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
     state = UpdateState.load()
     assert state is not None
     runtime_dir = custom_temp / 'v2.0.0'
-    assert state.get('Runtime', 'runtime_dir') == str(runtime_dir)
-    assert state.get('Runtime', 'helper_ps1') == str(runtime_dir / 'TwoPush_Update_Helper.ps1')
-    assert state.get('Runtime', 'update_ps1') == str(runtime_dir / 'TwoPush_Update.ps1')
-    assert state.get('Runtime', 'lock_file') == str(runtime_dir / 'update_started.lock')
+    assert state.get('Files', 'runtime_dir') == str(runtime_dir)
+    assert state.get('Files', 'helper_ps1') == str(runtime_dir / 'TwoPush_Update_Helper.ps1')
+    assert state.get('Files', 'update_ps1') == str(runtime_dir / 'TwoPush_Update.ps1')
+    assert state.get('Files', 'lock_file') == str(runtime_dir / 'update_started.lock')
+    assert not state._config.has_section('Runtime')
     assert state['new_file'] == str(runtime_dir / 'TwoPush.new.exe')
     assert state['backup_file'] == str(runtime_dir / 'TwoPush.backup.exe')
     assert (runtime_dir / 'TwoPush.new.exe').read_bytes() == b'new exe'
