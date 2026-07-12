@@ -821,29 +821,46 @@ class SelfUpdater:
             return
 
         logger.info("清理上次更新残留文件...")
-        target_path = Path(state["target"])
-        script_dir = target_path.parent
+        target_value = state.get("Files", "target", fallback="")
+        target_path = Path(target_value) if target_value else None
 
-        app_name = "TwoPush"
-        cleanup_files = [
-            Path(state["backup_file"]),
-            script_dir / "update_started.lock",
-            script_dir / "update.log",
-            script_dir / f"{target_path.stem}.new.exe",
-            script_dir / f"{target_path.stem}.backup.exe",
-            script_dir / f"{app_name}_Update_Helper.ps1",
-            script_dir / f"{app_name}_Update.ps1",
-        ]
-
-        for f in cleanup_files:
+        for file_key in [
+            "helper_ps1",
+            "update_ps1",
+            "lock_file",
+            "new_file",
+            "backup_file",
+        ]:
+            file_value = state.get("Files", file_key, fallback="")
+            if not file_value:
+                continue
+            file_path = Path(file_value)
             try:
-                if f.exists():
-                    f.unlink()
-                    logger.debug(f"已删除残留文件: {f}")
+                if file_path.exists():
+                    file_path.unlink()
+                    logger.debug(f"已删除残留文件: {file_path}")
             except OSError:
                 pass
 
-        # 最后删除状态文件自身
+        runtime_dir_value = state.get("Files", "runtime_dir", fallback="")
+        if runtime_dir_value:
+            try:
+                runtime_dir = Path(runtime_dir_value)
+                if runtime_dir.exists():
+                    runtime_dir.rmdir()
+                    logger.debug(f"已删除空运行时目录: {runtime_dir}")
+            except OSError:
+                pass
+
+        if target_path:
+            log_file = target_path.parent / "update.log"
+            try:
+                if log_file.exists():
+                    log_file.unlink()
+                    logger.debug(f"已删除残留文件: {log_file}")
+            except OSError:
+                pass
+
         try:
             state.delete()
         except Exception:

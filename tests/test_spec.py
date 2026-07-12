@@ -166,41 +166,90 @@ def test_self_update_verify_checks_expected_version_without_injected_func(monkey
     assert result == 3
 
 
-def test_cleanup_update_residue_only_removes_current_app_files(monkeypatch, tmp_path):
-    """清理更新残留时不应删除同目录下其他应用的更新文件"""
+def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path):
+    """清理 verified 状态残留时应仅删除状态文件记录的运行时文件"""
     from modules.self_config import UpdateState
     from modules.self_updater import SelfUpdater
 
-    target = tmp_path / 'TwoPush-Nuitka-v1.2.3.exe'
-    backup = tmp_path / 'TwoPush-Nuitka-v1.2.3.backup.exe'
-    target.write_bytes(b'target')
-    backup.write_bytes(b'backup')
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime'
+    program_dir.mkdir()
+    runtime_dir.mkdir()
 
-    own_helper = tmp_path / 'TwoPush_Update_Helper.ps1'
-    own_update = tmp_path / 'TwoPush_Update.ps1'
-    own_new = tmp_path / 'TwoPush-Nuitka-v1.2.3.new.exe'
-    foreign_helper = tmp_path / 'Other_Update_Helper.ps1'
-    foreign_update = tmp_path / 'Other_Update.ps1'
-    foreign_new = tmp_path / 'Other.new.exe'
-    for path in [own_helper, own_update, own_new, foreign_helper, foreign_update, foreign_new]:
+    target = program_dir / 'TwoPush.exe'
+    helper_ps1 = runtime_dir / 'TwoPush_Update_Helper.ps1'
+    update_ps1 = runtime_dir / 'TwoPush_Update.ps1'
+    lock_file = runtime_dir / 'update_started.lock'
+    new_file = runtime_dir / 'TwoPush.new.exe'
+    backup_file = runtime_dir / 'TwoPush.backup.exe'
+    update_log = program_dir / 'update.log'
+    foreign_helper = program_dir / 'Other_Update_Helper.ps1'
+
+    for path in [
+        target,
+        helper_ps1,
+        update_ps1,
+        lock_file,
+        new_file,
+        backup_file,
+        update_log,
+        foreign_helper,
+    ]:
         path.write_text('test', encoding='utf-8')
 
     monkeypatch.setattr(sys, 'argv', [str(target)])
     state = UpdateState()
     state['state'] = 'verified'
     state['target'] = str(target)
-    state['backup_file'] = str(backup)
+    state['runtime_dir'] = str(runtime_dir)
+    state['helper_ps1'] = str(helper_ps1)
+    state['update_ps1'] = str(update_ps1)
+    state['lock_file'] = str(lock_file)
+    state['new_file'] = str(new_file)
+    state['backup_file'] = str(backup_file)
     state.save()
 
     SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_update_residue'))
 
-    assert not own_helper.exists()
-    assert not own_update.exists()
-    assert not own_new.exists()
-    assert not backup.exists()
+    assert not helper_ps1.exists()
+    assert not update_ps1.exists()
+    assert not lock_file.exists()
+    assert not new_file.exists()
+    assert not backup_file.exists()
+    assert not runtime_dir.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+    assert not update_log.exists()
     assert foreign_helper.exists()
-    assert foreign_update.exists()
-    assert foreign_new.exists()
+
+
+def test_cleanup_update_residue_keeps_runtime_dir_when_not_verified(monkeypatch, tmp_path):
+    """非 verified 状态不应清理运行时目录和状态文件"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime'
+    program_dir.mkdir()
+    runtime_dir.mkdir()
+
+    target = program_dir / 'TwoPush.exe'
+    backup_file = runtime_dir / 'TwoPush.backup.exe'
+    target.write_text('target', encoding='utf-8')
+    backup_file.write_text('backup', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'replacing'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['backup_file'] = str(backup_file)
+    state.save()
+
+    SelfUpdater._cleanup_update_residue(logging.getLogger('test_cleanup_update_residue'))
+
+    assert runtime_dir.exists()
+    assert backup_file.exists()
+    assert (program_dir / 'update_state.ini').exists()
 
 
 def _assert_sha256_fallbacks(content, script_name):
