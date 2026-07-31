@@ -266,7 +266,11 @@ class DownloadManager:
         if size == segment.length:
             return -1
         # size > segment.length，异常情况，删除重下
-        part_path.unlink()
+        try:
+            part_path.unlink()
+        except OSError as exc:
+            self.logger.debug(f"删除异常 part 文件失败: {part_path}: {exc}")
+            return 0
         return 0
 
     def _content_range_matches(self, segment: DownloadSegment, request_start: int,
@@ -479,7 +483,11 @@ class DownloadManager:
             )
 
             if use_multithread:
-                success = self._download_multithreaded(url, target, metadata.total_size)
+                try:
+                    success = self._download_multithreaded(url, target, metadata.total_size)
+                except Exception as exc:
+                    self.logger.debug(f"多线程下载异常，回退单线程下载: {exc}")
+                    success = False
                 if not success:
                     self._cleanup_part_files(target)
                     with requests.Session() as session:

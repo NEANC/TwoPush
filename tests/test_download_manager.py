@@ -33,6 +33,35 @@ def test_download_file_falls_back_to_single_thread_after_multithread_failure(
     assert not (tmp_path / 'TwoPush.exe.part0').exists()
 
 
+def test_download_file_falls_back_when_multithread_raises(monkeypatch, tmp_path):
+    """多线程抛异常时应清理 part 文件并回退单线程下载。"""
+    from modules.download_manager import DownloadManager, DownloadMetadata
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_raise_fallback'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'partial')
+    monkeypatch.setattr(manager, '_get_download_metadata',
+                        lambda session, url: DownloadMetadata(16, True))
+
+    def raise_error(url, path, size):
+        """模拟多线程下载抛异常。"""
+        raise OSError('disk full')
+
+    monkeypatch.setattr(manager, '_download_multithreaded', raise_error)
+    calls = []
+
+    def download_single(session, url, path, size):
+        """记录单线程下载调用。"""
+        calls.append((url, path, size))
+        path.write_bytes(b'0123456789abcdef')
+        return True
+
+    monkeypatch.setattr(manager, '_download_single_threaded', download_single)
+    assert manager.download_file('https://example.com/TwoPush.exe', str(target))
+    assert calls == [('https://example.com/TwoPush.exe', target, 16)]
+    assert not (tmp_path / 'TwoPush.exe.part0').exists()
+
+
 def test_download_file_uses_single_thread_when_range_is_unavailable(monkeypatch, tmp_path):
     """不支持 Range 时应走单线程下载。"""
     from modules.download_manager import DownloadManager, DownloadMetadata

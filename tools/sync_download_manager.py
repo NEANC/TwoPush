@@ -69,7 +69,11 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
             )
 
             if use_multithread:
-                success = self._download_multithreaded(url, target, metadata.total_size)
+                try:
+                    success = self._download_multithreaded(url, target, metadata.total_size)
+                except Exception as exc:
+                    self.logger.debug(f"多线程下载异常，回退单线程下载: {exc}")
+                    success = False
                 if not success:
                     self._cleanup_part_files(target)
                     with requests.Session() as session:
@@ -245,14 +249,27 @@ _REPLACEMENTS = [
         '                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))',
         '',
     ),
-    # 10. _download_part 签名去掉进度参数
+    # 10. _get_valid_part_size 的 unlink 加 OSError 保护
+    (
+        '        # size > segment.length，异常情况，删除重下\n'
+        '        part_path.unlink()\n'
+        '        return 0\n',
+        '        # size > segment.length，异常情况，删除重下\n'
+        '        try:\n'
+        '            part_path.unlink()\n'
+        '        except OSError as exc:\n'
+        '            self.logger.debug(f"删除异常 part 文件失败: {part_path}: {exc}")\n'
+        '            return 0\n'
+        '        return 0\n',
+    ),
+    # 11. _download_part 签名去掉进度参数
     (
         '    def _download_part(self, session, url: str, save_path: Path, segment: DownloadSegment,\n'
         '                       pbar, speed_meter: NetworkSpeedMeter, progress_lock: Lock) -> bool:\n',
         '    def _download_part(self, session, url: str, save_path: Path,\n'
         '                       segment: DownloadSegment) -> bool:\n',
     ),
-    # 11. _download_part 206 分支去掉进度回退
+    # 12. _download_part 206 分支去掉进度回退
     (
         '                            if part_path.exists():\n'
         '                                if valid_size > 0:\n'
@@ -263,7 +280,7 @@ _REPLACEMENTS = [
         '                            if part_path.exists():\n'
         '                                part_path.unlink()\n',
     ),
-    # 12. _download_multithreaded 签名去掉进度参数
+    # 13. _download_multithreaded 签名去掉进度参数
     (
         '    def _download_multithreaded(self, url: str, target_path: Path, total_size: int,\n'
         '                                pbar, speed_meter: NetworkSpeedMeter,\n'
@@ -271,7 +288,7 @@ _REPLACEMENTS = [
         '    def _download_multithreaded(self, url: str, target_path: Path,\n'
         '                                total_size: int) -> bool:\n',
     ),
-    # 13. 线程池提交去掉进度参数
+    # 14. 线程池提交去掉进度参数
     (
         '                    future = executor.submit(\n'
         '                        self._download_part,\n'
@@ -291,7 +308,7 @@ _REPLACEMENTS = [
         '                        segment,\n'
         '                    )\n',
     ),
-    # 14. 删除 _get_existing_bytes 方法（进度条初始字节统计）
+    # 15. 删除 _get_existing_bytes 方法（进度条初始字节统计）
     (
         '    def _get_existing_bytes(self, target_path: Path, total_size: int) -> int:\n'
         '        """获取进度条初始已完成字节数。\n'
