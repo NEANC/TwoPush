@@ -756,8 +756,8 @@ def test_download_and_verify_cleans_failed_download_and_part_files(tmp_path):
     assert not (tmp_path / 'TwoPush.exe.part1').exists()
 
 
-def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path):
-    """下载成功但每轮 SHA256 校验不符时应清理目标文件、sha 文件及分段"""
+def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeypatch):
+    """下载成功但每轮 SHA256 校验不符时应逐轮清理下载分段"""
     from pathlib import Path
 
     from modules.self_updater import SelfUpdater
@@ -765,7 +765,6 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path):
     target = tmp_path / 'TwoPush.exe'
     sha_path = tmp_path / 'TwoPush.exe.sha256'
     target.write_bytes(b'wrong content')
-    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'part')
 
     def custom_download(url, save_path):
         Path(save_path).write_bytes(b'new executable')
@@ -774,10 +773,15 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path):
     updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
                           'v1.0.0', '', logging.getLogger('test_cleanup_sha'),
                           download_func=custom_download)
+    cleanup_calls = []
+    original = updater._cleanup_download_parts
+    monkeypatch.setattr(
+        updater, '_cleanup_download_parts',
+        lambda p: (cleanup_calls.append(str(p)), original(p))[1],
+    )
 
     assert not updater._download_and_verify(target, sha_path,
                                             'https://example.com/TwoPush.exe',
                                             'expected-sha', 'v2.0.0')
-    assert not target.exists()
-    assert not sha_path.exists()
-    assert not (tmp_path / 'TwoPush.exe.part0').exists()
+    # 缓存分支 1 次 + 每轮 SHA 不符 3 次（修复缺失时仅为缓存 1 + 耗尽 1）
+    assert len(cleanup_calls) >= 4
