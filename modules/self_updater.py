@@ -405,6 +405,15 @@ class SelfUpdater:
             self.logger.critical(f"检查软件更新时出错: {e}")
             return False
 
+    def _cleanup_download_parts(self, tmp_path: Path) -> None:
+        """删除目标文件对应的多线程下载分段。"""
+        for part_path in tmp_path.parent.glob(f'{tmp_path.name}.part*'):
+            try:
+                if part_path.is_file():
+                    part_path.unlink()
+            except OSError as exc:
+                self.logger.debug(f"删除下载分段失败: {part_path}: {exc}")
+
     def _download_and_verify(self, tmp_path: Path, sha_path: Path,
                               exe_url: str, new_sha256: str,
                               latest_version: str) -> bool:
@@ -417,6 +426,7 @@ class SelfUpdater:
             self.logger.warning("缓存文件 SHA256 校验失败，将重新下载")
             tmp_path.unlink(missing_ok=True)
             sha_path.unlink(missing_ok=True)
+            self._cleanup_download_parts(tmp_path)
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -428,6 +438,7 @@ class SelfUpdater:
 
             if not self._download_func(exe_url, str(tmp_path)):
                 self.logger.error("下载失败")
+                self._cleanup_download_parts(tmp_path)
                 continue
 
             actual = calculate_sha256(tmp_path)
@@ -439,6 +450,7 @@ class SelfUpdater:
             self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
             tmp_path.unlink(missing_ok=True)
             sha_path.unlink(missing_ok=True)
+            self._cleanup_download_parts(tmp_path)
             return False
 
     def _resolve_runtime_dir(self, program_dir: Path, new_version: str) -> Path:

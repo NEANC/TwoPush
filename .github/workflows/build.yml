@@ -278,7 +278,7 @@ jobs:
       # 打包可执行文件（PyInstaller）
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --console --name TwoPush TwoPush.py --noconfirm --icon IMG/logo.ico
+          pyinstaller --noconfirm TwoPush.spec
 
       # 上传 PyInstaller 打包的可执行文件
       - name: Upload PyInstaller artifact

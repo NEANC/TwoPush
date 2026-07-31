@@ -34,6 +34,7 @@ def test_twopush_spec_declares_required_hidden_imports():
         'colorama',
         'modules.config_manager',
         'modules.config_migration',
+        'modules.download_manager',
         'modules.logger_manager',
         'modules.notification',
         'modules.self_config',
@@ -730,3 +731,26 @@ def test_self_updater_custom_download_func_bypasses_download_manager(monkeypatch
                                         'https://example.com/TwoPush.exe',
                                         'expected', 'v2.0.0')
     assert called == [('https://example.com/TwoPush.exe', str(target))]
+
+
+def test_download_and_verify_cleans_failed_download_and_part_files(tmp_path):
+    """下载校验失败时应清理目标文件、sha 文件及多线程下载分段"""
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    target.write_bytes(b'invalid')
+    sha_path.write_text('invalid', encoding='utf-8')
+    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'part')
+    (tmp_path / 'TwoPush.exe.part1').write_bytes(b'part')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_cleanup_parts'),
+                          download_func=lambda url, path: False)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected', 'v2.0.0')
+    assert not target.exists()
+    assert not sha_path.exists()
+    assert not (tmp_path / 'TwoPush.exe.part0').exists()
+    assert not (tmp_path / 'TwoPush.exe.part1').exists()
