@@ -28,6 +28,7 @@ import requests
 from pathlib import Path
 from typing import Callable, Dict, Optional, Tuple
 
+from modules.download_manager import DownloadManager
 from modules.ps1_fragments import (
     generate_common_base_functions_ps1,
     generate_common_state_functions_ps1,
@@ -79,7 +80,7 @@ class SelfUpdater:
             proxy: 代理地址（空字符串表示无代理）
             temp_folder: 临时文件夹路径，不传则自动解析（系统缓存 > 脚本目录）
             logger: 日志记录器
-            download_func: 下载回调 (url, save_path) -> bool，不传则使用内置 requests 下载
+            download_func: 下载回调 (url, save_path) -> bool，不传则使用内置下载管理器
             self_update_channel: 更新通道 ('preview', 'stable')
             is_bundled: 外部预检测的是否为打包程序（可选）
             package_type: 外部预检测的打包方式（可选）
@@ -108,22 +109,14 @@ class SelfUpdater:
         return os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "TEMP")
 
     def _default_download(self, url: str, save_path: str) -> bool:
-        """内置下载实现（无进度条），外部可注入带进度的下载函数覆盖"""
-        try:
-            headers = {'User-Agent': 'SelfUpdater'}
-            proxies = {'http': self.proxy, 'https': self.proxy} if self.proxy else None
-            response = requests.get(url, headers=headers, proxies=proxies,
-                                    timeout=120, stream=True)
-            response.raise_for_status()
-            Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(save_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=1048576):
-                    if chunk:
-                        f.write(chunk)
-            return True
-        except requests.RequestException as e:
-            self.logger.error(f"下载失败: {e}")
-            return False
+        """使用内置下载管理器下载更新文件。"""
+        manager = DownloadManager(
+            proxy=self.proxy,
+            temp_folder=self._resolve_temp_folder(self.temp_folder),
+            logger=self.logger,
+            download_threads=16,
+        )
+        return manager.download_file(url, save_path)
 
     def _resolve_channel(self) -> str:
         """解析通道配置，兼容旧值"""

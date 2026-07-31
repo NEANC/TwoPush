@@ -671,3 +671,62 @@ def test_replace_executable_writes_runtime_paths_to_state(monkeypatch, tmp_path)
     assert (runtime_dir / 'TwoPush.new.exe').read_bytes() == b'new exe'
     assert (runtime_dir / 'TwoPush_Update_Helper.ps1').exists()
     assert (runtime_dir / 'TwoPush_Update.ps1').exists()
+
+
+def test_self_updater_default_download_delegates_to_download_manager(monkeypatch, tmp_path):
+    """默认下载应委托给 DownloadManager 并透传构造参数"""
+    from modules.self_updater import SelfUpdater
+
+    calls = {}
+
+    class FakeDownloadManager:
+        def __init__(self, proxy, temp_folder, logger, download_threads):
+            calls.update(proxy=proxy, temp_folder=temp_folder, logger=logger,
+                         download_threads=download_threads)
+
+        def download_file(self, url, save_path):
+            calls.update(url=url, save_path=save_path)
+            return True
+
+    monkeypatch.setattr('modules.self_updater.DownloadManager', FakeDownloadManager)
+    logger = logging.getLogger('test_download_manager_delegate')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', 'http://127.0.0.1:7890', logger,
+                          temp_folder=str(tmp_path / 'cache'))
+
+    assert updater._default_download('https://example.com/TwoPush.exe',
+                                     str(tmp_path / 'TwoPush.exe'))
+    assert calls == {
+        'proxy': 'http://127.0.0.1:7890', 'temp_folder': str(tmp_path / 'cache'),
+        'logger': logger, 'download_threads': 16,
+        'url': 'https://example.com/TwoPush.exe',
+        'save_path': str(tmp_path / 'TwoPush.exe'),
+    }
+
+
+def test_self_updater_custom_download_func_bypasses_download_manager(monkeypatch, tmp_path):
+    """注入自定义下载回调时应绕过 DownloadManager"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    def fail_if_constructed(*args, **kwargs):
+        raise AssertionError('不应构造 DownloadManager')
+
+    called = []
+
+    def custom_download(url, save_path):
+        called.append((url, save_path))
+        Path(save_path).write_bytes(b'new executable')
+        return True
+
+    monkeypatch.setattr('modules.self_updater.DownloadManager', fail_if_constructed)
+    monkeypatch.setattr('modules.self_updater.calculate_sha256', lambda path: 'expected')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_custom'),
+                          download_func=custom_download)
+    target = tmp_path / 'TwoPush.exe'
+    assert updater._download_and_verify(target, tmp_path / 'TwoPush.exe.sha256',
+                                        'https://example.com/TwoPush.exe',
+                                        'expected', 'v2.0.0')
+    assert called == [('https://example.com/TwoPush.exe', str(target))]
