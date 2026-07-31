@@ -754,3 +754,30 @@ def test_download_and_verify_cleans_failed_download_and_part_files(tmp_path):
     assert not sha_path.exists()
     assert not (tmp_path / 'TwoPush.exe.part0').exists()
     assert not (tmp_path / 'TwoPush.exe.part1').exists()
+
+
+def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path):
+    """下载成功但每轮 SHA256 校验不符时应清理目标文件、sha 文件及分段"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    target.write_bytes(b'wrong content')
+    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'part')
+
+    def custom_download(url, save_path):
+        Path(save_path).write_bytes(b'new executable')
+        return True
+
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_cleanup_sha'),
+                          download_func=custom_download)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected-sha', 'v2.0.0')
+    assert not target.exists()
+    assert not sha_path.exists()
+    assert not (tmp_path / 'TwoPush.exe.part0').exists()
