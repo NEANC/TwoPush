@@ -116,22 +116,12 @@ class DownloadManager:
         try:
             range_part, total_part = content_range.split(' ', 1)[1].split('/', 1)
             start, end = (int(part) for part in range_part.split('-'))
+            if start > end:
+                return None
             total = int(total_part) if total_part.isdigit() else -1
         except (ValueError, IndexError):
             return None
         return start, end, total
-
-    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:
-        """从 GET 响应头推导完整文件大小。"""
-        content_range = response.headers.get('Content-Range', '')
-        if content_range.startswith('bytes ') and '/' in content_range:
-            total_part = content_range.rsplit('/', 1)[1]
-            if total_part.isdigit():
-                return int(total_part)
-        content_length = response.headers.get('Content-Length')
-        if response.status_code == 200 and content_length and content_length.isdigit():
-            return int(content_length)
-        return 0
 
     def _download_single_threaded(self, session, url: str, target_path: Path,
                                   total_size: int) -> bool:

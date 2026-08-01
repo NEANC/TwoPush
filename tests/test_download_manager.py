@@ -263,6 +263,25 @@ def test_download_single_threaded_rejects_short_206_with_unknown_total(tmp_path)
     assert not manager._download_single_threaded(session, 'https://example.com/file.exe', target, 0)
     assert target.read_bytes() == b'abcdefghxyz'
     assert session._calls[0][1].get('Range') == 'bytes=8-'
+    assert session._calls[1][1].get('Range') == 'bytes=9-'
+    assert session._calls[2][1].get('Range') == 'bytes=10-'
+
+
+def test_download_single_threaded_rejects_invalid_206_range(tmp_path):
+    """畸形 Content-Range（start > end）应被拒绝并从头下载。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_invalid_range'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 8-7/*'}, [b'']),
+        _FakeResponse(200, {'Content-Length': '16'}, [b'0123456789abcdef']),
+    ])
+
+    assert manager._download_single_threaded(session, 'https://example.com/file.exe',
+                                             target, 16)
+    assert target.read_bytes() == b'0123456789abcdef'
 
 
 def test_download_single_threaded_416_incomplete_retries_then_fails(monkeypatch, tmp_path):

@@ -206,12 +206,30 @@ _REPLACEMENTS = [
         '        try:\n'
         '            range_part, total_part = content_range.split(\' \', 1)[1].split(\'/\', 1)\n'
         '            start, end = (int(part) for part in range_part.split(\'-\'))\n'
+        '            if start > end:\n'
+        '                return None\n'
         '            total = int(total_part) if total_part.isdigit() else -1\n'
         '        except (ValueError, IndexError):\n'
         '            return None\n'
         '        return start, end, total\n'
         '\n'
         '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n',
+    ),
+    # 4.6. 删除死代码 _extract_total_size_from_get_response 方法（206 分支已改用 _parse_content_range）
+    (
+        '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n'
+        '        """从 GET 响应头推导完整文件大小。"""\n'
+        '        content_range = response.headers.get(\'Content-Range\', \'\')\n'
+        '        if content_range.startswith(\'bytes \') and \'/\' in content_range:\n'
+        '            total_part = content_range.rsplit(\'/\', 1)[1]\n'
+        '            if total_part.isdigit():\n'
+        '                return int(total_part)\n'
+        '        content_length = response.headers.get(\'Content-Length\')\n'
+        '        if response.status_code == 200 and content_length and content_length.isdigit():\n'
+        '            return int(content_length)\n'
+        '        return 0\n'
+        '\n',
+        '',
     ),
     # 4. 删除 _update_progress 方法
     (
