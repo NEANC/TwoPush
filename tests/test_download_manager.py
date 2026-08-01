@@ -78,6 +78,55 @@ def test_download_file_falls_back_to_single_thread_after_multithread_failure(
     assert not (tmp_path / 'TwoPush.exe.part0').exists()
 
 
+def test_download_file_falls_back_when_merged_size_is_incomplete(
+        monkeypatch, tmp_path):
+    """多线程合并后最终大小不符时应清理 part 并回退单线程。"""
+    from modules.download_manager import DownloadManager, DownloadMetadata, DownloadSegment
+
+    class _SessionStub:
+        """模拟无网络会话。"""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr('modules.download_manager.requests.Session', _SessionStub)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_size_fallback'), 2)
+    target = tmp_path / 'TwoPush.exe'
+    segments = [DownloadSegment(0, 0, 7), DownloadSegment(1, 8, 15)]
+    monkeypatch.setattr(manager, '_get_download_metadata',
+                        lambda session, url: DownloadMetadata(16, True))
+    monkeypatch.setattr(manager, '_split_segments', lambda size, threads: segments)
+
+    def write_short_part(session, url, save_path, segment, total_size):
+        """写入不完整的分段以触发真实最终大小校验。"""
+        manager._get_part_path(save_path, segment.index).write_bytes(b'1234')
+        return True
+
+    single_thread_calls = []
+
+    def download_single(session, url, path, size):
+        """记录单线程回退并写入完整目标文件。"""
+        single_thread_calls.append((url, path, size, list(tmp_path.glob('TwoPush.exe.part*'))))
+        path.write_bytes(b'0123456789abcdef')
+        return True
+
+    monkeypatch.setattr(manager, '_download_part', write_short_part)
+    monkeypatch.setattr(manager, '_download_single_threaded', download_single)
+
+    assert manager.download_file('https://example.com/TwoPush.exe', str(target))
+    assert single_thread_calls == [
+        ('https://example.com/TwoPush.exe', target, 16, []),
+    ]
+    assert target.read_bytes() == b'0123456789abcdef'
+    assert not list(tmp_path.glob('TwoPush.exe.part*'))
+
+
 def test_download_file_falls_back_when_multithread_raises(monkeypatch, tmp_path):
     """多线程抛异常时应清理 part 文件并回退单线程下载。"""
     from modules.download_manager import DownloadManager, DownloadMetadata

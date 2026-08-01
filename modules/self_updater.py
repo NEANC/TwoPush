@@ -459,6 +459,8 @@ class SelfUpdater:
             if not downloaded:
                 if not self._safe_unlink(tmp_path):
                     return False
+                if not self._safe_unlink(sha_path):
+                    return False
                 if not self._cleanup_download_parts(tmp_path):
                     return False
                 continue
@@ -469,6 +471,8 @@ class SelfUpdater:
                 return True
             self.logger.error("SHA256 校验失败，准备重试")
             if not self._safe_unlink(tmp_path):
+                return False
+            if not self._safe_unlink(sha_path):
                 return False
             if not self._cleanup_download_parts(tmp_path):
                 return False

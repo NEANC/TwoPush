@@ -759,6 +759,33 @@ def test_download_and_verify_cleans_failed_download_and_part_files(tmp_path):
     assert not (tmp_path / 'TwoPush.exe.part1').exists()
 
 
+def test_download_and_verify_removes_sha_file_after_each_failed_download(
+        monkeypatch, tmp_path):
+    """每轮下载失败均应尝试删除 SHA256 文件。"""
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    sha_path.write_text('invalid', encoding='utf-8')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_cleanup_sha_failed'),
+                          download_func=lambda url, path: False)
+    deleted_paths = []
+    original_safe_unlink = updater._safe_unlink
+
+    def record_safe_unlink(path):
+        """记录安全删除调用并委托原始实现。"""
+        deleted_paths.append(path)
+        return original_safe_unlink(path)
+
+    monkeypatch.setattr(updater, '_safe_unlink', record_safe_unlink)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected', 'v2.0.0')
+    assert deleted_paths.count(sha_path) >= 3
+
+
 def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeypatch):
     """下载成功但每轮 SHA256 校验不符时应逐轮清理下载分段"""
     from pathlib import Path
@@ -768,6 +795,7 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
     target = tmp_path / 'TwoPush.exe'
     sha_path = tmp_path / 'TwoPush.exe.sha256'
     target.write_bytes(b'wrong content')
+    sha_path.write_text('invalid', encoding='utf-8')
 
     download_calls = []
 
@@ -785,6 +813,15 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
         updater, '_cleanup_download_parts',
         lambda p: (cleanup_calls.append(str(p)), original(p))[1],
     )
+    deleted_paths = []
+    original_safe_unlink = updater._safe_unlink
+
+    def record_safe_unlink(path):
+        """记录安全删除调用并委托原始实现。"""
+        deleted_paths.append(path)
+        return original_safe_unlink(path)
+
+    monkeypatch.setattr(updater, '_safe_unlink', record_safe_unlink)
 
     assert not updater._download_and_verify(target, sha_path,
                                             'https://example.com/TwoPush.exe',
@@ -793,6 +830,7 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
     assert len(cleanup_calls) >= 4
     # 每轮下载前 target 均已被删除（缓存分支 1 次 + 每轮 SHA 不符各 1 次，验证 I1 修复）
     assert download_calls == [False, False, False]
+    assert deleted_paths.count(sha_path) >= 4
 
 
 def test_download_and_verify_removes_partial_target_on_failed_download(tmp_path):
