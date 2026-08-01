@@ -183,6 +183,19 @@ class DownloadManager:
                                 del headers['Range']
                             continue
                         range_start, range_end, range_total = range_info
+                        if (
+                            (range_total > 0 and range_end >= range_total)
+                            or (known_total > 0 and range_total != known_total)
+                        ):
+                            self.logger.debug(
+                                "206 响应范围或总大小与预期不一致，删除不可信文件重新下载",
+                            )
+                            if target.exists():
+                                target.unlink()
+                            existing_size = 0
+                            if 'Range' in headers:
+                                del headers['Range']
+                            continue
                         # 续传追加并统计本次实际写入的字节数
                         written = 0
                         with open(target, 'ab') as f:
@@ -193,7 +206,8 @@ class DownloadManager:
 
                         if range_total > 0:
                             # 总长度已知：完整文件大小必须与 total 一致
-                            known_total = range_total
+                            if known_total == 0:
+                                known_total = range_total
                             if target.stat().st_size != known_total:
                                 existing_size = target.stat().st_size
                                 headers['Range'] = f'bytes={existing_size}-'
@@ -204,6 +218,16 @@ class DownloadManager:
                         if written < expected:
                             existing_size = target.stat().st_size
                             headers['Range'] = f'bytes={existing_size}-'
+                            continue
+                        if written > expected:
+                            self.logger.debug(
+                                "206 响应写入字节超过声明范围，删除不可信文件重新下载",
+                            )
+                            if target.exists():
+                                target.unlink()
+                            existing_size = 0
+                            if 'Range' in headers:
+                                del headers['Range']
                             continue
                         return True
 

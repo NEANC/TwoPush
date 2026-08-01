@@ -815,3 +815,32 @@ def test_download_and_verify_removes_partial_target_on_failed_download(tmp_path)
                                             'https://example.com/TwoPush.exe',
                                             'expected', 'v2.0.0')
     assert target_exists_at_call == [False, False, False]
+
+
+def test_download_and_verify_cleans_files_when_download_callback_raises(tmp_path):
+    """下载回调异常时应清理残留并继续重试。"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    calls = []
+
+    def failing_download(url, save_path):
+        calls.append((url, save_path))
+        Path(save_path).write_bytes(b'partial')
+        Path(f'{save_path}.part0').write_bytes(b'partial')
+        raise OSError('network error')
+
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_callback_exception'),
+                          download_func=failing_download)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected', 'v2.0.0')
+    assert len(calls) == 3
+    assert not target.exists()
+    assert not Path(f'{target}.part0').exists()
+    assert not sha_path.exists()

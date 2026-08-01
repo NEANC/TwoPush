@@ -436,8 +436,16 @@ class SelfUpdater:
             else:
                 self.logger.info(f"开始下载更新文件: {file_name}")
 
-            if not self._download_func(exe_url, str(tmp_path)):
-                self.logger.error("下载失败")
+            try:
+                downloaded = self._download_func(exe_url, str(tmp_path))
+            except Exception as exc:
+                self.logger.error(f"下载失败: {exc}")
+                downloaded = False
+            else:
+                if not downloaded:
+                    self.logger.error("下载失败")
+
+            if not downloaded:
                 tmp_path.unlink(missing_ok=True)
                 self._cleanup_download_parts(tmp_path)
                 continue
