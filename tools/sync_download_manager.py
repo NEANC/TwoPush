@@ -189,6 +189,22 @@ _REPLACEMENTS = [
         '\n',
         '',
     ),
+    # 4.5. 新增 Content-Range 起点解析辅助方法（在 _extract_total_size_from_get_response 前）
+    (
+        '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n',
+        '    def _content_range_start(self, response_headers: dict) -> int:\n'
+        '        """解析 Content-Range 响应头的起始字节，无法解析时返回 -1。"""\n'
+        '        content_range = response_headers.get(\'Content-Range\', \'\')\n'
+        '        if not content_range.startswith(\'bytes \'):\n'
+        '            return -1\n'
+        '        try:\n'
+        '            range_part = content_range.split(\' \', 1)[1].split(\'/\')[0]\n'
+        '            return int(range_part.split(\'-\')[0])\n'
+        '        except (ValueError, IndexError):\n'
+        '            return -1\n'
+        '\n'
+        '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n',
+    ),
     # 4. 删除 _update_progress 方法
     (
         '    def _update_progress(self, pbar, progress_lock: Lock, speed_meter: NetworkSpeedMeter,\n'
@@ -217,6 +233,28 @@ _REPLACEMENTS = [
         '            progress_lock: 进度更新锁。\n'
         '\n',
         '\n',
+    ),
+    # 6.5. 单线程 206 分支校验 Content-Range 起点
+    (
+        '                    if response.status_code == 206:\n'
+        '                        response.raise_for_status()\n'
+        '                        # 从 Content-Range 推导真实 total\n',
+        '                    if response.status_code == 206:\n'
+        '                        response.raise_for_status()\n'
+        '                        # 校验响应起点与本地续传偏移一致，防止服务器返回错位区间\n'
+        '                        range_start = self._content_range_start(response.headers)\n'
+        '                        if range_start < 0 or range_start != existing_size:\n'
+        '                            self.logger.debug(\n'
+        '                                f"206 响应起点 {range_start} 与本地偏移 {existing_size} 不一致，"\n'
+        '                                f"删除不可信文件重新下载",\n'
+        '                            )\n'
+        '                            if target.exists():\n'
+        '                                target.unlink()\n'
+        '                            existing_size = 0\n'
+        '                            if \'Range\' in headers:\n'
+        '                                del headers[\'Range\']\n'
+        '                            continue\n'
+        '                        # 从 Content-Range 推导真实 total\n',
     ),
     # 7. 单线程 206 分支去掉进度更新
     (

@@ -102,6 +102,17 @@ class DownloadManager:
             start = end + 1
         return segments
 
+    def _content_range_start(self, response_headers: dict) -> int:
+        """解析 Content-Range 响应头的起始字节，无法解析时返回 -1。"""
+        content_range = response_headers.get('Content-Range', '')
+        if not content_range.startswith('bytes '):
+            return -1
+        try:
+            range_part = content_range.split(' ', 1)[1].split('/')[0]
+            return int(range_part.split('-')[0])
+        except (ValueError, IndexError):
+            return -1
+
     def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:
         """从 GET 响应头推导完整文件大小。"""
         content_range = response.headers.get('Content-Range', '')
@@ -160,6 +171,19 @@ class DownloadManager:
 
                     if response.status_code == 206:
                         response.raise_for_status()
+                        # 校验响应起点与本地续传偏移一致，防止服务器返回错位区间
+                        range_start = self._content_range_start(response.headers)
+                        if range_start < 0 or range_start != existing_size:
+                            self.logger.debug(
+                                f"206 响应起点 {range_start} 与本地偏移 {existing_size} 不一致，"
+                                f"删除不可信文件重新下载",
+                            )
+                            if target.exists():
+                                target.unlink()
+                            existing_size = 0
+                            if 'Range' in headers:
+                                del headers['Range']
+                            continue
                         # 从 Content-Range 推导真实 total
                         real_total = self._extract_total_size_from_get_response(
                             response, existing_size,

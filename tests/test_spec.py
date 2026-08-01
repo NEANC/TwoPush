@@ -790,3 +790,28 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
     assert len(cleanup_calls) >= 4
     # 每轮下载前 target 均已被删除（缓存分支 1 次 + 每轮 SHA 不符各 1 次，验证 I1 修复）
     assert download_calls == [False, False, False]
+
+
+def test_download_and_verify_removes_partial_target_on_failed_download(tmp_path):
+    """下载回调失败后应删除已写入的部分目标文件，避免下一轮复用。"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    target_exists_at_call = []
+
+    def failing_download(url, save_path):
+        target_exists_at_call.append(Path(save_path).exists())
+        Path(save_path).write_bytes(b'partial')
+        return False
+
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_partial_fail'),
+                          download_func=failing_download)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected', 'v2.0.0')
+    assert target_exists_at_call == [False, False, False]

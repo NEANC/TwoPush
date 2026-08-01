@@ -47,7 +47,7 @@ class _FakeSession:
         return False
 
     def get(self, url, **kwargs):
-        self._calls.append((url, kwargs.get('headers', {})))
+        self._calls.append((url, dict(kwargs.get('headers', {}))))
         return self._responses.pop(0)
 
 
@@ -210,3 +210,22 @@ def test_split_segments_covered_total_size():
     assert segments[0].start == 0
     assert segments[-1].end == 99
     assert all(seg.length > 0 for seg in segments)
+
+
+def test_download_single_threaded_rejects_mismatched_206_start(tmp_path):
+    """206 响应起点与本地续传偏移不一致时，应删除不可信文件并从头下载。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_mismatch_206'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')  # 本地已有 8 字节
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 0-7/16'}, [b'abcdefgh']),
+        _FakeResponse(200, {'Content-Length': '16'}, [b'0123456789abcdef']),
+    ])
+
+    assert manager._download_single_threaded(session, 'https://example.com/file.exe',
+                                             target, 16)
+    assert target.read_bytes() == b'0123456789abcdef'
+    assert session._calls[0][1].get('Range') == 'bytes=8-'
+    assert 'Range' not in session._calls[1][1]

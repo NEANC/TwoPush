@@ -438,6 +438,7 @@ class SelfUpdater:
 
             if not self._download_func(exe_url, str(tmp_path)):
                 self.logger.error("下载失败")
+                tmp_path.unlink(missing_ok=True)
                 self._cleanup_download_parts(tmp_path)
                 continue
 
