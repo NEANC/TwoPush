@@ -4,6 +4,7 @@
 """下载管理器同步脚本测试。"""
 
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -36,6 +37,18 @@ def test_transform_rejects_changed_entry_tail(source_text):
     """入口后的外部源码尾部摘要变化时必须拒绝转换。"""
     with pytest.raises(RuntimeError):
         sync_download_manager.transform_manager(source_text + '\nchanged tail\n')
+
+
+def test_transform_normalizes_lf_and_crlf_source(source_text):
+    """等价 LF 与 CRLF 来源应生成完全相同的目标文本。"""
+    lf_source = source_text.replace('\r\n', '\n').replace('\r', '\n')
+    crlf_source = lf_source.replace('\n', '\r\n')
+
+    lf_result = sync_download_manager.transform_manager(lf_source)
+    crlf_result = sync_download_manager.transform_manager(crlf_source)
+
+    assert crlf_result == lf_result
+    assert '            total_size: 本轮下载的完整文件大小。\n' in lf_result
 
 
 def test_forbidden_token_is_rejected():
@@ -86,6 +99,58 @@ def test_main_uses_source_environment_variable(monkeypatch, tmp_path, source_tex
     sync_download_manager.main()
 
     assert target.exists()
+
+
+def test_main_uses_target_environment_variable(monkeypatch, tmp_path, source_text):
+    """未显式传目标时应采用环境变量指定的目标路径。"""
+    source = tmp_path / 'manager.py'
+    target = tmp_path / 'generated' / 'download_manager.py'
+    source.write_text(source_text, encoding='utf-8', newline='')
+    monkeypatch.setenv('TWOPUSH_DOWNLOAD_MANAGER_TARGET', str(target))
+
+    sync_download_manager.main(source)
+
+    assert target.exists()
+
+
+def test_cli_paths_override_environment_variables(monkeypatch, tmp_path, source_text):
+    """CLI 来源与目标参数应覆盖环境变量路径。"""
+    cli_source = tmp_path / 'cli_manager.py'
+    cli_target = tmp_path / 'cli_download_manager.py'
+    env_source = tmp_path / 'env_manager.py'
+    env_target = tmp_path / 'env_download_manager.py'
+    cli_source.write_text(source_text, encoding='utf-8', newline='')
+    env_source.write_text('invalid source', encoding='utf-8')
+    monkeypatch.setenv('TWOPUSH_DOWNLOAD_MANAGER_SOURCE', str(env_source))
+    monkeypatch.setenv('TWOPUSH_DOWNLOAD_MANAGER_TARGET', str(env_target))
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['sync_download_manager.py', '--source', str(cli_source), '--target', str(cli_target)],
+    )
+
+    arguments = sync_download_manager._parse_args()
+    sync_download_manager.main(arguments.source, arguments.target)
+
+    assert cli_target.exists()
+    assert not env_target.exists()
+
+
+def test_main_explicit_paths_override_environment_variables(
+        monkeypatch, tmp_path, source_text):
+    """main 显式来源与目标参数应覆盖环境变量路径。"""
+    explicit_source = tmp_path / 'explicit_manager.py'
+    explicit_target = tmp_path / 'explicit_download_manager.py'
+    env_source = tmp_path / 'env_manager.py'
+    env_target = tmp_path / 'env_download_manager.py'
+    explicit_source.write_text(source_text, encoding='utf-8', newline='')
+    env_source.write_text('invalid source', encoding='utf-8')
+    monkeypatch.setenv('TWOPUSH_DOWNLOAD_MANAGER_SOURCE', str(env_source))
+    monkeypatch.setenv('TWOPUSH_DOWNLOAD_MANAGER_TARGET', str(env_target))
+
+    sync_download_manager.main(explicit_source, explicit_target)
+
+    assert explicit_target.exists()
+    assert not env_target.exists()
 
 
 def test_main_reports_missing_source(tmp_path):

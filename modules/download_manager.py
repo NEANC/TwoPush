@@ -398,6 +398,7 @@ class DownloadManager:
             url: 下载 URL。
             save_path: 目标文件路径（用于生成 part 路径）。
             segment: 下载分段。
+            total_size: 本轮下载的完整文件大小。
 
         Returns:
             bool: 分段是否下载成功。

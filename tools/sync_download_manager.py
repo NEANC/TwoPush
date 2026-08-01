@@ -21,6 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_PATH = Path(r'g:\GitHub\Python_Self-Updater\download\manager.py')
 OUTPUT_PATH = PROJECT_ROOT / 'modules' / 'download_manager.py'
 SOURCE_ENV_VAR = 'TWOPUSH_DOWNLOAD_MANAGER_SOURCE'
+TARGET_ENV_VAR = 'TWOPUSH_DOWNLOAD_MANAGER_TARGET'
 ENTRY_MARKER = '    def download_file_with_progress(self, url: str, save_path: str) -> bool:'
 ENTRY_TAIL_SHA256 = '6831e7f1082c6501b96b530aef83d650360cd73b3b0e30da46d059e7c39388a4'
 
@@ -286,6 +287,7 @@ _REPLACEMENTS = [
         '            progress_lock: 进度更新锁。\n'
         '\n',
         '            segment: 下载分段。\n'
+        '            total_size: 本轮下载的完整文件大小。\n'
         '\n',
     ),
     (
@@ -661,15 +663,15 @@ def transform_manager(source: str) -> str:
     Returns:
         str: 转换后的源码文本。
     """
-    marker_count = source.count(ENTRY_MARKER)
+    content = source.replace('\r\n', '\n').replace('\r', '\n')
+    marker_count = content.count(ENTRY_MARKER)
     if marker_count != 1:
         raise RuntimeError(f'入口方法 marker 出现次数必须为 1，实际为 {marker_count}')
-    source_tail = source.split(ENTRY_MARKER, 1)[1]
+    source_tail = content.split(ENTRY_MARKER, 1)[1]
     tail_sha256 = hashlib.sha256(source_tail.encode('utf-8')).hexdigest()
     if tail_sha256 != ENTRY_TAIL_SHA256:
         raise RuntimeError('入口方法后的外部源码摘要不匹配')
 
-    content = source.replace('\r\n', '\n').replace('\r', '\n')
     content = _apply_replacements(content, _REPLACEMENTS)
     head, sep, _tail = content.partition(ENTRY_MARKER)
     return head + _ENTRY_CODE
@@ -694,7 +696,9 @@ def main(source_path=None, target_path=None) -> None:
     source_path = Path(
         source_path or os.environ.get(SOURCE_ENV_VAR) or SOURCE_PATH,
     )
-    target_path = Path(target_path or OUTPUT_PATH)
+    target_path = Path(
+        target_path or os.environ.get(TARGET_ENV_VAR) or OUTPUT_PATH,
+    )
     if not source_path.is_file():
         raise FileNotFoundError(f'下载管理器来源文件不存在: {source_path}')
     with open(source_path, 'r', encoding='utf-8', newline='') as source_file:
