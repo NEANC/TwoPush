@@ -251,8 +251,14 @@ class DownloadManager:
                         if known_total == 0:
                             return target.exists() and target.stat().st_size > 0
                         if target.stat().st_size != known_total:
-                            existing_size = target.stat().st_size
-                            headers['Range'] = f'bytes={existing_size}-'
+                            self.logger.debug(
+                                "200 响应大小与预期不一致，删除不可信文件重新下载",
+                            )
+                            if target.exists():
+                                target.unlink()
+                            existing_size = 0
+                            if 'Range' in headers:
+                                del headers['Range']
                             continue
                         return True
 

@@ -348,7 +348,7 @@ _REPLACEMENTS = [
         '                            continue\n'
         '                        return True\n',
     ),
-    # 8. 单线程 200 分支去掉进度更新
+    # 8. 单线程 200 分支去掉进度更新并整段重写：大小不一致时删除残留从头重下
     (
         '                        # 覆盖从头下载（进度条复位需在锁保护下）\n'
         '                        content_length = response.headers.get(\'Content-Length\')\n'
@@ -357,7 +357,22 @@ _REPLACEMENTS = [
         '                            if content_length and content_length.isdigit():\n'
         '                                known_total = int(content_length)\n'
         '                                pbar.total = known_total\n'
-        '                            pbar.refresh()\n',
+        '                            pbar.refresh()\n'
+        '\n'
+        '                        with open(target, \'wb\') as f:\n'
+        '                            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):\n'
+        '                                if chunk:\n'
+        '                                    f.write(chunk)\n'
+        '                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))\n'
+        '\n'
+        '                        # C1: 使用可变的 known_total 做校验\n'
+        '                        if known_total == 0:\n'
+        '                            return target.exists() and target.stat().st_size > 0\n'
+        '                        if target.stat().st_size != known_total:\n'
+        '                            existing_size = target.stat().st_size\n'
+        '                            headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                            continue\n'
+        '                        return True\n',
         '                        # 覆盖从头下载\n'
         '                        content_length = response.headers.get(\'Content-Length\')\n'
         '                        if (\n'
@@ -365,7 +380,27 @@ _REPLACEMENTS = [
         '                            and content_length.isdigit()\n'
         '                            and known_total == 0\n'
         '                        ):\n'
-        '                            known_total = int(content_length)\n',
+        '                            known_total = int(content_length)\n'
+        '\n'
+        '                        with open(target, \'wb\') as f:\n'
+        '                            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):\n'
+        '                                if chunk:\n'
+        '                                    f.write(chunk)\n'
+        '\n'
+        '                        # C1: 使用可变的 known_total 做校验\n'
+        '                        if known_total == 0:\n'
+        '                            return target.exists() and target.stat().st_size > 0\n'
+        '                        if target.stat().st_size != known_total:\n'
+        '                            self.logger.debug(\n'
+        '                                "200 响应大小与预期不一致，删除不可信文件重新下载",\n'
+        '                            )\n'
+        '                            if target.exists():\n'
+        '                                target.unlink()\n'
+        '                            existing_size = 0\n'
+        '                            if \'Range\' in headers:\n'
+        '                                del headers[\'Range\']\n'
+        '                            continue\n'
+        '                        return True\n',
     ),
     # 9. 删除进度更新调用行（三处）
     (

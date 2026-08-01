@@ -169,23 +169,24 @@ def test_download_single_threaded_200_restarts_overwrite(tmp_path):
     assert target.read_bytes() == b'new executable!!'
 
 
-def test_download_single_threaded_rejects_200_length_mismatch(monkeypatch, tmp_path):
-    """200 响应声明大小与已知大小不一致时不应视为下载成功。"""
+def test_download_single_threaded_rejects_200_length_mismatch_then_restarts(tmp_path):
+    """200 声明大小与已知大小不一致时应删除残留并从头重下。"""
     from modules.download_manager import DownloadManager
 
-    monkeypatch.setattr('modules.download_manager.time.sleep', lambda seconds: None)
     manager = DownloadManager('', str(tmp_path), logging.getLogger('test_200_length_mismatch'), 16)
     target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abc')
     session = _FakeSession([
         _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
-        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
-        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
+        _FakeResponse(200, {'Content-Length': '16'}, [b'new executable!!']),
     ])
 
-    assert not manager._download_single_threaded(
+    assert manager._download_single_threaded(
         session, 'https://example.com/TwoPush.exe', target, 16,
     )
-    assert target.read_bytes() == b'new!'
+    assert target.read_bytes() == b'new executable!!'
+    assert session._calls[0][1].get('Range') == 'bytes=3-'
+    assert session._calls[1][1].get('Range') is None
 
 
 def test_download_single_threaded_416_complete_file_returns_true(tmp_path):
