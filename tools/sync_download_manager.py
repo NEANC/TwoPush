@@ -76,7 +76,8 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
                     )
                     success = False
                 if not success:
-                    self._cleanup_part_files(target)
+                    if not self._cleanup_part_files(target):
+                        return False
                     with requests.Session() as session:
                         success = self._download_single_threaded(
                             session, url, target, metadata.total_size,
@@ -91,19 +92,25 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
             self.logger.error(f"下载文件时发生错误: {type(exc).__name__}")
             return False
 
-    def _cleanup_part_files(self, target_path: Path) -> None:
+    def _cleanup_part_files(self, target_path: Path) -> bool:
         """清理目标文件关联的 part 临时文件。
 
         Args:
             target_path: 目标文件路径。
+
+        Returns:
+            bool: 是否已清理全部 part 文件。
         """
+        cleanup_succeeded = True
         for part_path in target_path.parent.glob(f'{target_path.name}.part*'):
             if not part_path.is_file():
                 continue
             try:
                 part_path.unlink()
-            except OSError as exc:
-                self.logger.debug(f"清理 part 文件失败: {part_path}: {exc}")
+            except OSError:
+                self.logger.debug("清理 part 文件失败")
+                cleanup_succeeded = False
+        return cleanup_succeeded
 '''
 
 
@@ -465,7 +472,11 @@ _REPLACEMENTS = [
         '                                        pbar.refresh()\n'
         '                                part_path.unlink()\n',
         '                            if part_path.exists():\n'
-        '                                part_path.unlink()\n',
+        '                                try:\n'
+        '                                    part_path.unlink()\n'
+        '                                except OSError:\n'
+        '                                    self.logger.debug("删除错位 part 文件失败")\n'
+        '                                    return False\n',
     ),
     # 13. _download_multithreaded 签名去掉进度参数
     (
@@ -569,6 +580,25 @@ _REPLACEMENTS = [
         '                    f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: "\n'
         '                    f"{type(exc).__name__}",\n'
         '                )\n',
+    ),
+    (
+        '            if target_path.exists() and target_path.stat().st_size == total_size:\n'
+        '                for segment in segments:\n'
+        '                    part_path = self._get_part_path(target_path, segment.index)\n'
+        '                    if part_path.exists():\n'
+        '                        part_path.unlink()\n'
+        '                return True\n',
+        '            if target_path.exists() and target_path.stat().st_size == total_size:\n'
+        '                for segment in segments:\n'
+        '                    part_path = self._get_part_path(target_path, segment.index)\n'
+        '                    if not part_path.exists():\n'
+        '                        continue\n'
+        '                    try:\n'
+        '                        part_path.unlink()\n'
+        '                    except OSError:\n'
+        '                        self.logger.debug("删除已合并 part 文件失败")\n'
+        '                        return False\n'
+        '                return True\n',
     ),
     # 15. 删除 _get_existing_bytes 方法（进度条初始字节统计）
     (

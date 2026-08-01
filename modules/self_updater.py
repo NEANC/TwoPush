@@ -405,14 +405,22 @@ class SelfUpdater:
             self.logger.critical(f"检查软件更新时出错: {e}")
             return False
 
-    def _cleanup_download_parts(self, tmp_path: Path) -> None:
-        """删除目标文件对应的多线程下载分段。"""
+    def _safe_unlink(self, path: Path) -> bool:
+        """安全删除文件并返回操作是否成功。"""
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            self.logger.debug("删除更新缓存文件失败")
+            return False
+        return True
+
+    def _cleanup_download_parts(self, tmp_path: Path) -> bool:
+        """删除目标文件对应的多线程下载分段并返回是否成功。"""
+        cleanup_succeeded = True
         for part_path in tmp_path.parent.glob(f'{tmp_path.name}.part*'):
-            try:
-                if part_path.is_file():
-                    part_path.unlink()
-            except OSError as exc:
-                self.logger.debug(f"删除下载分段失败: {part_path}: {exc}")
+            if part_path.is_file() and not self._safe_unlink(part_path):
+                cleanup_succeeded = False
+        return cleanup_succeeded
 
     def _download_and_verify(self, tmp_path: Path, sha_path: Path,
                               exe_url: str, new_sha256: str,
@@ -424,9 +432,12 @@ class SelfUpdater:
                 self.logger.info(f"缓存文件校验通过，跳过下载: {tmp_path}")
                 return True
             self.logger.warning("缓存文件 SHA256 校验失败，将重新下载")
-            tmp_path.unlink(missing_ok=True)
-            sha_path.unlink(missing_ok=True)
-            self._cleanup_download_parts(tmp_path)
+            if not self._safe_unlink(tmp_path):
+                return False
+            if not self._safe_unlink(sha_path):
+                return False
+            if not self._cleanup_download_parts(tmp_path):
+                return False
 
         max_retries = 3
         for attempt in range(max_retries):
@@ -446,8 +457,10 @@ class SelfUpdater:
                     self.logger.error("下载失败")
 
             if not downloaded:
-                tmp_path.unlink(missing_ok=True)
-                self._cleanup_download_parts(tmp_path)
+                if not self._safe_unlink(tmp_path):
+                    return False
+                if not self._cleanup_download_parts(tmp_path):
+                    return False
                 continue
 
             actual = calculate_sha256(tmp_path)
@@ -455,12 +468,14 @@ class SelfUpdater:
                 self.logger.info("新版本已下载并校验通过")
                 return True
             self.logger.error("SHA256 校验失败，准备重试")
-            tmp_path.unlink(missing_ok=True)
-            self._cleanup_download_parts(tmp_path)
+            if not self._safe_unlink(tmp_path):
+                return False
+            if not self._cleanup_download_parts(tmp_path):
+                return False
         else:
             self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
-            tmp_path.unlink(missing_ok=True)
-            sha_path.unlink(missing_ok=True)
+            self._safe_unlink(tmp_path)
+            self._safe_unlink(sha_path)
             self._cleanup_download_parts(tmp_path)
             return False
 

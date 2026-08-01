@@ -615,7 +615,7 @@ def test_download_multithreaded_part_failure_cleans_and_falls_back(monkeypatch, 
 
 
 def test_cleanup_part_files_swallows_unlink_oserror(monkeypatch, tmp_path):
-    """清理 part 文件时 unlink 抛 OSError 不应逃逸。"""
+    """清理 part 文件时 unlink 抛 OSError 应返回 False。"""
     from modules.download_manager import DownloadManager
 
     manager = DownloadManager('', str(tmp_path), logging.getLogger('test_cleanup_oserror'), 16)
@@ -627,7 +627,100 @@ def test_cleanup_part_files_swallows_unlink_oserror(monkeypatch, tmp_path):
         raise OSError('permission denied')
 
     monkeypatch.setattr('modules.download_manager.Path.unlink', raise_oserror)
-    assert manager._cleanup_part_files(target) is None
+    assert not manager._cleanup_part_files(target)
+
+
+def test_download_file_stops_when_part_cleanup_fails(monkeypatch, tmp_path):
+    """多线程失败且 part 清理失败时不得进入单线程回退。"""
+    from modules.download_manager import DownloadManager, DownloadMetadata
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_cleanup_stop'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    part_path = tmp_path / 'TwoPush.exe.part0'
+    part_path.write_bytes(b'partial')
+    monkeypatch.setattr(manager, '_get_download_metadata',
+                        lambda session, url: DownloadMetadata(16, True))
+    monkeypatch.setattr(manager, '_download_multithreaded', lambda *args: False)
+    original_unlink = Path.unlink
+
+    def selective_unlink(path, *args, **kwargs):
+        """仅模拟指定 part 文件被 Windows 锁定。"""
+        if path == part_path:
+            raise OSError('locked')
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr('modules.download_manager.Path.unlink', selective_unlink)
+    monkeypatch.setattr(
+        manager, '_download_single_threaded',
+        lambda *args: pytest.fail('清理失败后不应单线程回退'),
+    )
+    assert not manager.download_file('https://example.com/TwoPush.exe', str(target))
+
+
+def test_download_multithreaded_returns_false_when_part_cleanup_fails(
+        monkeypatch, tmp_path):
+    """多线程合并成功但 part 删除失败时应安全返回 False。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    class _SessionStub:
+        """模拟 requests Session。"""
+
+        def close(self):
+            """模拟关闭会话。"""
+            return None
+
+    monkeypatch.setattr('modules.download_manager.requests.Session', _SessionStub)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_mt_cleanup'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    part_path = tmp_path / 'TwoPush.exe.part0'
+    segment = DownloadSegment(0, 0, 7)
+    monkeypatch.setattr(manager, '_split_segments', lambda size, threads: [segment])
+
+    def download_part(session, url, save_path, item, total_size):
+        """写入完整分段。"""
+        part_path.write_bytes(b'01234567')
+        return True
+
+    monkeypatch.setattr(manager, '_download_part', download_part)
+    original_unlink = Path.unlink
+
+    def selective_unlink(path, *args, **kwargs):
+        """仅模拟合并后的 part 文件删除失败。"""
+        if path == part_path:
+            raise OSError('locked')
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr('modules.download_manager.Path.unlink', selective_unlink)
+    assert not manager._download_multithreaded(
+        'https://example.com/TwoPush.exe', target, 8,
+    )
+
+
+def test_download_part_returns_false_when_misaligned_part_cannot_be_removed(
+        monkeypatch, tmp_path):
+    """错位响应触发的 part 删除失败不得异常逃逸。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_part_locked'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    part_path = tmp_path / 'TwoPush.exe.part0'
+    part_path.write_bytes(b'0123')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 0-7/16'}, [b'01234567']),
+    ])
+    original_unlink = Path.unlink
+
+    def selective_unlink(path, *args, **kwargs):
+        """仅模拟错位 part 文件删除失败。"""
+        if path == part_path:
+            raise OSError('locked')
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr('modules.download_manager.Path.unlink', selective_unlink)
+    assert not manager._download_part(
+        session, 'https://example.com/TwoPush.exe', target,
+        DownloadSegment(0, 0, 7), 16,
+    )
 
 
 def test_merge_parts_returns_false_when_target_unwritable(tmp_path):

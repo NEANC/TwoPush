@@ -427,7 +427,11 @@ class DownloadManager:
                         ):
                             part_path = self._get_part_path(save_path, segment.index)
                             if part_path.exists():
-                                part_path.unlink()
+                                try:
+                                    part_path.unlink()
+                                except OSError:
+                                    self.logger.debug("删除错位 part 文件失败")
+                                    return False
                             range_start = segment.start
                             valid_size = 0
                             continue
@@ -540,8 +544,13 @@ class DownloadManager:
             if target_path.exists() and target_path.stat().st_size == total_size:
                 for segment in segments:
                     part_path = self._get_part_path(target_path, segment.index)
-                    if part_path.exists():
+                    if not part_path.exists():
+                        continue
+                    try:
                         part_path.unlink()
+                    except OSError:
+                        self.logger.debug("删除已合并 part 文件失败")
+                        return False
                 return True
             return False
         finally:
@@ -588,7 +597,8 @@ class DownloadManager:
                     )
                     success = False
                 if not success:
-                    self._cleanup_part_files(target)
+                    if not self._cleanup_part_files(target):
+                        return False
                     with requests.Session() as session:
                         success = self._download_single_threaded(
                             session, url, target, metadata.total_size,
@@ -603,16 +613,22 @@ class DownloadManager:
             self.logger.error(f"下载文件时发生错误: {type(exc).__name__}")
             return False
 
-    def _cleanup_part_files(self, target_path: Path) -> None:
+    def _cleanup_part_files(self, target_path: Path) -> bool:
         """清理目标文件关联的 part 临时文件。
 
         Args:
             target_path: 目标文件路径。
+
+        Returns:
+            bool: 是否已清理全部 part 文件。
         """
+        cleanup_succeeded = True
         for part_path in target_path.parent.glob(f'{target_path.name}.part*'):
             if not part_path.is_file():
                 continue
             try:
                 part_path.unlink()
-            except OSError as exc:
-                self.logger.debug(f"清理 part 文件失败: {part_path}: {exc}")
+            except OSError:
+                self.logger.debug("清理 part 文件失败")
+                cleanup_succeeded = False
+        return cleanup_succeeded

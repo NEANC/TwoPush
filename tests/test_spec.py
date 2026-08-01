@@ -6,6 +6,9 @@
 import logging
 import os
 import sys
+from pathlib import Path
+
+import pytest
 
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -868,3 +871,46 @@ def test_download_and_verify_callback_exception_log_is_sanitized(tmp_path, caplo
     assert 'token=abc' not in caplog.text
     assert 'user:secret' not in caplog.text
     assert secret not in caplog.text
+
+
+@pytest.mark.parametrize('locked_name', [
+    'TwoPush.exe',
+    'TwoPush.exe.sha256',
+    'TwoPush.exe.part0',
+])
+def test_download_and_verify_stops_when_cleanup_is_locked(
+        monkeypatch, tmp_path, locked_name):
+    """目标、SHA 或 part 清理失败时不得异常逃逸或继续重试。"""
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    part_path = tmp_path / 'TwoPush.exe.part0'
+    target.write_bytes(b'invalid')
+    sha_path.write_text('invalid', encoding='utf-8')
+    part_path.write_bytes(b'partial')
+    calls = []
+
+    def download(url, save_path):
+        """记录不应发生的不安全下载。"""
+        calls.append((url, save_path))
+        return False
+
+    locked_path = tmp_path / locked_name
+    original_unlink = Path.unlink
+
+    def selective_unlink(path, *args, **kwargs):
+        """仅模拟指定更新缓存文件被 Windows 锁定。"""
+        if path == locked_path:
+            raise OSError('locked')
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr('modules.self_updater.Path.unlink', selective_unlink)
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_locked_cleanup'),
+                          download_func=download)
+    assert not updater._download_and_verify(
+        target, sha_path, 'https://example.com/TwoPush.exe',
+        'expected', 'v2.0.0',
+    )
+    assert calls == []
