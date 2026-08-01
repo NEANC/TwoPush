@@ -4,6 +4,8 @@
 """下载管理器同步脚本测试。"""
 
 from pathlib import Path
+import os
+import subprocess
 import sys
 
 import pytest
@@ -39,15 +41,18 @@ def test_transform_rejects_changed_entry_tail(source_text):
         sync_download_manager.transform_manager(source_text + '\nchanged tail\n')
 
 
-def test_transform_normalizes_lf_and_crlf_source(source_text):
-    """等价 LF 与 CRLF 来源应生成完全相同的目标文本。"""
+def test_transform_normalizes_lf_crlf_and_cr_source(source_text):
+    """等价 LF、CRLF 与 CR 来源应生成完全相同的目标文本。"""
     lf_source = source_text.replace('\r\n', '\n').replace('\r', '\n')
     crlf_source = lf_source.replace('\n', '\r\n')
+    cr_source = lf_source.replace('\n', '\r')
 
     lf_result = sync_download_manager.transform_manager(lf_source)
     crlf_result = sync_download_manager.transform_manager(crlf_source)
+    cr_result = sync_download_manager.transform_manager(cr_source)
 
     assert crlf_result == lf_result
+    assert cr_result == lf_result
     assert '            total_size: 本轮下载的完整文件大小。\n' in lf_result
 
 
@@ -133,6 +138,38 @@ def test_cli_paths_override_environment_variables(monkeypatch, tmp_path, source_
 
     assert cli_target.exists()
     assert not env_target.exists()
+
+
+def test_cli_subprocess_paths_override_environment_variables(tmp_path, source_text):
+    """真实 CLI 入口的来源与目标参数应覆盖错误的环境变量路径。"""
+    script_path = sync_download_manager.PROJECT_ROOT / 'tools' / 'sync_download_manager.py'
+    cli_source = tmp_path / 'cli_manager.py'
+    cli_target = tmp_path / 'generated' / 'cli_download_manager.py'
+    env = os.environ.copy()
+    env['TWOPUSH_DOWNLOAD_MANAGER_SOURCE'] = str(tmp_path / 'missing_env_manager.py')
+    env['TWOPUSH_DOWNLOAD_MANAGER_TARGET'] = str(tmp_path / 'wrong_env_target.py')
+    cli_source.write_text(source_text, encoding='utf-8', newline='')
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            '--source',
+            str(cli_source),
+            '--target',
+            str(cli_target),
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert cli_target.read_text(encoding='utf-8') == (
+        sync_download_manager.transform_manager(source_text)
+    )
+    assert not Path(env['TWOPUSH_DOWNLOAD_MANAGER_TARGET']).exists()
 
 
 def test_main_explicit_paths_override_environment_variables(
