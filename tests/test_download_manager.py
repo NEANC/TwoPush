@@ -159,11 +159,30 @@ def test_download_single_threaded_200_restarts_overwrite(tmp_path):
 
     manager = DownloadManager('', str(tmp_path), logging.getLogger('test_200_overwrite'), 16)
     target = tmp_path / 'TwoPush.exe'
-    target.write_bytes(b'wrongcontent')
+    target.write_bytes(b'wrongcontent12345')
     session = _FakeSession([
-        _FakeResponse(200, {'Content-Length': '4'}, chunks=[b'new!']),
+        _FakeResponse(200, {'Content-Length': '16'}, chunks=[b'new executable!!']),
     ])
     assert manager._download_single_threaded(
+        session, 'https://example.com/TwoPush.exe', target, 16,
+    )
+    assert target.read_bytes() == b'new executable!!'
+
+
+def test_download_single_threaded_rejects_200_length_mismatch(monkeypatch, tmp_path):
+    """200 响应声明大小与已知大小不一致时不应视为下载成功。"""
+    from modules.download_manager import DownloadManager
+
+    monkeypatch.setattr('modules.download_manager.time.sleep', lambda seconds: None)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_200_length_mismatch'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    session = _FakeSession([
+        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
+        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
+        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
+    ])
+
+    assert not manager._download_single_threaded(
         session, 'https://example.com/TwoPush.exe', target, 16,
     )
     assert target.read_bytes() == b'new!'

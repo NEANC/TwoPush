@@ -360,7 +360,11 @@ _REPLACEMENTS = [
         '                            pbar.refresh()\n',
         '                        # 覆盖从头下载\n'
         '                        content_length = response.headers.get(\'Content-Length\')\n'
-        '                        if content_length and content_length.isdigit():\n'
+        '                        if (\n'
+        '                            content_length\n'
+        '                            and content_length.isdigit()\n'
+        '                            and known_total == 0\n'
+        '                        ):\n'
         '                            known_total = int(content_length)\n',
     ),
     # 9. 删除进度更新调用行（三处）

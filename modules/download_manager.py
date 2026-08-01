@@ -235,7 +235,11 @@ class DownloadManager:
                         response.raise_for_status()
                         # 覆盖从头下载
                         content_length = response.headers.get('Content-Length')
-                        if content_length and content_length.isdigit():
+                        if (
+                            content_length
+                            and content_length.isdigit()
+                            and known_total == 0
+                        ):
                             known_total = int(content_length)
 
                         with open(target, 'wb') as f:
