@@ -766,7 +766,10 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
     sha_path = tmp_path / 'TwoPush.exe.sha256'
     target.write_bytes(b'wrong content')
 
+    download_calls = []
+
     def custom_download(url, save_path):
+        download_calls.append(Path(save_path).exists())
         Path(save_path).write_bytes(b'new executable')
         return True
 
@@ -785,3 +788,5 @@ def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeyp
                                             'expected-sha', 'v2.0.0')
     # 缓存分支 1 次 + 每轮 SHA 不符 3 次（修复缺失时仅为缓存 1 + 耗尽 1）
     assert len(cleanup_calls) >= 4
+    # 每轮下载前 target 均已被删除（缓存分支 1 次 + 每轮 SHA 不符各 1 次，验证 I1 修复）
+    assert download_calls == [False, False, False]

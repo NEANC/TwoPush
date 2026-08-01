@@ -4,8 +4,51 @@
 """内置下载管理器测试"""
 
 import logging
+from pathlib import Path
 
 import pytest
+
+
+class _FakeResponse:
+    """模拟 requests 响应对象。"""
+
+    def __init__(self, status_code, headers, chunks=()):
+        self.status_code = status_code
+        self.headers = headers
+        self._chunks = list(chunks)
+        self._iterated = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f'HTTP {self.status_code}')
+
+    def iter_content(self, chunk_size=None):
+        for chunk in self._chunks:
+            yield chunk
+
+
+class _FakeSession:
+    """模拟 requests Session。"""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self._calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get(self, url, **kwargs):
+        self._calls.append((url, kwargs.get('headers', {})))
+        return self._responses.pop(0)
 
 
 def test_download_file_falls_back_to_single_thread_after_multithread_failure(
@@ -92,3 +135,78 @@ def test_download_manager_never_writes_console_output(monkeypatch, tmp_path, cap
     captured = capsys.readouterr()
     assert captured.out == ''
     assert captured.err == ''
+
+
+def test_download_single_threaded_206_resumes_existing_file(tmp_path):
+    """单线程下载收到 206 时应从已有字节续传追加。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_206_resume'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'01234567')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 8-15/16'}, chunks=[b'89abcdef']),
+    ])
+    assert manager._download_single_threaded(
+        session, 'https://example.com/TwoPush.exe', target, 16,
+    )
+    assert target.read_bytes() == b'0123456789abcdef'
+
+
+def test_download_single_threaded_200_restarts_overwrite(tmp_path):
+    """单线程下载收到 200 时应覆盖从头下载。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_200_overwrite'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'wrongcontent')
+    session = _FakeSession([
+        _FakeResponse(200, {'Content-Length': '4'}, chunks=[b'new!']),
+    ])
+    assert manager._download_single_threaded(
+        session, 'https://example.com/TwoPush.exe', target, 16,
+    )
+    assert target.read_bytes() == b'new!'
+
+
+def test_download_single_threaded_416_complete_file_returns_true(tmp_path):
+    """单线程下载收到 416 且本地文件已完整时应视为成功。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_416_complete'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'0123456789abcdef')
+    session = _FakeSession([_FakeResponse(416, {})])
+    assert manager._download_single_threaded(
+        session, 'https://example.com/TwoPush.exe', target, 16,
+    )
+
+
+def test_content_range_matches_validates_start_and_end():
+    """Content-Range 校验应同时核对起始与结束字节。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    manager = DownloadManager('', '', logging.getLogger('test_content_range'), 16)
+    segment = DownloadSegment(0, 8, 15)
+    assert manager._content_range_matches(
+        segment, 8, {'Content-Range': 'bytes 8-15/16'},
+    )
+    assert not manager._content_range_matches(
+        segment, 8, {'Content-Range': 'bytes 7-15/16'},
+    )
+    assert not manager._content_range_matches(
+        segment, 8, {'Content-Range': 'bytes 8-14/16'},
+    )
+    assert not manager._content_range_matches(segment, 8, {})
+
+
+def test_split_segments_covered_total_size():
+    """分段应无缝覆盖整个文件区间且每段长度为正。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', '', logging.getLogger('test_split'), 16)
+    segments = manager._split_segments(100, 16)
+    assert sum(seg.length for seg in segments) == 100
+    assert segments[0].start == 0
+    assert segments[-1].end == 99
+    assert all(seg.length > 0 for seg in segments)

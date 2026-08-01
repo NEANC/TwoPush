@@ -446,6 +446,7 @@ class SelfUpdater:
                 self.logger.info("新版本已下载并校验通过")
                 return True
             self.logger.error("SHA256 校验失败，准备重试")
+            tmp_path.unlink(missing_ok=True)
             self._cleanup_download_parts(tmp_path)
         else:
             self.logger.critical("软件更新下载校验失败，已达到最大重试次数，跳过更新")
