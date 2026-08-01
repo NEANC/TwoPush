@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
 
@@ -86,7 +87,9 @@ class DownloadManager:
                     supports_range=supports_range,
                 )
         except requests.RequestException as exc:
-            self.logger.debug(f"HEAD 探测失败，降级单线程下载: {exc}")
+            self.logger.debug(
+                f"HEAD 探测失败，降级单线程下载: {type(exc).__name__}",
+            )
             return DownloadMetadata(total_size=0, supports_range=False)
 
     def _split_segments(self, total_size: int, threads: int) -> list[DownloadSegment]:
@@ -250,12 +253,23 @@ class DownloadManager:
                         response.raise_for_status()
                         # 覆盖从头下载
                         content_length = response.headers.get('Content-Length')
-                        if (
-                            content_length
-                            and content_length.isdigit()
-                            and known_total == 0
-                        ):
-                            known_total = int(content_length)
+                        response_total = (
+                            int(content_length)
+                            if content_length and content_length.isdigit()
+                            else 0
+                        )
+                        if known_total > 0 and response_total > 0 and response_total != known_total:
+                            self.logger.debug(
+                                "200 响应声明大小与预期不一致，重新下载",
+                            )
+                            if target.exists():
+                                target.unlink()
+                            existing_size = 0
+                            if 'Range' in headers:
+                                del headers['Range']
+                            continue
+                        if known_total == 0 and response_total > 0:
+                            known_total = response_total
 
                         with open(target, 'wb') as f:
                             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
@@ -293,7 +307,9 @@ class DownloadManager:
                         response.raise_for_status()
 
             except requests.RequestException as exc:
-                self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")
+                self.logger.debug(
+                    f"下载尝试 {attempt + 1} 失败: {type(exc).__name__}",
+                )
 
             # 重试前重新读取文件大小，更新 Range 偏移
             existing_size = target.stat().st_size if target.exists() else 0
@@ -349,31 +365,32 @@ class DownloadManager:
         return 0
 
     def _content_range_matches(self, segment: DownloadSegment, request_start: int,
-                               response_headers: dict) -> bool:
-        """校验响应 Content-Range 与请求区间是否一致。
+                               total_size: int, response_headers: dict) -> bool:
+        """校验响应 Content-Range 的区间与完整文件大小。
 
         Args:
             segment: 下载分段。
             request_start: 请求的起始字节。
+            total_size: 本轮下载的完整文件大小。
             response_headers: 响应头字典。
 
         Returns:
             bool: Content-Range 是否匹配。
         """
-        content_range = response_headers.get('Content-Range', '')
-        if not content_range.startswith('bytes '):
+        content_range = self._parse_content_range(response_headers)
+        if content_range is None:
             return False
-        try:
-            range_part = content_range.split(' ', 1)[1].split('/')[0]
-            start_str, end_str = range_part.split('-')
-            resp_start = int(start_str)
-            resp_end = int(end_str)
-        except (ValueError, IndexError):
-            return False
-        return resp_start == request_start and resp_end == segment.end
+        start, end, total = content_range
+        return (
+            start == request_start
+            and end == segment.end
+            and total > 0
+            and total == total_size
+            and end < total
+        )
 
     def _download_part(self, session, url: str, save_path: Path,
-                       segment: DownloadSegment) -> bool:
+                       segment: DownloadSegment, total_size: int) -> bool:
         """下载单个分段到 part 文件，内部执行 3 次重试。
 
         Args:
@@ -405,7 +422,9 @@ class DownloadManager:
                 ) as response:
 
                     if response.status_code == 206:
-                        if not self._content_range_matches(segment, range_start, response.headers):
+                        if not self._content_range_matches(
+                            segment, range_start, total_size, response.headers,
+                        ):
                             part_path = self._get_part_path(save_path, segment.index)
                             if part_path.exists():
                                 part_path.unlink()
@@ -448,7 +467,10 @@ class DownloadManager:
                         response.raise_for_status()
 
             except requests.RequestException as exc:
-                self.logger.debug(f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: {exc}")
+                self.logger.debug(
+                    f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: "
+                    f"{type(exc).__name__}",
+                )
 
             if attempt < DOWNLOAD_RETRIES - 1:
                 time.sleep(1)
@@ -504,6 +526,7 @@ class DownloadManager:
                         url,
                         target_path,
                         segment,
+                        total_size,
                     )
                     futures[future] = segment
 
@@ -535,7 +558,7 @@ class DownloadManager:
         Returns:
             bool: 操作是否成功。
         """
-        file_name = Path(url).name
+        file_name = Path(urlsplit(url).path).name or '下载文件'
         self.logger.info(f"开始下载文件: {file_name}")
 
         try:
@@ -560,7 +583,9 @@ class DownloadManager:
                 try:
                     success = self._download_multithreaded(url, target, metadata.total_size)
                 except Exception as exc:
-                    self.logger.debug(f"多线程下载异常，回退单线程下载: {exc}")
+                    self.logger.debug(
+                        f"多线程下载异常，回退单线程下载: {type(exc).__name__}",
+                    )
                     success = False
                 if not success:
                     self._cleanup_part_files(target)
@@ -574,8 +599,8 @@ class DownloadManager:
                         session, url, target, metadata.total_size,
                     )
             return success
-        except Exception as e:
-            self.logger.error(f"下载文件时发生错误: {e}")
+        except Exception as exc:
+            self.logger.error(f"下载文件时发生错误: {type(exc).__name__}")
             return False
 
     def _cleanup_part_files(self, target_path: Path) -> None:

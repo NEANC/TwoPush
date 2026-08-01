@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 
 import pytest
+import requests
 
 
 class _FakeResponse:
@@ -29,6 +30,7 @@ class _FakeResponse:
             raise RuntimeError(f'HTTP {self.status_code}')
 
     def iter_content(self, chunk_size=None):
+        self._iterated = True
         for chunk in self._chunks:
             yield chunk
 
@@ -176,8 +178,11 @@ def test_download_single_threaded_rejects_200_length_mismatch_then_restarts(tmp_
     manager = DownloadManager('', str(tmp_path), logging.getLogger('test_200_length_mismatch'), 16)
     target = tmp_path / 'TwoPush.exe'
     target.write_bytes(b'abc')
+    conflicting_response = _FakeResponse(
+        200, {'Content-Length': '4'}, [b'0123456789abcdef'],
+    )
     session = _FakeSession([
-        _FakeResponse(200, {'Content-Length': '4'}, [b'new!']),
+        conflicting_response,
         _FakeResponse(200, {'Content-Length': '16'}, [b'new executable!!']),
     ])
 
@@ -185,8 +190,32 @@ def test_download_single_threaded_rejects_200_length_mismatch_then_restarts(tmp_
         session, 'https://example.com/TwoPush.exe', target, 16,
     )
     assert target.read_bytes() == b'new executable!!'
+    assert not conflicting_response._iterated
+    assert not session._responses
     assert session._calls[0][1].get('Range') == 'bytes=3-'
     assert session._calls[1][1].get('Range') is None
+
+
+@pytest.mark.parametrize('content_length', [None, 'invalid'])
+def test_download_single_threaded_uses_known_total_without_valid_content_length(
+        tmp_path, content_length):
+    """200 缺失或声明非法长度时仍应按 HEAD 已知总大小校验。"""
+    from modules.download_manager import DownloadManager
+
+    headers = {}
+    if content_length is not None:
+        headers['Content-Length'] = content_length
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_known_total'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    session = _FakeSession([
+        _FakeResponse(200, headers, [b'bad']),
+        _FakeResponse(200, {'Content-Length': '16'}, [b'0123456789abcdef']),
+    ])
+
+    assert manager._download_single_threaded(
+        session, 'https://example.com/TwoPush.exe', target, 16,
+    )
+    assert target.read_bytes() == b'0123456789abcdef'
 
 
 def test_download_single_threaded_416_complete_file_returns_true(tmp_path):
@@ -209,15 +238,21 @@ def test_content_range_matches_validates_start_and_end():
     manager = DownloadManager('', '', logging.getLogger('test_content_range'), 16)
     segment = DownloadSegment(0, 8, 15)
     assert manager._content_range_matches(
-        segment, 8, {'Content-Range': 'bytes 8-15/16'},
+        segment, 8, 16, {'Content-Range': 'bytes 8-15/16'},
     )
     assert not manager._content_range_matches(
-        segment, 8, {'Content-Range': 'bytes 7-15/16'},
+        segment, 8, 16, {'Content-Range': 'bytes 7-15/16'},
     )
     assert not manager._content_range_matches(
-        segment, 8, {'Content-Range': 'bytes 8-14/16'},
+        segment, 8, 16, {'Content-Range': 'bytes 8-14/16'},
     )
-    assert not manager._content_range_matches(segment, 8, {})
+    assert not manager._content_range_matches(
+        segment, 8, 16, {'Content-Range': 'bytes 8-15/32'},
+    )
+    assert not manager._content_range_matches(
+        segment, 8, 16, {'Content-Range': 'bytes 8-15/*'},
+    )
+    assert not manager._content_range_matches(segment, 8, 16, {})
 
 
 def test_split_segments_covered_total_size():
@@ -384,7 +419,7 @@ def test_download_single_threaded_rejects_unclosed_206_range(tmp_path):
     target = tmp_path / 'TwoPush.exe'
     target.write_bytes(b'abcdefgh')  # 本地已有 8 字节
     session = _FakeSession([
-        _FakeResponse(206, {'Content-Range': 'bytes 8-14/16'}, [b'01234567']),
+        _FakeResponse(206, {'Content-Range': 'bytes 8-14/16'}, [b'0123456']),
         _FakeResponse(200, {'Content-Length': '16'}, [b'0123456789abcdef']),
     ])
 
@@ -395,8 +430,8 @@ def test_download_single_threaded_rejects_unclosed_206_range(tmp_path):
     assert session._calls[1][1].get('Range') is None
 
 
-def test_download_file_does_not_log_full_url(monkeypatch, tmp_path, caplog):
-    """下载入口不应将完整 URL 写入日志。"""
+def test_download_file_logs_only_sanitized_basename(monkeypatch, tmp_path, caplog):
+    """下载入口仅可记录 URL 路径中的安全 basename。"""
     from modules.download_manager import DownloadManager, DownloadMetadata
 
     logger = logging.getLogger('test_url_log')
@@ -404,11 +439,90 @@ def test_download_file_does_not_log_full_url(monkeypatch, tmp_path, caplog):
     monkeypatch.setattr(manager, '_get_download_metadata',
                         lambda session, url: DownloadMetadata(0, False))
     monkeypatch.setattr(manager, '_download_single_threaded', lambda *args: True)
-    url = 'https://example.com/secret-file.exe'
+    url = 'https://user:secret@example.com/TwoPush.exe?token=abc#frag'
     with caplog.at_level(logging.DEBUG, logger='test_url_log'):
         assert manager.download_file(url, str(tmp_path / 'file.exe'))
-    assert '下载 URL' not in caplog.text
+    assert 'TwoPush.exe' in caplog.text
+    assert 'token=abc' not in caplog.text
+    assert 'user:secret' not in caplog.text
     assert url not in caplog.text
+
+
+@pytest.mark.parametrize('method_name', ['head', 'get'])
+def test_requests_exceptions_do_not_leak_url_or_proxy_secrets(
+        monkeypatch, tmp_path, caplog, method_name):
+    """HEAD 与 GET 异常日志不得包含 URL 或代理认证正文。"""
+    from modules.download_manager import DownloadManager
+
+    secret = 'https://user:password@example.com/TwoPush.exe?token=abc'
+    proxy = 'http://proxy-user:proxy-password@127.0.0.1:7890'
+    manager = DownloadManager(proxy, str(tmp_path), logging.getLogger('test_secret_log'), 1)
+
+    class _ErrorSession:
+        """模拟抛出带敏感正文的 requests 会话。"""
+
+        def head(self, url, **kwargs):
+            """抛出 HEAD 网络异常。"""
+            raise requests.ConnectionError(f'{secret} via {proxy}')
+
+        def get(self, url, **kwargs):
+            """抛出 GET 网络异常。"""
+            raise requests.ConnectionError(f'{secret} via {proxy}')
+
+    with caplog.at_level(logging.DEBUG, logger='test_secret_log'):
+        if method_name == 'head':
+            manager._get_download_metadata(_ErrorSession(), secret)
+        else:
+            monkeypatch.setattr('modules.download_manager.time.sleep', lambda seconds: None)
+            manager._download_single_threaded(
+                _ErrorSession(), secret, tmp_path / 'TwoPush.exe', 16,
+            )
+    assert 'token=abc' not in caplog.text
+    assert 'password' not in caplog.text
+    assert secret not in caplog.text
+
+
+@pytest.mark.parametrize('content_range', [
+    'bytes 0-7/16',
+    'bytes 0-7/32',
+    'bytes 0-7/*',
+])
+def test_download_part_validates_content_range_total(
+        monkeypatch, tmp_path, content_range):
+    """分段下载必须校验完整 Content-Range 与本轮总大小。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    monkeypatch.setattr('modules.download_manager.time.sleep', lambda seconds: None)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_part_total'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    segment = DownloadSegment(0, 0, 7)
+    responses = [
+        _FakeResponse(206, {'Content-Range': content_range}, [b'01234567'])
+        for _ in range(1 if content_range.endswith('/16') else 3)
+    ]
+    session = _FakeSession(responses)
+
+    result = manager._download_part(session, 'https://example.com/file.exe', target,
+                                    segment, 16)
+    assert result is content_range.endswith('/16')
+
+
+def test_download_part_resume_validates_range_and_total(tmp_path):
+    """续传 part 应发送剩余 Range 并校验响应总大小。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_part_resume'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'0123')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 4-7/16'}, [b'4567']),
+    ])
+
+    assert manager._download_part(
+        session, 'https://example.com/file.exe', target,
+        DownloadSegment(0, 0, 7), 16,
+    )
+    assert session._calls[0][1]['Range'] == 'bytes=4-7'
 
 
 def test_download_multithreaded_success_path(monkeypatch, tmp_path):
@@ -437,7 +551,7 @@ def test_download_multithreaded_success_path(monkeypatch, tmp_path):
     monkeypatch.setattr(manager, '_split_segments', lambda size, threads: segments)
     part_calls = []
 
-    def fake_download_part(session, url, save_path, segment):
+    def fake_download_part(session, url, save_path, segment, total_size):
         """模拟分段下载：写入对应 part 文件并返回成功。"""
         part_calls.append(segment.index)
         part_path = tmp_path / f'TwoPush.exe.part{segment.index}'
@@ -478,7 +592,7 @@ def test_download_multithreaded_part_failure_cleans_and_falls_back(monkeypatch, 
     monkeypatch.setattr(manager, '_get_download_metadata',
                         lambda session, url: DownloadMetadata(16, True))
 
-    def fake_download_part(session, url, save_path, segment):
+    def fake_download_part(session, url, save_path, segment, total_size):
         """模拟分段 0 成功写 part，分段 1 失败。"""
         if segment.index == 1:
             return False

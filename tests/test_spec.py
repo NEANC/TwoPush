@@ -844,3 +844,27 @@ def test_download_and_verify_cleans_files_when_download_callback_raises(tmp_path
     assert not target.exists()
     assert not Path(f'{target}.part0').exists()
     assert not sha_path.exists()
+
+
+def test_download_and_verify_callback_exception_log_is_sanitized(tmp_path, caplog):
+    """下载回调异常日志不得包含异常正文中的 URL 与凭据。"""
+    from modules.self_updater import SelfUpdater
+
+    secret = 'https://user:secret@example.com/TwoPush.exe?token=abc'
+
+    def failing_download(url, save_path):
+        """抛出包含敏感 URL 的回调异常。"""
+        raise OSError(secret)
+
+    logger = logging.getLogger('test_callback_secret')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logger, download_func=failing_download)
+    with caplog.at_level(logging.DEBUG, logger='test_callback_secret'):
+        assert not updater._download_and_verify(
+            tmp_path / 'TwoPush.exe', tmp_path / 'TwoPush.exe.sha256',
+            secret, 'expected', 'v2.0.0',
+        )
+    assert 'OSError' in caplog.text
+    assert 'token=abc' not in caplog.text
+    assert 'user:secret' not in caplog.text
+    assert secret not in caplog.text

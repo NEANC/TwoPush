@@ -430,7 +430,7 @@ class SelfUpdater:
 
         max_retries = 3
         for attempt in range(max_retries):
-            file_name = Path(exe_url).name
+            file_name = Path(requests.utils.urlparse(exe_url).path).name or "下载文件"
             if attempt > 0:
                 self.logger.info(f"重试下载更新文件（{attempt + 1}/{max_retries}）: {file_name}")
             else:
@@ -439,7 +439,7 @@ class SelfUpdater:
             try:
                 downloaded = self._download_func(exe_url, str(tmp_path))
             except Exception as exc:
-                self.logger.error(f"下载失败: {exc}")
+                self.logger.error(f"下载失败: {type(exc).__name__}")
                 downloaded = False
             else:
                 if not downloaded:

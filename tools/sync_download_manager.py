@@ -46,7 +46,7 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
         Returns:
             bool: 操作是否成功。
         """
-        file_name = Path(url).name
+        file_name = Path(urlsplit(url).path).name or '下载文件'
         self.logger.info(f"开始下载文件: {file_name}")
 
         try:
@@ -71,7 +71,9 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
                 try:
                     success = self._download_multithreaded(url, target, metadata.total_size)
                 except Exception as exc:
-                    self.logger.debug(f"多线程下载异常，回退单线程下载: {exc}")
+                    self.logger.debug(
+                        f"多线程下载异常，回退单线程下载: {type(exc).__name__}",
+                    )
                     success = False
                 if not success:
                     self._cleanup_part_files(target)
@@ -85,8 +87,8 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
                         session, url, target, metadata.total_size,
                     )
             return success
-        except Exception as e:
-            self.logger.error(f"下载文件时发生错误: {e}")
+        except Exception as exc:
+            self.logger.error(f"下载文件时发生错误: {type(exc).__name__}")
             return False
 
     def _cleanup_part_files(self, target_path: Path) -> None:
@@ -144,6 +146,7 @@ _REPLACEMENTS = [
         'from concurrent.futures import ThreadPoolExecutor, as_completed\n'
         'from dataclasses import dataclass\n'
         'from pathlib import Path\n'
+        'from urllib.parse import urlsplit\n'
         '\n'
         'import requests\n',
     ),
@@ -389,12 +392,23 @@ _REPLACEMENTS = [
         '                        return True\n',
         '                        # 覆盖从头下载\n'
         '                        content_length = response.headers.get(\'Content-Length\')\n'
-        '                        if (\n'
-        '                            content_length\n'
-        '                            and content_length.isdigit()\n'
-        '                            and known_total == 0\n'
-        '                        ):\n'
-        '                            known_total = int(content_length)\n'
+        '                        response_total = (\n'
+        '                            int(content_length)\n'
+        '                            if content_length and content_length.isdigit()\n'
+        '                            else 0\n'
+        '                        )\n'
+        '                        if known_total > 0 and response_total > 0 and response_total != known_total:\n'
+        '                            self.logger.debug(\n'
+        '                                "200 响应声明大小与预期不一致，重新下载",\n'
+        '                            )\n'
+        '                            if target.exists():\n'
+        '                                target.unlink()\n'
+        '                            existing_size = 0\n'
+        '                            if \'Range\' in headers:\n'
+        '                                del headers[\'Range\']\n'
+        '                            continue\n'
+        '                        if known_total == 0 and response_total > 0:\n'
+        '                            known_total = response_total\n'
         '\n'
         '                        with open(target, \'wb\') as f:\n'
         '                            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):\n'
@@ -440,7 +454,7 @@ _REPLACEMENTS = [
         '    def _download_part(self, session, url: str, save_path: Path, segment: DownloadSegment,\n'
         '                       pbar, speed_meter: NetworkSpeedMeter, progress_lock: Lock) -> bool:\n',
         '    def _download_part(self, session, url: str, save_path: Path,\n'
-        '                       segment: DownloadSegment) -> bool:\n',
+        '                       segment: DownloadSegment, total_size: int) -> bool:\n',
     ),
     # 12. _download_part 206 分支去掉进度回退
     (
@@ -479,7 +493,82 @@ _REPLACEMENTS = [
         '                        url,\n'
         '                        target_path,\n'
         '                        segment,\n'
+        '                        total_size,\n'
         '                    )\n',
+    ),
+    (
+        '    def _content_range_matches(self, segment: DownloadSegment, request_start: int,\n'
+        '                               response_headers: dict) -> bool:\n'
+        '        """校验响应 Content-Range 与请求区间是否一致。\n'
+        '\n'
+        '        Args:\n'
+        '            segment: 下载分段。\n'
+        '            request_start: 请求的起始字节。\n'
+        '            response_headers: 响应头字典。\n'
+        '\n'
+        '        Returns:\n'
+        '            bool: Content-Range 是否匹配。\n'
+        '        """\n'
+        '        content_range = response_headers.get(\'Content-Range\', \'\')\n'
+        '        if not content_range.startswith(\'bytes \'):\n'
+        '            return False\n'
+        '        try:\n'
+        '            range_part = content_range.split(\' \', 1)[1].split(\'/\')[0]\n'
+        '            start_str, end_str = range_part.split(\'-\')\n'
+        '            resp_start = int(start_str)\n'
+        '            resp_end = int(end_str)\n'
+        '        except (ValueError, IndexError):\n'
+        '            return False\n'
+        '        return resp_start == request_start and resp_end == segment.end\n',
+        '    def _content_range_matches(self, segment: DownloadSegment, request_start: int,\n'
+        '                               total_size: int, response_headers: dict) -> bool:\n'
+        '        """校验响应 Content-Range 的区间与完整文件大小。\n'
+        '\n'
+        '        Args:\n'
+        '            segment: 下载分段。\n'
+        '            request_start: 请求的起始字节。\n'
+        '            total_size: 本轮下载的完整文件大小。\n'
+        '            response_headers: 响应头字典。\n'
+        '\n'
+        '        Returns:\n'
+        '            bool: Content-Range 是否匹配。\n'
+        '        """\n'
+        '        content_range = self._parse_content_range(response_headers)\n'
+        '        if content_range is None:\n'
+        '            return False\n'
+        '        start, end, total = content_range\n'
+        '        return (\n'
+        '            start == request_start\n'
+        '            and end == segment.end\n'
+        '            and total > 0\n'
+        '            and total == total_size\n'
+        '            and end < total\n'
+        '        )\n',
+    ),
+    (
+        '                        if not self._content_range_matches(segment, range_start, response.headers):\n',
+        '                        if not self._content_range_matches(\n'
+        '                            segment, range_start, total_size, response.headers,\n'
+        '                        ):\n',
+    ),
+    (
+        '            self.logger.debug(f"HEAD 探测失败，降级单线程下载: {exc}")\n',
+        '            self.logger.debug(\n'
+        '                f"HEAD 探测失败，降级单线程下载: {type(exc).__name__}",\n'
+        '            )\n',
+    ),
+    (
+        '                self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")\n',
+        '                self.logger.debug(\n'
+        '                    f"下载尝试 {attempt + 1} 失败: {type(exc).__name__}",\n'
+        '                )\n',
+    ),
+    (
+        '                self.logger.debug(f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: {exc}")\n',
+        '                self.logger.debug(\n'
+        '                    f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: "\n'
+        '                    f"{type(exc).__name__}",\n'
+        '                )\n',
     ),
     # 15. 删除 _get_existing_bytes 方法（进度条初始字节统计）
     (
