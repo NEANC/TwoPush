@@ -10,12 +10,19 @@
     4. 公开入口改名为 download_file，并新增多线程失败后的单线程回退。
 """
 
+import argparse
+import hashlib
+import os
+import tempfile
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SOURCE_PATH = Path(r'g:\GitHub\Python_Self-Updater\download\manager.py')
 OUTPUT_PATH = PROJECT_ROOT / 'modules' / 'download_manager.py'
+SOURCE_ENV_VAR = 'TWOPUSH_DOWNLOAD_MANAGER_SOURCE'
+ENTRY_MARKER = '    def download_file_with_progress(self, url: str, save_path: str) -> bool:'
+ENTRY_TAIL_SHA256 = '6831e7f1082c6501b96b530aef83d650360cd73b3b0e30da46d059e7c39388a4'
 
 # 转换后不允许残留的进度/输出相关 token
 FORBIDDEN_TOKENS = [
@@ -125,9 +132,10 @@ def _apply_replacements(content: str, replacements: list) -> str:
         str: 替换后的源码文本。
     """
     for old, new in replacements:
-        if old not in content:
-            raise RuntimeError(f'替换源文本不存在: {old[:60]!r}')
-        content = content.replace(old, new)
+        count = content.count(old)
+        if count != 1:
+            raise RuntimeError(f'替换源文本出现次数必须为 1，实际为 {count}: {old[:60]!r}')
+        content = content.replace(old, new, 1)
     return content
 
 
@@ -261,12 +269,32 @@ _REPLACEMENTS = [
         '    def _download_single_threaded(self, session, url: str, target_path: Path,\n'
         '                                  total_size: int) -> bool:\n',
     ),
-    # 6. 三个 docstring 中删除进度参数说明（保留 Args 与 Returns 之间的空行）
+    # 6. 三个 docstring 分别删除进度参数说明
     (
+        '            total_size: 已知总大小（0 表示未知）。\n'
         '            pbar: tqdm 进度条实例。\n'
         '            speed_meter: 网速统计器。\n'
         '            progress_lock: 进度更新锁。\n'
         '\n',
+        '            total_size: 已知总大小（0 表示未知）。\n'
+        '\n',
+    ),
+    (
+        '            segment: 下载分段。\n'
+        '            pbar: tqdm 进度条实例。\n'
+        '            speed_meter: 网速统计器。\n'
+        '            progress_lock: 进度更新锁。\n'
+        '\n',
+        '            segment: 下载分段。\n'
+        '\n',
+    ),
+    (
+        '            total_size: 文件总大小。\n'
+        '            pbar: tqdm 进度条实例。\n'
+        '            speed_meter: 网速统计器。\n'
+        '            progress_lock: 进度更新锁。\n'
+        '\n',
+        '            total_size: 文件总大小。\n'
         '\n',
     ),
     # 6.5. 单线程 206 分支整段重写：校验起点、统计写入字节、校验区间完整性
@@ -633,13 +661,17 @@ def transform_manager(source: str) -> str:
     Returns:
         str: 转换后的源码文本。
     """
+    marker_count = source.count(ENTRY_MARKER)
+    if marker_count != 1:
+        raise RuntimeError(f'入口方法 marker 出现次数必须为 1，实际为 {marker_count}')
+    source_tail = source.split(ENTRY_MARKER, 1)[1]
+    tail_sha256 = hashlib.sha256(source_tail.encode('utf-8')).hexdigest()
+    if tail_sha256 != ENTRY_TAIL_SHA256:
+        raise RuntimeError('入口方法后的外部源码摘要不匹配')
+
     content = source.replace('\r\n', '\n').replace('\r', '\n')
     content = _apply_replacements(content, _REPLACEMENTS)
-    # 重写公开入口：download_file_with_progress -> download_file
-    marker = '    def download_file_with_progress(self, url: str, save_path: str) -> bool:'
-    head, sep, _tail = content.partition(marker)
-    if not sep:
-        raise RuntimeError('未找到 download_file_with_progress 入口方法')
+    head, sep, _tail = content.partition(ENTRY_MARKER)
     return head + _ENTRY_CODE
 
 
@@ -657,15 +689,47 @@ def _assert_no_forbidden_tokens(content: str) -> None:
             raise RuntimeError(f'转换结果仍包含禁用 token: {token!r}')
 
 
-def main() -> None:
-    """执行转换并写入目标模块。"""
-    source = SOURCE_PATH.read_text(encoding='utf-8')
+def main(source_path=None, target_path=None) -> None:
+    """从指定来源执行转换并原子写入目标模块。"""
+    source_path = Path(
+        source_path or os.environ.get(SOURCE_ENV_VAR) or SOURCE_PATH,
+    )
+    target_path = Path(target_path or OUTPUT_PATH)
+    if not source_path.is_file():
+        raise FileNotFoundError(f'下载管理器来源文件不存在: {source_path}')
+    with open(source_path, 'r', encoding='utf-8', newline='') as source_file:
+        source = source_file.read()
     transformed = transform_manager(source)
     _assert_no_forbidden_tokens(transformed)
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(transformed, encoding='utf-8', newline='\n')
-    print(f'已生成: {OUTPUT_PATH}')
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+                mode='w', delete=False, dir=target_path.parent,
+                prefix=f'{target_path.name}.', suffix='.tmp',
+                encoding='utf-8', newline='') as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(transformed)
+            temporary_file.flush()
+        with open(temporary_path, 'r', encoding='utf-8', newline='') as generated_file:
+            if generated_file.read() != transformed:
+                raise RuntimeError('同步临时文件内容校验失败')
+        os.replace(temporary_path, target_path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    print(f'已生成: {target_path}')
+
+
+def _parse_args():
+    """解析同步脚本命令行参数。"""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--source', type=Path)
+    parser.add_argument('--target', type=Path)
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
-    main()
+    arguments = _parse_args()
+    main(arguments.source, arguments.target)
