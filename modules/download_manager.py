@@ -102,16 +102,24 @@ class DownloadManager:
             start = end + 1
         return segments
 
-    def _content_range_start(self, response_headers: dict) -> int:
-        """解析 Content-Range 响应头的起始字节，无法解析时返回 -1。"""
+    def _parse_content_range(self, response_headers: dict):
+        """解析 Content-Range 响应头为 (start, end, total)。
+
+        总长度未知时 total 为 -1，无法解析时返回 None。
+
+        Returns:
+            三元组 (start, end, total) 或 None。
+        """
         content_range = response_headers.get('Content-Range', '')
         if not content_range.startswith('bytes '):
-            return -1
+            return None
         try:
-            range_part = content_range.split(' ', 1)[1].split('/')[0]
-            return int(range_part.split('-')[0])
+            range_part, total_part = content_range.split(' ', 1)[1].split('/', 1)
+            start, end = (int(part) for part in range_part.split('-'))
+            total = int(total_part) if total_part.isdigit() else -1
         except (ValueError, IndexError):
-            return -1
+            return None
+        return start, end, total
 
     def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:
         """从 GET 响应头推导完整文件大小。"""
@@ -171,11 +179,11 @@ class DownloadManager:
 
                     if response.status_code == 206:
                         response.raise_for_status()
-                        # 校验响应起点与本地续传偏移一致，防止服务器返回错位区间
-                        range_start = self._content_range_start(response.headers)
-                        if range_start < 0 or range_start != existing_size:
+                        # 解析 Content-Range 并校验起点与本地续传偏移一致
+                        range_info = self._parse_content_range(response.headers)
+                        if range_info is None or range_info[0] != existing_size:
                             self.logger.debug(
-                                f"206 响应起点 {range_start} 与本地偏移 {existing_size} 不一致，"
+                                f"206 响应起点与本地偏移 {existing_size} 不一致，"
                                 f"删除不可信文件重新下载",
                             )
                             if target.exists():
@@ -184,22 +192,26 @@ class DownloadManager:
                             if 'Range' in headers:
                                 del headers['Range']
                             continue
-                        # 从 Content-Range 推导真实 total
-                        real_total = self._extract_total_size_from_get_response(
-                            response, existing_size,
-                        )
-                        if real_total > 0:
-                            known_total = real_total
-                        # 续传追加
+                        range_start, range_end, range_total = range_info
+                        # 续传追加并统计本次实际写入的字节数
+                        written = 0
                         with open(target, 'ab') as f:
                             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                                 if chunk:
                                     f.write(chunk)
+                                    written += len(chunk)
 
-                        # C1: 使用可变的 known_total 做校验，而非固定入参 total_size
-                        if known_total == 0:
-                            return target.exists() and target.stat().st_size > 0
-                        if target.stat().st_size != known_total:
+                        if range_total > 0:
+                            # 总长度已知：完整文件大小必须与 total 一致
+                            known_total = range_total
+                            if target.stat().st_size != known_total:
+                                existing_size = target.stat().st_size
+                                headers['Range'] = f'bytes={existing_size}-'
+                                continue
+                            return True
+                        # 总长度未知：必须写满声明的区间长度，短读则更新偏移重试
+                        expected = range_end - range_start + 1
+                        if written < expected:
                             existing_size = target.stat().st_size
                             headers['Range'] = f'bytes={existing_size}-'
                             continue

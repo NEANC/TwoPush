@@ -189,19 +189,27 @@ _REPLACEMENTS = [
         '\n',
         '',
     ),
-    # 4.5. 新增 Content-Range 起点解析辅助方法（在 _extract_total_size_from_get_response 前）
+    # 4.5. 新增 Content-Range 完整解析辅助方法（在 _extract_total_size_from_get_response 前）
     (
         '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n',
-        '    def _content_range_start(self, response_headers: dict) -> int:\n'
-        '        """解析 Content-Range 响应头的起始字节，无法解析时返回 -1。"""\n'
+        '    def _parse_content_range(self, response_headers: dict):\n'
+        '        """解析 Content-Range 响应头为 (start, end, total)。\n'
+        '\n'
+        '        总长度未知时 total 为 -1，无法解析时返回 None。\n'
+        '\n'
+        '        Returns:\n'
+        '            三元组 (start, end, total) 或 None。\n'
+        '        """\n'
         '        content_range = response_headers.get(\'Content-Range\', \'\')\n'
         '        if not content_range.startswith(\'bytes \'):\n'
-        '            return -1\n'
+        '            return None\n'
         '        try:\n'
-        '            range_part = content_range.split(\' \', 1)[1].split(\'/\')[0]\n'
-        '            return int(range_part.split(\'-\')[0])\n'
+        '            range_part, total_part = content_range.split(\' \', 1)[1].split(\'/\', 1)\n'
+        '            start, end = (int(part) for part in range_part.split(\'-\'))\n'
+        '            total = int(total_part) if total_part.isdigit() else -1\n'
         '        except (ValueError, IndexError):\n'
-        '            return -1\n'
+        '            return None\n'
+        '        return start, end, total\n'
         '\n'
         '    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:\n',
     ),
@@ -234,18 +242,37 @@ _REPLACEMENTS = [
         '\n',
         '\n',
     ),
-    # 6.5. 单线程 206 分支校验 Content-Range 起点
+    # 6.5. 单线程 206 分支整段重写：校验起点、统计写入字节、校验区间完整性
     (
-        '                    if response.status_code == 206:\n'
-        '                        response.raise_for_status()\n'
-        '                        # 从 Content-Range 推导真实 total\n',
-        '                    if response.status_code == 206:\n'
-        '                        response.raise_for_status()\n'
-        '                        # 校验响应起点与本地续传偏移一致，防止服务器返回错位区间\n'
-        '                        range_start = self._content_range_start(response.headers)\n'
-        '                        if range_start < 0 or range_start != existing_size:\n'
+        '                        # 从 Content-Range 推导真实 total\n'
+        '                        real_total = self._extract_total_size_from_get_response(\n'
+        '                            response, existing_size,\n'
+        '                        )\n'
+        '                        if real_total > 0:\n'
+        '                            known_total = real_total\n'
+        '                            with progress_lock:\n'
+        '                                pbar.total = real_total\n'
+        '                                pbar.refresh()\n'
+        '                        # 续传追加\n'
+        '                        with open(target, \'ab\') as f:\n'
+        '                            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):\n'
+        '                                if chunk:\n'
+        '                                    f.write(chunk)\n'
+        '                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))\n'
+        '\n'
+        '                        # C1: 使用可变的 known_total 做校验，而非固定入参 total_size\n'
+        '                        if known_total == 0:\n'
+        '                            return target.exists() and target.stat().st_size > 0\n'
+        '                        if target.stat().st_size != known_total:\n'
+        '                            existing_size = target.stat().st_size\n'
+        '                            headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                            continue\n'
+        '                        return True\n',
+        '                        # 解析 Content-Range 并校验起点与本地续传偏移一致\n'
+        '                        range_info = self._parse_content_range(response.headers)\n'
+        '                        if range_info is None or range_info[0] != existing_size:\n'
         '                            self.logger.debug(\n'
-        '                                f"206 响应起点 {range_start} 与本地偏移 {existing_size} 不一致，"\n'
+        '                                f"206 响应起点与本地偏移 {existing_size} 不一致，"\n'
         '                                f"删除不可信文件重新下载",\n'
         '                            )\n'
         '                            if target.exists():\n'
@@ -254,17 +281,30 @@ _REPLACEMENTS = [
         '                            if \'Range\' in headers:\n'
         '                                del headers[\'Range\']\n'
         '                            continue\n'
-        '                        # 从 Content-Range 推导真实 total\n',
-    ),
-    # 7. 单线程 206 分支去掉进度更新
-    (
-        '                        if real_total > 0:\n'
-        '                            known_total = real_total\n'
-        '                            with progress_lock:\n'
-        '                                pbar.total = real_total\n'
-        '                                pbar.refresh()\n',
-        '                        if real_total > 0:\n'
-        '                            known_total = real_total\n',
+        '                        range_start, range_end, range_total = range_info\n'
+        '                        # 续传追加并统计本次实际写入的字节数\n'
+        '                        written = 0\n'
+        '                        with open(target, \'ab\') as f:\n'
+        '                            for chunk in response.iter_content(chunk_size=CHUNK_SIZE):\n'
+        '                                if chunk:\n'
+        '                                    f.write(chunk)\n'
+        '                                    written += len(chunk)\n'
+        '\n'
+        '                        if range_total > 0:\n'
+        '                            # 总长度已知：完整文件大小必须与 total 一致\n'
+        '                            known_total = range_total\n'
+        '                            if target.stat().st_size != known_total:\n'
+        '                                existing_size = target.stat().st_size\n'
+        '                                headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                                continue\n'
+        '                            return True\n'
+        '                        # 总长度未知：必须写满声明的区间长度，短读则更新偏移重试\n'
+        '                        expected = range_end - range_start + 1\n'
+        '                        if written < expected:\n'
+        '                            existing_size = target.stat().st_size\n'
+        '                            headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                            continue\n'
+        '                        return True\n',
     ),
     # 8. 单线程 200 分支去掉进度更新
     (

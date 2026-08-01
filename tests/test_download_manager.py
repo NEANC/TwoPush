@@ -229,3 +229,55 @@ def test_download_single_threaded_rejects_mismatched_206_start(tmp_path):
     assert target.read_bytes() == b'0123456789abcdef'
     assert session._calls[0][1].get('Range') == 'bytes=8-'
     assert 'Range' not in session._calls[1][1]
+
+
+def test_download_single_threaded_accepts_full_206_with_unknown_total(tmp_path):
+    """未知总长度的 206 若写满声明的区间，应判定成功。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_unknown_total_ok'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 8-15/*'}, [b'01234567']),
+    ])
+
+    assert manager._download_single_threaded(session, 'https://example.com/file.exe', target, 0)
+    assert target.read_bytes() == b'abcdefgh01234567'
+    assert session._calls[0][1].get('Range') == 'bytes=8-'
+
+
+def test_download_single_threaded_rejects_short_206_with_unknown_total(tmp_path):
+    """未知总长度的 206 短响应不应被判成功，应更新偏移重试直至失败。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_short_206'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 8-15/*'}, [b'x']),
+        _FakeResponse(206, {'Content-Range': 'bytes 9-15/*'}, [b'y']),
+        _FakeResponse(206, {'Content-Range': 'bytes 10-15/*'}, [b'z']),
+    ])
+
+    assert not manager._download_single_threaded(session, 'https://example.com/file.exe', target, 0)
+    assert target.read_bytes() == b'abcdefghxyz'
+    assert session._calls[0][1].get('Range') == 'bytes=8-'
+
+
+def test_download_single_threaded_416_incomplete_retries_then_fails(monkeypatch, tmp_path):
+    """本地不完整的 416 响应应重试，耗尽后返回失败。"""
+    from modules.download_manager import DownloadManager
+
+    monkeypatch.setattr('modules.download_manager.time.sleep', lambda seconds: None)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_416_incomplete'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')
+    session = _FakeSession([
+        _FakeResponse(416, {}),
+        _FakeResponse(416, {}),
+        _FakeResponse(416, {}),
+    ])
+
+    assert not manager._download_single_threaded(session, 'https://example.com/file.exe', target, 16)
+    assert target.read_bytes() == b'abcdefgh'
