@@ -374,3 +374,154 @@ def test_download_single_threaded_416_incomplete_retries_then_fails(monkeypatch,
 
     assert not manager._download_single_threaded(session, 'https://example.com/file.exe', target, 16)
     assert target.read_bytes() == b'abcdefgh'
+
+
+def test_download_single_threaded_rejects_unclosed_206_range(tmp_path):
+    """206 声明区间未闭合（end 小于 total-1）时即使大小吻合也应从头下载。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_unclosed_206'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    target.write_bytes(b'abcdefgh')  # 本地已有 8 字节
+    session = _FakeSession([
+        _FakeResponse(206, {'Content-Range': 'bytes 8-14/16'}, [b'01234567']),
+        _FakeResponse(200, {'Content-Length': '16'}, [b'0123456789abcdef']),
+    ])
+
+    assert manager._download_single_threaded(session, 'https://example.com/file.exe',
+                                             target, 16)
+    assert target.read_bytes() == b'0123456789abcdef'
+    assert session._calls[0][1].get('Range') == 'bytes=8-'
+    assert session._calls[1][1].get('Range') is None
+
+
+def test_download_file_does_not_log_full_url(monkeypatch, tmp_path, caplog):
+    """下载入口不应将完整 URL 写入日志。"""
+    from modules.download_manager import DownloadManager, DownloadMetadata
+
+    logger = logging.getLogger('test_url_log')
+    manager = DownloadManager('', str(tmp_path), logger, 1)
+    monkeypatch.setattr(manager, '_get_download_metadata',
+                        lambda session, url: DownloadMetadata(0, False))
+    monkeypatch.setattr(manager, '_download_single_threaded', lambda *args: True)
+    url = 'https://example.com/secret-file.exe'
+    with caplog.at_level(logging.DEBUG, logger='test_url_log'):
+        assert manager.download_file(url, str(tmp_path / 'file.exe'))
+    assert '下载 URL' not in caplog.text
+    assert url not in caplog.text
+
+
+def test_download_multithreaded_success_path(monkeypatch, tmp_path):
+    """多线程下载成功路径：分段下载、合并、part 清理。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    class _SessionStub:
+        """模拟 requests.Session：无网络行为，仅支持上下文与关闭。"""
+
+        def __init__(self):
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr('modules.download_manager.requests.Session', _SessionStub)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_mt_success'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    segments = [DownloadSegment(0, 0, 7), DownloadSegment(1, 8, 15)]
+    monkeypatch.setattr(manager, '_split_segments', lambda size, threads: segments)
+    part_calls = []
+
+    def fake_download_part(session, url, save_path, segment):
+        """模拟分段下载：写入对应 part 文件并返回成功。"""
+        part_calls.append(segment.index)
+        part_path = tmp_path / f'TwoPush.exe.part{segment.index}'
+        part_path.write_bytes(b'01234567' if segment.index == 0 else b'89abcdef')
+        return True
+
+    monkeypatch.setattr(manager, '_download_part', fake_download_part)
+    assert manager._download_multithreaded('https://example.com/TwoPush.exe', target, 16)
+    assert part_calls == [0, 1]
+    assert target.read_bytes() == b'0123456789abcdef'
+    assert not list(tmp_path.glob('TwoPush.exe.part*'))
+
+
+def test_download_multithreaded_part_failure_cleans_and_falls_back(monkeypatch, tmp_path):
+    """任一分段失败时 _download_multithreaded 返回 False，download_file 清理 part 并回退单线程。"""
+    from modules.download_manager import DownloadManager, DownloadMetadata, DownloadSegment
+
+    class _SessionStub:
+        """模拟 requests.Session：无网络行为，仅支持上下文与关闭。"""
+
+        def __init__(self):
+            self.closed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr('modules.download_manager.requests.Session', _SessionStub)
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_mt_part_fail'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    segments = [DownloadSegment(0, 0, 7), DownloadSegment(1, 8, 15)]
+    monkeypatch.setattr(manager, '_split_segments', lambda size, threads: segments)
+    monkeypatch.setattr(manager, '_get_download_metadata',
+                        lambda session, url: DownloadMetadata(16, True))
+
+    def fake_download_part(session, url, save_path, segment):
+        """模拟分段 0 成功写 part，分段 1 失败。"""
+        if segment.index == 1:
+            return False
+        (tmp_path / 'TwoPush.exe.part0').write_bytes(b'01234567')
+        return True
+
+    monkeypatch.setattr(manager, '_download_part', fake_download_part)
+    calls = []
+
+    def download_single(session, url, path, size):
+        """记录单线程回退调用。"""
+        calls.append((url, path, size))
+        path.write_bytes(b'0123456789abcdef')
+        return True
+
+    monkeypatch.setattr(manager, '_download_single_threaded', download_single)
+    assert manager.download_file('https://example.com/TwoPush.exe', str(target))
+    assert calls == [('https://example.com/TwoPush.exe', target, 16)]
+    assert not list(tmp_path.glob('TwoPush.exe.part*'))
+
+
+def test_cleanup_part_files_swallows_unlink_oserror(monkeypatch, tmp_path):
+    """清理 part 文件时 unlink 抛 OSError 不应逃逸。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_cleanup_oserror'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    (tmp_path / 'TwoPush.exe.part0').write_bytes(b'partial')
+
+    def raise_oserror(path):
+        """模拟 unlink 失败。"""
+        raise OSError('permission denied')
+
+    monkeypatch.setattr('modules.download_manager.Path.unlink', raise_oserror)
+    assert manager._cleanup_part_files(target) is None
+
+
+def test_merge_parts_returns_false_when_target_unwritable(tmp_path):
+    """目标路径不可写时 _merge_parts 应返回 False 而非抛异常。"""
+    from modules.download_manager import DownloadManager, DownloadSegment
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_merge_unwritable'), 16)
+    target = tmp_path / 'blocked'
+    target.mkdir()  # 用目录占用目标路径
+    (tmp_path / 'blocked.part0').write_bytes(b'01234567')
+    assert not manager._merge_parts(target, [DownloadSegment(0, 0, 7)])

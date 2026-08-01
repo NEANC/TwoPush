@@ -205,9 +205,24 @@ class DownloadManager:
                                     written += len(chunk)
 
                         if range_total > 0:
-                            # 总长度已知：完整文件大小必须与 total 一致
+                            # 总长度已知：声明区间必须闭合且完整文件大小与 total 一致
                             if known_total == 0:
                                 known_total = range_total
+                            expected = range_end - range_start + 1
+                            if written < expected:
+                                existing_size = target.stat().st_size
+                                headers['Range'] = f'bytes={existing_size}-'
+                                continue
+                            if written > expected or range_end != known_total - 1:
+                                self.logger.debug(
+                                    "206 响应区间未闭合或写入字节数异常，删除不可信文件重新下载",
+                                )
+                                if target.exists():
+                                    target.unlink()
+                                existing_size = 0
+                                if 'Range' in headers:
+                                    del headers['Range']
+                                continue
                             if target.stat().st_size != known_total:
                                 existing_size = target.stat().st_size
                                 headers['Range'] = f'bytes={existing_size}-'
@@ -522,7 +537,6 @@ class DownloadManager:
         """
         file_name = Path(url).name
         self.logger.info(f"开始下载文件: {file_name}")
-        self.logger.debug(f"下载 URL: {url}")
 
         try:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)

@@ -48,7 +48,6 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
         """
         file_name = Path(url).name
         self.logger.info(f"开始下载文件: {file_name}")
-        self.logger.debug(f"下载 URL: {url}")
 
         try:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -322,9 +321,24 @@ _REPLACEMENTS = [
         '                                    written += len(chunk)\n'
         '\n'
         '                        if range_total > 0:\n'
-        '                            # 总长度已知：完整文件大小必须与 total 一致\n'
+        '                            # 总长度已知：声明区间必须闭合且完整文件大小与 total 一致\n'
         '                            if known_total == 0:\n'
         '                                known_total = range_total\n'
+        '                            expected = range_end - range_start + 1\n'
+        '                            if written < expected:\n'
+        '                                existing_size = target.stat().st_size\n'
+        '                                headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                                continue\n'
+        '                            if written > expected or range_end != known_total - 1:\n'
+        '                                self.logger.debug(\n'
+        '                                    "206 响应区间未闭合或写入字节数异常，删除不可信文件重新下载",\n'
+        '                                )\n'
+        '                                if target.exists():\n'
+        '                                    target.unlink()\n'
+        '                                existing_size = 0\n'
+        '                                if \'Range\' in headers:\n'
+        '                                    del headers[\'Range\']\n'
+        '                                continue\n'
         '                            if target.stat().st_size != known_total:\n'
         '                                existing_size = target.stat().st_size\n'
         '                                headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
