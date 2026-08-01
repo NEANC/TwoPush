@@ -702,7 +702,7 @@ def test_self_updater_default_download_delegates_to_download_manager(monkeypatch
                                      str(tmp_path / 'TwoPush.exe'))
     assert calls == {
         'proxy': 'http://127.0.0.1:7890', 'temp_folder': str(tmp_path / 'cache'),
-        'logger': logger, 'download_threads': 16,
+        'logger': logger, 'download_threads': 8,
         'url': 'https://example.com/TwoPush.exe',
         'save_path': str(tmp_path / 'TwoPush.exe'),
     }
@@ -759,6 +759,26 @@ def test_download_and_verify_cleans_failed_download_and_part_files(tmp_path):
     assert not (tmp_path / 'TwoPush.exe.part1').exists()
 
 
+def test_self_updater_cleanup_download_parts_preserves_non_segment_files(tmp_path):
+    """外层失败清理只删除数字索引的 .partN 文件。"""
+    from modules.self_updater import SelfUpdater
+
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_outer_part_cleanup'))
+    target = tmp_path / 'TwoPush.exe'
+    segment = tmp_path / 'TwoPush.exe.part0'
+    backup = tmp_path / 'TwoPush.exe.part-backup'
+    partial = tmp_path / 'TwoPush.exe.partial'
+    segment.write_bytes(b'part')
+    backup.write_bytes(b'backup')
+    partial.write_bytes(b'partial')
+
+    assert updater._cleanup_download_parts(target)
+    assert not segment.exists()
+    assert backup.exists()
+    assert partial.exists()
+
+
 def test_download_and_verify_removes_sha_file_after_each_failed_download(
         monkeypatch, tmp_path):
     """每轮下载失败均应尝试删除 SHA256 文件。"""
@@ -784,6 +804,63 @@ def test_download_and_verify_removes_sha_file_after_each_failed_download(
                                             'https://example.com/TwoPush.exe',
                                             'expected', 'v2.0.0')
     assert deleted_paths.count(sha_path) >= 3
+
+
+def test_download_and_verify_restores_sha_file_after_retry_succeeds(tmp_path, monkeypatch):
+    """重试成功后应恢复 SHA256 文件供后续替换流程使用。"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    calls = []
+
+    def download(url, save_path):
+        calls.append(url)
+        if len(calls) == 1:
+            return False
+        Path(save_path).write_bytes(b'valid')
+        return True
+
+    monkeypatch.setattr('modules.self_updater.calculate_sha256', lambda path: 'expected')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_restore_sha'),
+                          download_func=download)
+
+    assert updater._download_and_verify(target, sha_path,
+                                        'https://example.com/TwoPush.exe',
+                                        'expected', 'v2.0.0')
+    assert calls == ['https://example.com/TwoPush.exe'] * 2
+    assert sha_path.read_text(encoding='ascii') == 'expected'
+
+
+def test_download_and_verify_fails_safely_when_sha_file_cannot_be_restored(
+        tmp_path, monkeypatch):
+    """校验成功但 SHA 文件无法恢复时应清理并返回失败。"""
+    from pathlib import Path
+
+    from modules.self_updater import SelfUpdater
+
+    target = tmp_path / 'TwoPush.exe'
+    sha_path = tmp_path / 'TwoPush.exe.sha256'
+    original_write_text = Path.write_text
+
+    def fail_sha_write(path, *args, **kwargs):
+        if path == sha_path:
+            raise OSError('locked')
+        return original_write_text(path, *args, **kwargs)
+
+    monkeypatch.setattr('modules.self_updater.Path.write_text', fail_sha_write)
+    monkeypatch.setattr('modules.self_updater.calculate_sha256', lambda path: 'expected')
+    updater = SelfUpdater('NEANC/TwoPush', r'^TwoPush-.*\.exe$', 'TwoPush',
+                          'v1.0.0', '', logging.getLogger('test_restore_sha_locked'),
+                          download_func=lambda url, path: Path(path).write_bytes(b'valid') or True)
+
+    assert not updater._download_and_verify(target, sha_path,
+                                            'https://example.com/TwoPush.exe',
+                                            'expected', 'v2.0.0')
+    assert not target.exists()
 
 
 def test_download_and_verify_cleans_parts_when_sha256_mismatch(tmp_path, monkeypatch):

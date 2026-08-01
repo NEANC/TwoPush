@@ -114,7 +114,7 @@ class SelfUpdater:
             proxy=self.proxy,
             temp_folder=self._resolve_temp_folder(self.temp_folder),
             logger=self.logger,
-            download_threads=16,
+            download_threads=8,
         )
         return manager.download_file(url, save_path)
 
@@ -418,6 +418,8 @@ class SelfUpdater:
         """删除目标文件对应的多线程下载分段并返回是否成功。"""
         cleanup_succeeded = True
         for part_path in tmp_path.parent.glob(f'{tmp_path.name}.part*'):
+            if not re.fullmatch(rf'{re.escape(tmp_path.name)}\.part\d+', part_path.name):
+                continue
             if part_path.is_file() and not self._safe_unlink(part_path):
                 cleanup_succeeded = False
         return cleanup_succeeded
@@ -467,6 +469,13 @@ class SelfUpdater:
 
             actual = calculate_sha256(tmp_path)
             if actual == new_sha256:
+                try:
+                    sha_path.write_text(new_sha256, encoding='ascii')
+                except OSError:
+                    self.logger.debug("恢复更新 SHA256 文件失败")
+                    self._safe_unlink(tmp_path)
+                    self._cleanup_download_parts(tmp_path)
+                    return False
                 self.logger.info("新版本已下载并校验通过")
                 return True
             self.logger.error("SHA256 校验失败，准备重试")

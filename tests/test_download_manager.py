@@ -53,6 +53,14 @@ class _FakeSession:
         return self._responses.pop(0)
 
 
+def test_download_manager_defaults_to_eight_threads(tmp_path):
+    """未传线程数时下载管理器默认使用 8 线程。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_default_threads'))
+    assert manager.download_threads == 8
+
+
 def test_download_file_falls_back_to_single_thread_after_multithread_failure(
         monkeypatch, tmp_path):
     """多线程失败后应清理 part 文件并回退单线程下载。"""
@@ -335,8 +343,8 @@ def test_download_single_threaded_rejects_mismatched_206_start(tmp_path):
     assert 'Range' not in session._calls[1][1]
 
 
-def test_download_single_threaded_accepts_full_206_with_unknown_total(tmp_path):
-    """未知总长度的 206 若写满声明的区间，应判定成功。"""
+def test_download_single_threaded_confirms_unknown_total_206_with_416(tmp_path):
+    """未知总长度的 206 应通过后续 416 确认文件末尾。"""
     from modules.download_manager import DownloadManager
 
     manager = DownloadManager('', str(tmp_path), logging.getLogger('test_unknown_total_ok'), 16)
@@ -344,11 +352,13 @@ def test_download_single_threaded_accepts_full_206_with_unknown_total(tmp_path):
     target.write_bytes(b'abcdefgh')
     session = _FakeSession([
         _FakeResponse(206, {'Content-Range': 'bytes 8-15/*'}, [b'01234567']),
+        _FakeResponse(416, {}, []),
     ])
 
     assert manager._download_single_threaded(session, 'https://example.com/file.exe', target, 0)
     assert target.read_bytes() == b'abcdefgh01234567'
     assert session._calls[0][1].get('Range') == 'bytes=8-'
+    assert session._calls[1][1].get('Range') == 'bytes=16-'
 
 
 def test_download_single_threaded_rejects_short_206_with_unknown_total(tmp_path):
@@ -677,6 +687,25 @@ def test_cleanup_part_files_swallows_unlink_oserror(monkeypatch, tmp_path):
 
     monkeypatch.setattr('modules.download_manager.Path.unlink', raise_oserror)
     assert not manager._cleanup_part_files(target)
+
+
+def test_cleanup_part_files_preserves_non_segment_files(tmp_path):
+    """分段清理只删除数字索引的 .partN 文件。"""
+    from modules.download_manager import DownloadManager
+
+    manager = DownloadManager('', str(tmp_path), logging.getLogger('test_cleanup_segments'), 16)
+    target = tmp_path / 'TwoPush.exe'
+    segment = tmp_path / 'TwoPush.exe.part0'
+    backup = tmp_path / 'TwoPush.exe.part-backup'
+    partial = tmp_path / 'TwoPush.exe.partial'
+    segment.write_bytes(b'part')
+    backup.write_bytes(b'backup')
+    partial.write_bytes(b'partial')
+
+    assert manager._cleanup_part_files(target)
+    assert not segment.exists()
+    assert backup.exists()
+    assert partial.exists()
 
 
 def test_download_file_stops_when_part_cleanup_fails(monkeypatch, tmp_path):

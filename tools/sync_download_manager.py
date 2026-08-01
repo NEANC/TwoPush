@@ -13,12 +13,13 @@
 import argparse
 import hashlib
 import os
+import re
 import tempfile
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SOURCE_PATH = Path(r'g:\GitHub\Python_Self-Updater\download\manager.py')
+SOURCE_PATH = PROJECT_ROOT / 'tests' / 'source_download_manager.py'
 OUTPUT_PATH = PROJECT_ROOT / 'modules' / 'download_manager.py'
 SOURCE_ENV_VAR = 'TWOPUSH_DOWNLOAD_MANAGER_SOURCE'
 TARGET_ENV_VAR = 'TWOPUSH_DOWNLOAD_MANAGER_TARGET'
@@ -111,6 +112,8 @@ _ENTRY_CODE = '''    def download_file(self, url: str, save_path: str) -> bool:
         """
         cleanup_succeeded = True
         for part_path in target_path.parent.glob(f'{target_path.name}.part*'):
+            if not re.fullmatch(rf'{re.escape(target_path.name)}\\.part\\d+', part_path.name):
+                continue
             if not part_path.is_file():
                 continue
             try:
@@ -142,6 +145,14 @@ def _apply_replacements(content: str, replacements: list) -> str:
 
 # 源码文本到目标文本的替换对（按源码出现顺序）
 _REPLACEMENTS = [
+    # 0. 更新受控来源 fixture 头部
+    (
+        '# -_- coding: utf-8 -_-\n'
+        '# 受控原始来源 fixture，不是运行时代码。\n'
+        '\n',
+        '"""内置下载管理器，由 tools/sync_download_manager.py 生成。"""\n'
+        '\n',
+    ),
     # 1. 精简导入区
     (
         'import logging\n'
@@ -157,6 +168,7 @@ _REPLACEMENTS = [
         '\n'
         'from .progress import create_download_progress_bar, format_ok, format_error\n',
         'import logging\n'
+        'import re\n'
         'import time\n'
         '\n'
         'from concurrent.futures import ThreadPoolExecutor, as_completed\n'
@@ -299,6 +311,13 @@ _REPLACEMENTS = [
         '            total_size: 文件总大小。\n'
         '\n',
     ),
+    (
+        '        # GET 可从响应头推导完整总大小时用于最终校验\n'
+        '        known_total = total_size\n',
+        '        # GET 可从响应头推导完整总大小时用于最终校验\n'
+        '        known_total = total_size\n'
+        '        unknown_range_complete = False\n',
+    ),
     # 6.5. 单线程 206 分支整段重写：校验起点、统计写入字节、校验区间完整性
     (
         '                        # 从 Content-Range 推导真实 total\n'
@@ -384,7 +403,7 @@ _REPLACEMENTS = [
         '                                headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
         '                                continue\n'
         '                            return True\n'
-        '                        # 总长度未知：必须写满声明的区间长度，短读则更新偏移重试\n'
+        '                        # 总长度未知：写满当前区间后继续探测，直至 416 确认 EOF\n'
         '                        expected = range_end - range_start + 1\n'
         '                        if written < expected:\n'
         '                            existing_size = target.stat().st_size\n'
@@ -400,7 +419,34 @@ _REPLACEMENTS = [
         '                            if \'Range\' in headers:\n'
         '                                del headers[\'Range\']\n'
         '                            continue\n'
-        '                        return True\n',
+        '                        existing_size = target.stat().st_size\n'
+        '                        unknown_range_complete = True\n'
+        '                        headers[\'Range\'] = f\'bytes={existing_size}-\'\n'
+        '                        continue\n',
+    ),
+    (
+        '                    elif response.status_code == 416:\n'
+        '                        # I2: 416 进入重试（规格要求），不直接返回 False\n'
+        '                        # 文件完整时直接成功\n'
+        '                        if known_total > 0 and target.exists() and target.stat().st_size == known_total:\n'
+        '                            return True\n'
+        '                        # 不完整 → 记录失败并进入重试循环\n'
+        '                        self.logger.debug(\n'
+        '                            f"下载尝试 {attempt + 1}: 416 Range Not Satisfiable，"\n'
+        '                            f"文件大小={target.stat().st_size if target.exists() else 0}，"\n'
+        '                            f"已知总大小={known_total}",\n'
+        '                        )\n',
+        '                    elif response.status_code == 416:\n'
+        '                        if target.exists() and (\n'
+        '                            (known_total > 0 and target.stat().st_size == known_total)\n'
+        '                            or (known_total == 0 and unknown_range_complete)\n'
+        '                        ):\n'
+        '                            return True\n'
+        '                        self.logger.debug(\n'
+        '                            f"下载尝试 {attempt + 1}: 416 Range Not Satisfiable，"\n'
+        '                            f"文件大小={target.stat().st_size if target.exists() else 0}，"\n'
+        '                            f"已知总大小={known_total}",\n'
+        '                        )\n',
     ),
     # 8. 单线程 200 分支去掉进度更新并整段重写：大小不一致时删除残留从头重下
     (
@@ -705,6 +751,7 @@ def main(source_path=None, target_path=None) -> None:
         source = source_file.read()
     transformed = transform_manager(source)
     _assert_no_forbidden_tokens(transformed)
+    compile(transformed, str(target_path), 'exec')
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
     try:

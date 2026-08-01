@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""内置下载管理器，由 tools/sync_download_manager.py 生成。"""
+# -_- coding: utf-8 -_-
+# 受控原始来源 fixture，不是运行时代码。
 
 import logging
-import re
 import time
 
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from threading import Lock
 
 import requests
+
+from .progress import create_download_progress_bar, format_ok, format_error
 
 CONNECT_TIMEOUT = 15
 READ_TIMEOUT = 60
@@ -40,6 +43,31 @@ class DownloadSegment:
     def length(self) -> int:
         """返回分段字节长度。"""
         return self.end - self.start + 1
+
+
+class NetworkSpeedMeter:
+    """统计网络层 chunk 到达速度。"""
+
+    def __init__(self, time_func=time.monotonic):
+        """初始化速度统计器。"""
+        self.time_func = time_func
+        self.started_at = time_func()
+        self.samples = deque()
+        self.total_bytes = 0
+
+    def update(self, byte_count: int) -> float:
+        """记录网络收到的字节数并返回 bytes/s。"""
+        now = self.time_func()
+        self.total_bytes += byte_count
+        self.samples.append((now, byte_count))
+        while self.samples and now - self.samples[0][0] > 1:
+            self.samples.popleft()
+        window_bytes = sum(size for _, size in self.samples)
+        window_seconds = now - self.samples[0][0] if self.samples else 0
+        if window_seconds > 0:
+            return window_bytes / window_seconds
+        elapsed = max(now - self.started_at, 0.001)
+        return self.total_bytes / elapsed
 
 
 class DownloadManager:
@@ -88,9 +116,7 @@ class DownloadManager:
                     supports_range=supports_range,
                 )
         except requests.RequestException as exc:
-            self.logger.debug(
-                f"HEAD 探测失败，降级单线程下载: {type(exc).__name__}",
-            )
+            self.logger.debug(f"HEAD 探测失败，降级单线程下载: {exc}")
             return DownloadMetadata(total_size=0, supports_range=False)
 
     def _split_segments(self, total_size: int, threads: int) -> list[DownloadSegment]:
@@ -106,29 +132,38 @@ class DownloadManager:
             start = end + 1
         return segments
 
-    def _parse_content_range(self, response_headers: dict):
-        """解析 Content-Range 响应头为 (start, end, total)。
+    def _format_speed(self, bytes_per_second: float) -> str:
+        """格式化网络下载速度。"""
+        if bytes_per_second < 1024:
+            return f"{bytes_per_second:.2f}B/s"
+        if bytes_per_second < 1024 * 1024:
+            return f"{bytes_per_second / 1024:.2f}KiB/s"
+        return f"{bytes_per_second / 1024 / 1024:.2f}MiB/s"
 
-        总长度未知时 total 为 -1，无法解析时返回 None。
+    def _extract_total_size_from_get_response(self, response, existing_size: int) -> int:
+        """从 GET 响应头推导完整文件大小。"""
+        content_range = response.headers.get('Content-Range', '')
+        if content_range.startswith('bytes ') and '/' in content_range:
+            total_part = content_range.rsplit('/', 1)[1]
+            if total_part.isdigit():
+                return int(total_part)
+        content_length = response.headers.get('Content-Length')
+        if response.status_code == 200 and content_length and content_length.isdigit():
+            return int(content_length)
+        return 0
 
-        Returns:
-            三元组 (start, end, total) 或 None。
-        """
-        content_range = response_headers.get('Content-Range', '')
-        if not content_range.startswith('bytes '):
-            return None
-        try:
-            range_part, total_part = content_range.split(' ', 1)[1].split('/', 1)
-            start, end = (int(part) for part in range_part.split('-'))
-            if start > end:
-                return None
-            total = int(total_part) if total_part.isdigit() else -1
-        except (ValueError, IndexError):
-            return None
-        return start, end, total
+    def _update_progress(self, pbar, progress_lock: Lock, speed_meter: NetworkSpeedMeter,
+                         byte_count: int) -> None:
+        """更新进度条和网络速度。"""
+        with progress_lock:
+            speed = speed_meter.update(byte_count)
+            pbar.update(byte_count)
+            pbar.download_rate_fmt = self._format_speed(speed)
+            pbar.refresh()
 
     def _download_single_threaded(self, session, url: str, target_path: Path,
-                                  total_size: int) -> bool:
+                                  total_size: int, pbar, speed_meter: NetworkSpeedMeter,
+                                  progress_lock: Lock) -> bool:
         """单线程下载，支持续传和重试。
 
         Args:
@@ -136,6 +171,9 @@ class DownloadManager:
             url: 下载 URL。
             target_path: 目标文件路径。
             total_size: 已知总大小（0 表示未知）。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
 
         Returns:
             bool: 是否下载成功。
@@ -144,7 +182,6 @@ class DownloadManager:
 
         # GET 可从响应头推导完整总大小时用于最终校验
         known_total = total_size
-        unknown_range_complete = False
 
         # 已知总大小且文件已完整
         if known_total > 0 and target.exists() and target.stat().st_size == known_total:
@@ -174,134 +211,63 @@ class DownloadManager:
 
                     if response.status_code == 206:
                         response.raise_for_status()
-                        # 解析 Content-Range 并校验起点与本地续传偏移一致
-                        range_info = self._parse_content_range(response.headers)
-                        if range_info is None or range_info[0] != existing_size:
-                            self.logger.debug(
-                                f"206 响应起点与本地偏移 {existing_size} 不一致，"
-                                f"删除不可信文件重新下载",
-                            )
-                            if target.exists():
-                                target.unlink()
-                            existing_size = 0
-                            if 'Range' in headers:
-                                del headers['Range']
-                            continue
-                        range_start, range_end, range_total = range_info
-                        if (
-                            (range_total > 0 and range_end >= range_total)
-                            or (known_total > 0 and range_total != known_total)
-                        ):
-                            self.logger.debug(
-                                "206 响应范围或总大小与预期不一致，删除不可信文件重新下载",
-                            )
-                            if target.exists():
-                                target.unlink()
-                            existing_size = 0
-                            if 'Range' in headers:
-                                del headers['Range']
-                            continue
-                        # 续传追加并统计本次实际写入的字节数
-                        written = 0
+                        # 从 Content-Range 推导真实 total
+                        real_total = self._extract_total_size_from_get_response(
+                            response, existing_size,
+                        )
+                        if real_total > 0:
+                            known_total = real_total
+                            with progress_lock:
+                                pbar.total = real_total
+                                pbar.refresh()
+                        # 续传追加
                         with open(target, 'ab') as f:
                             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                                 if chunk:
                                     f.write(chunk)
-                                    written += len(chunk)
+                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
 
-                        if range_total > 0:
-                            # 总长度已知：声明区间必须闭合且完整文件大小与 total 一致
-                            if known_total == 0:
-                                known_total = range_total
-                            expected = range_end - range_start + 1
-                            if written < expected:
-                                existing_size = target.stat().st_size
-                                headers['Range'] = f'bytes={existing_size}-'
-                                continue
-                            if written > expected or range_end != known_total - 1:
-                                self.logger.debug(
-                                    "206 响应区间未闭合或写入字节数异常，删除不可信文件重新下载",
-                                )
-                                if target.exists():
-                                    target.unlink()
-                                existing_size = 0
-                                if 'Range' in headers:
-                                    del headers['Range']
-                                continue
-                            if target.stat().st_size != known_total:
-                                existing_size = target.stat().st_size
-                                headers['Range'] = f'bytes={existing_size}-'
-                                continue
-                            return True
-                        # 总长度未知：写满当前区间后继续探测，直至 416 确认 EOF
-                        expected = range_end - range_start + 1
-                        if written < expected:
+                        # C1: 使用可变的 known_total 做校验，而非固定入参 total_size
+                        if known_total == 0:
+                            return target.exists() and target.stat().st_size > 0
+                        if target.stat().st_size != known_total:
                             existing_size = target.stat().st_size
                             headers['Range'] = f'bytes={existing_size}-'
                             continue
-                        if written > expected:
-                            self.logger.debug(
-                                "206 响应写入字节超过声明范围，删除不可信文件重新下载",
-                            )
-                            if target.exists():
-                                target.unlink()
-                            existing_size = 0
-                            if 'Range' in headers:
-                                del headers['Range']
-                            continue
-                        existing_size = target.stat().st_size
-                        unknown_range_complete = True
-                        headers['Range'] = f'bytes={existing_size}-'
-                        continue
+                        return True
 
                     elif response.status_code == 200:
                         response.raise_for_status()
-                        # 覆盖从头下载
+                        # 覆盖从头下载（进度条复位需在锁保护下）
                         content_length = response.headers.get('Content-Length')
-                        response_total = (
-                            int(content_length)
-                            if content_length and content_length.isdigit()
-                            else 0
-                        )
-                        if known_total > 0 and response_total > 0 and response_total != known_total:
-                            self.logger.debug(
-                                "200 响应声明大小与预期不一致，重新下载",
-                            )
-                            if target.exists():
-                                target.unlink()
-                            existing_size = 0
-                            if 'Range' in headers:
-                                del headers['Range']
-                            continue
-                        if known_total == 0 and response_total > 0:
-                            known_total = response_total
+                        with progress_lock:
+                            pbar.n = 0
+                            if content_length and content_length.isdigit():
+                                known_total = int(content_length)
+                                pbar.total = known_total
+                            pbar.refresh()
 
                         with open(target, 'wb') as f:
                             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                                 if chunk:
                                     f.write(chunk)
+                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
 
                         # C1: 使用可变的 known_total 做校验
                         if known_total == 0:
                             return target.exists() and target.stat().st_size > 0
                         if target.stat().st_size != known_total:
-                            self.logger.debug(
-                                "200 响应大小与预期不一致，删除不可信文件重新下载",
-                            )
-                            if target.exists():
-                                target.unlink()
-                            existing_size = 0
-                            if 'Range' in headers:
-                                del headers['Range']
+                            existing_size = target.stat().st_size
+                            headers['Range'] = f'bytes={existing_size}-'
                             continue
                         return True
 
                     elif response.status_code == 416:
-                        if target.exists() and (
-                            (known_total > 0 and target.stat().st_size == known_total)
-                            or (known_total == 0 and unknown_range_complete)
-                        ):
+                        # I2: 416 进入重试（规格要求），不直接返回 False
+                        # 文件完整时直接成功
+                        if known_total > 0 and target.exists() and target.stat().st_size == known_total:
                             return True
+                        # 不完整 → 记录失败并进入重试循环
                         self.logger.debug(
                             f"下载尝试 {attempt + 1}: 416 Range Not Satisfiable，"
                             f"文件大小={target.stat().st_size if target.exists() else 0}，"
@@ -312,9 +278,7 @@ class DownloadManager:
                         response.raise_for_status()
 
             except requests.RequestException as exc:
-                self.logger.debug(
-                    f"下载尝试 {attempt + 1} 失败: {type(exc).__name__}",
-                )
+                self.logger.debug(f"下载尝试 {attempt + 1} 失败: {exc}")
 
             # 重试前重新读取文件大小，更新 Range 偏移
             existing_size = target.stat().st_size if target.exists() else 0
@@ -362,40 +326,35 @@ class DownloadManager:
         if size == segment.length:
             return -1
         # size > segment.length，异常情况，删除重下
-        try:
-            part_path.unlink()
-        except OSError as exc:
-            self.logger.debug(f"删除异常 part 文件失败: {part_path}: {exc}")
-            return 0
+        part_path.unlink()
         return 0
 
     def _content_range_matches(self, segment: DownloadSegment, request_start: int,
-                               total_size: int, response_headers: dict) -> bool:
-        """校验响应 Content-Range 的区间与完整文件大小。
+                               response_headers: dict) -> bool:
+        """校验响应 Content-Range 与请求区间是否一致。
 
         Args:
             segment: 下载分段。
             request_start: 请求的起始字节。
-            total_size: 本轮下载的完整文件大小。
             response_headers: 响应头字典。
 
         Returns:
             bool: Content-Range 是否匹配。
         """
-        content_range = self._parse_content_range(response_headers)
-        if content_range is None:
+        content_range = response_headers.get('Content-Range', '')
+        if not content_range.startswith('bytes '):
             return False
-        start, end, total = content_range
-        return (
-            start == request_start
-            and end == segment.end
-            and total > 0
-            and total == total_size
-            and end < total
-        )
+        try:
+            range_part = content_range.split(' ', 1)[1].split('/')[0]
+            start_str, end_str = range_part.split('-')
+            resp_start = int(start_str)
+            resp_end = int(end_str)
+        except (ValueError, IndexError):
+            return False
+        return resp_start == request_start and resp_end == segment.end
 
-    def _download_part(self, session, url: str, save_path: Path,
-                       segment: DownloadSegment, total_size: int) -> bool:
+    def _download_part(self, session, url: str, save_path: Path, segment: DownloadSegment,
+                       pbar, speed_meter: NetworkSpeedMeter, progress_lock: Lock) -> bool:
         """下载单个分段到 part 文件，内部执行 3 次重试。
 
         Args:
@@ -403,7 +362,9 @@ class DownloadManager:
             url: 下载 URL。
             save_path: 目标文件路径（用于生成 part 路径）。
             segment: 下载分段。
-            total_size: 本轮下载的完整文件大小。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
 
         Returns:
             bool: 分段是否下载成功。
@@ -428,16 +389,14 @@ class DownloadManager:
                 ) as response:
 
                     if response.status_code == 206:
-                        if not self._content_range_matches(
-                            segment, range_start, total_size, response.headers,
-                        ):
+                        if not self._content_range_matches(segment, range_start, response.headers):
                             part_path = self._get_part_path(save_path, segment.index)
                             if part_path.exists():
-                                try:
-                                    part_path.unlink()
-                                except OSError:
-                                    self.logger.debug("删除错位 part 文件失败")
-                                    return False
+                                if valid_size > 0:
+                                    with progress_lock:
+                                        pbar.n = max(0, pbar.n - valid_size)
+                                        pbar.refresh()
+                                part_path.unlink()
                             range_start = segment.start
                             valid_size = 0
                             continue
@@ -450,6 +409,7 @@ class DownloadManager:
                             for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
                                 if chunk:
                                     f.write(chunk)
+                                    self._update_progress(pbar, progress_lock, speed_meter, len(chunk))
 
                         part_size = part_path.stat().st_size
                         if part_size == segment.length:
@@ -477,10 +437,7 @@ class DownloadManager:
                         response.raise_for_status()
 
             except requests.RequestException as exc:
-                self.logger.debug(
-                    f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: "
-                    f"{type(exc).__name__}",
-                )
+                self.logger.debug(f"分段 {segment.index} 下载尝试 {attempt + 1} 失败: {exc}")
 
             if attempt < DOWNLOAD_RETRIES - 1:
                 time.sleep(1)
@@ -511,14 +468,18 @@ class DownloadManager:
         except Exception:
             return False
 
-    def _download_multithreaded(self, url: str, target_path: Path,
-                                total_size: int) -> bool:
+    def _download_multithreaded(self, url: str, target_path: Path, total_size: int,
+                                pbar, speed_meter: NetworkSpeedMeter,
+                                progress_lock: Lock) -> bool:
         """多线程分段下载协调器。
 
         Args:
             url: 下载 URL。
             target_path: 目标文件路径。
             total_size: 文件总大小。
+            pbar: tqdm 进度条实例。
+            speed_meter: 网速统计器。
+            progress_lock: 进度更新锁。
 
         Returns:
             bool: 是否全部下载成功。
@@ -536,7 +497,9 @@ class DownloadManager:
                         url,
                         target_path,
                         segment,
-                        total_size,
+                        pbar,
+                        speed_meter,
+                        progress_lock,
                     )
                     futures[future] = segment
 
@@ -550,21 +513,33 @@ class DownloadManager:
             if target_path.exists() and target_path.stat().st_size == total_size:
                 for segment in segments:
                     part_path = self._get_part_path(target_path, segment.index)
-                    if not part_path.exists():
-                        continue
-                    try:
+                    if part_path.exists():
                         part_path.unlink()
-                    except OSError:
-                        self.logger.debug("删除已合并 part 文件失败")
-                        return False
                 return True
             return False
         finally:
             for session in sessions:
                 session.close()
 
-    def download_file(self, url: str, save_path: str) -> bool:
-        """下载文件，多线程失败时自动回退单线程。
+    def _get_existing_bytes(self, target_path: Path, total_size: int) -> int:
+        """获取进度条初始已完成字节数。
+
+        Args:
+            target_path: 目标文件路径。
+            total_size: 已知总大小（0 表示未知）。
+
+        Returns:
+            int: 已完成字节数。
+        """
+        if not target_path.exists():
+            return 0
+        current_size = target_path.stat().st_size
+        if total_size > 0 and current_size > total_size:
+            return 0
+        return current_size
+
+    def download_file_with_progress(self, url: str, save_path: str) -> bool:
+        """下载文件并显示进度条。
 
         Args:
             url: 下载 URL。
@@ -573,13 +548,16 @@ class DownloadManager:
         Returns:
             bool: 操作是否成功。
         """
-        file_name = Path(urlsplit(url).path).name or '下载文件'
+        file_name = Path(url).name
         self.logger.info(f"开始下载文件: {file_name}")
+        self.logger.debug(f"下载 URL: {url}")
 
+        pbar = None
         try:
             Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
             metadata_session = None
+            download_session = None
             try:
                 metadata_session = requests.Session()
                 metadata = self._get_download_metadata(metadata_session, url)
@@ -594,49 +572,74 @@ class DownloadManager:
                 and metadata.supports_range
             )
 
+            # C2: 多线程模式从 part 文件累计已完成字节
             if use_multithread:
-                try:
-                    success = self._download_multithreaded(url, target, metadata.total_size)
-                except Exception as exc:
-                    self.logger.debug(
-                        f"多线程下载异常，回退单线程下载: {type(exc).__name__}",
-                    )
-                    success = False
-                if not success:
-                    if not self._cleanup_part_files(target):
-                        return False
-                    with requests.Session() as session:
-                        success = self._download_single_threaded(
-                            session, url, target, metadata.total_size,
-                        )
+                existing_bytes = 0
+                segments = self._split_segments(metadata.total_size, self.download_threads)
+                for segment in segments:
+                    valid_size = self._get_valid_part_size(target, segment)
+                    if valid_size == -1:
+                        existing_bytes += segment.length
+                    elif valid_size > 0:
+                        existing_bytes += valid_size
             else:
-                with requests.Session() as session:
+                existing_bytes = self._get_existing_bytes(target, metadata.total_size)
+
+            pbar_total = metadata.total_size if metadata.total_size > 0 else max(existing_bytes, 1)
+            pbar = create_download_progress_bar(
+                total=pbar_total,
+                desc=f"下载 {file_name}",
+            )
+            if existing_bytes > 0:
+                pbar.n = existing_bytes
+                pbar.refresh()
+
+            speed_meter = NetworkSpeedMeter()
+            progress_lock = Lock()
+
+            if use_multithread:
+                success = self._download_multithreaded(
+                    url,
+                    target,
+                    metadata.total_size,
+                    pbar,
+                    speed_meter,
+                    progress_lock,
+                )
+            else:
+                try:
+                    download_session = requests.Session()
                     success = self._download_single_threaded(
-                        session, url, target, metadata.total_size,
+                        download_session,
+                        url,
+                        target,
+                        metadata.total_size,
+                        pbar,
+                        speed_meter,
+                        progress_lock,
                     )
-            return success
-        except Exception as exc:
-            self.logger.error(f"下载文件时发生错误: {type(exc).__name__}")
+                finally:
+                    if download_session is not None:
+                        download_session.close()
+
+            if success:
+                downloaded_size = target.stat().st_size
+                if pbar is not None:
+                    pbar.close()
+                    pbar = None
+                print(format_ok("下载", file_name, save_path, downloaded_size))
+                self.logger.debug(
+                    f"下载完成，文件大小: {downloaded_size / (1024 * 1024):.2f} MB，"
+                    f"保存路径: {save_path}"
+                )
+                return True
+            else:
+                print(format_error(f"下载 {file_name}", "下载失败"))
+                return False
+        except Exception as e:
+            self.logger.error(f"下载文件时发生错误: {e}")
+            print(format_error(f"下载 {file_name}", str(e)))
             return False
-
-    def _cleanup_part_files(self, target_path: Path) -> bool:
-        """清理目标文件关联的 part 临时文件。
-
-        Args:
-            target_path: 目标文件路径。
-
-        Returns:
-            bool: 是否已清理全部 part 文件。
-        """
-        cleanup_succeeded = True
-        for part_path in target_path.parent.glob(f'{target_path.name}.part*'):
-            if not re.fullmatch(rf'{re.escape(target_path.name)}\.part\d+', part_path.name):
-                continue
-            if not part_path.is_file():
-                continue
-            try:
-                part_path.unlink()
-            except OSError:
-                self.logger.debug("清理 part 文件失败")
-                cleanup_succeeded = False
-        return cleanup_succeeded
+        finally:
+            if pbar is not None:
+                pbar.close()

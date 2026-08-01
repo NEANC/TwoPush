@@ -15,7 +15,7 @@ from tools import sync_download_manager
 
 @pytest.fixture
 def source_text():
-    """读取真实外部来源并保留原始换行。"""
+    """读取仓库内受版本控制的转换来源。"""
     with open(sync_download_manager.SOURCE_PATH, 'r', encoding='utf-8', newline='') as source:
         return source.read()
 
@@ -80,6 +80,21 @@ def test_main_keeps_target_and_removes_temp_when_replace_fails(
     assert list(tmp_path.glob('*.tmp')) == []
 
 
+def test_main_keeps_target_when_transformed_source_has_syntax_error(
+        monkeypatch, tmp_path):
+    """生成结果语法无效时应保留旧目标且不创建临时残留。"""
+    source = tmp_path / 'manager.py'
+    target = tmp_path / 'download_manager.py'
+    source.write_text('source', encoding='utf-8')
+    target.write_text('original', encoding='utf-8')
+    monkeypatch.setattr(sync_download_manager, 'transform_manager', lambda content: 'def broken(:\n')
+
+    with pytest.raises(SyntaxError):
+        sync_download_manager.main(source, target)
+    assert target.read_text(encoding='utf-8') == 'original'
+    assert list(tmp_path.glob('*.tmp')) == []
+
+
 def test_main_uses_explicit_paths_and_atomically_replaces_target(tmp_path, source_text):
     """main 参数指定的来源与目标应完成可复现原子替换。"""
     source = tmp_path / 'manager.py'
@@ -91,6 +106,13 @@ def test_main_uses_explicit_paths_and_atomically_replaces_target(tmp_path, sourc
     expected = sync_download_manager.transform_manager(source_text)
     assert target.read_text(encoding='utf-8') == expected
     assert list(target.parent.glob('*.tmp')) == []
+
+
+def test_committed_download_manager_matches_controlled_source(source_text):
+    """提交的下载模块必须与仓库内受控来源的转换结果一致。"""
+    expected = sync_download_manager.transform_manager(source_text)
+    with open(sync_download_manager.OUTPUT_PATH, 'r', encoding='utf-8', newline='') as target:
+        assert target.read() == expected
 
 
 def test_main_uses_source_environment_variable(monkeypatch, tmp_path, source_text):
