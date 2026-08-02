@@ -232,6 +232,58 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     assert f'已删除残留文件: {update_log}' in caplog.text
 
 
+def test_cleanup_update_residue_removes_update_cache_after_verified_update(
+        monkeypatch, tmp_path):
+    """正常更新完成后的 verified 启动应清理 UpdateCache。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime'
+    temp_folder = tmp_path / 'temp'
+    program_dir.mkdir()
+    runtime_dir.mkdir()
+    install_dir = temp_folder / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    (install_dir / 'TwoPush-v2.0.0.exe').write_bytes(b'update')
+    (install_dir / 'TwoPush-v2.0.0.sha256').write_text('hash', encoding='utf-8')
+
+    target = program_dir / 'TwoPush.exe'
+    helper_ps1 = runtime_dir / 'TwoPush_Update_Helper.ps1'
+    update_ps1 = runtime_dir / 'TwoPush_Update.ps1'
+    lock_file = runtime_dir / 'update_started.lock'
+    new_file = runtime_dir / 'TwoPush.new.exe'
+    backup_file = runtime_dir / 'TwoPush.backup.exe'
+    for path in [target, helper_ps1, update_ps1, lock_file, new_file, backup_file]:
+        path.write_text('test', encoding='utf-8')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'verified'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state['helper_ps1'] = str(helper_ps1)
+    state['update_ps1'] = str(update_ps1)
+    state['lock_file'] = str(lock_file)
+    state['new_file'] = str(new_file)
+    state['backup_file'] = str(backup_file)
+    state.save()
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_verified_update_cache'),
+        temp_folder=str(temp_folder),
+    )
+
+    assert not (temp_folder / 'UpdateCache').exists()
+    assert not temp_folder.exists()
+    assert not helper_ps1.exists()
+    assert not update_ps1.exists()
+    assert not lock_file.exists()
+    assert not new_file.exists()
+    assert not backup_file.exists()
+    assert not (program_dir / 'update_state.ini').exists()
+
+
 def test_cleanup_update_residue_removes_update_cache_and_empty_temp_folder(
         monkeypatch, tmp_path):
     """正常启动时应删除 UpdateCache，并在临时目录为空后删除临时目录。"""
