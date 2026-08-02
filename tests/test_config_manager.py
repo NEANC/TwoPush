@@ -107,6 +107,8 @@ def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
                 return 'stable'
             if key == 'proxy':
                 return ''
+            if key == 'temp_folder':
+                return r'C:\Temp\TwoPush'
             raise AssertionError(f'意外读取配置键: {key}')
 
         def get_attr_bool(self, key, default=False):
@@ -130,6 +132,7 @@ def test_init_self_updater_uses_hardcoded_repo(monkeypatch):
 
     twopush.init_self_updater(FakeConfig(), logging.getLogger('test'))
     assert captured_kwargs['github_repo'] == 'NEANC/TwoPush'
+    assert captured_kwargs['temp_folder'] == r'C:\Temp\TwoPush'
 
 
 def test_setup_logger_silent_mode_does_not_add_stream_handler():

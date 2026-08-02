@@ -270,6 +270,7 @@ def init_self_updater(config, logger):
         app_name="TwoPush",
         current_version=VERSION,
         proxy=config.get_attr('proxy', ''),
+        temp_folder=config.get_attr('temp_folder', ''),
         logger=logger,
         self_update_channel=config.get_attr('channel', 'stable'),
         is_bundled=is_bundled,
@@ -491,7 +492,11 @@ def main():
 
     # 检查并清理更新残留
     from modules.self_updater import SelfUpdater
-    SelfUpdater._cleanup_update_residue(logger)
+    SelfUpdater._cleanup_update_residue(
+        logger,
+        temp_folder=config.get_attr('temp_folder', ''),
+        clean_cache=not args.retry_update,
+    )
 
     # push 失败时提前退出，避免退出码被更新命令覆盖
     if push_exit_code is not None and push_exit_code != 0:

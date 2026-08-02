@@ -97,22 +97,21 @@ class SelfUpdater:
         self._is_bundled = is_bundled
         self._package_type = package_type
 
-    def _resolve_temp_folder(self, temp_folder: Optional[str]) -> str:
+    @staticmethod
+    def _resolve_temp_folder(temp_folder: Optional[str], app_name: str = 'TwoPush') -> str:
         """解析临时文件夹路径，若未指定则优先使用系统缓存目录，其次脚本目录"""
         if temp_folder:
             return temp_folder
-        # 优先使用系统 Temp 目录，以 app_name 命名子文件夹避免污染
         sys_temp = os.environ.get('TEMP') or os.environ.get('TMP')
         if sys_temp:
-            return os.path.join(sys_temp, self.app_name)
-        # 回退到脚本所在目录下的 TEMP 子文件夹，避免污染脚本目录
+            return os.path.join(sys_temp, app_name)
         return os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "TEMP")
 
     def _default_download(self, url: str, save_path: str) -> bool:
         """使用内置下载管理器下载更新文件。"""
         manager = DownloadManager(
             proxy=self.proxy,
-            temp_folder=self._resolve_temp_folder(self.temp_folder),
+            temp_folder=self._resolve_temp_folder(self.temp_folder, self.app_name),
             logger=self.logger,
             download_threads=8,
         )
@@ -366,7 +365,9 @@ class SelfUpdater:
             if not exe_url:
                 return False
 
-            cache_dir = Path(self._resolve_temp_folder(self.temp_folder)) / "UpdateCache" / "installs" / latest_version
+            cache_dir = Path(self._resolve_temp_folder(
+                self.temp_folder, self.app_name,
+            )) / "UpdateCache" / "installs" / latest_version
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp_path = cache_dir / f"{self.app_name}-{latest_version}.exe"
             sha_path = cache_dir / f"{self.app_name}-{latest_version}.sha256"
@@ -934,13 +935,19 @@ class SelfUpdater:
             pass
 
     @staticmethod
-    def _cleanup_update_residue(logger: logging.Logger) -> None:
+    def _cleanup_update_residue(logger: logging.Logger,
+                                temp_folder: Optional[str] = None,
+                                clean_cache: bool = True) -> None:
         """
         清理上次成功更新后的残留文件
 
         Args:
             logger: 日志记录器
         """
+        if clean_cache:
+            resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
+            SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
+
         state = UpdateState.load()
         if not state:
             return
@@ -999,6 +1006,14 @@ class SelfUpdater:
                 logger.info("已清理自更新缓存目录")
             except OSError as e:
                 logger.warning(f"清理自更新缓存目录失败: {e}")
+                return
+        try:
+            temp_path = Path(temp_folder)
+            if temp_path.exists():
+                temp_path.rmdir()
+                logger.debug(f"已删除空临时目录: {temp_path}")
+        except OSError:
+            pass
 
     @staticmethod
     def rollback(logger: Optional[logging.Logger] = None) -> bool:

@@ -23,7 +23,7 @@ def mock_cleanup_residue(monkeypatch):
     """mock _cleanup_update_residue，避免测试中触发文件系统副作用"""
     monkeypatch.setattr(
         'modules.self_updater.SelfUpdater._cleanup_update_residue',
-        lambda logger: None,
+        lambda logger, temp_folder=None, clean_cache=True: None,
     )
 
 

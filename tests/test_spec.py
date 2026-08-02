@@ -232,6 +232,71 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     assert f'已删除残留文件: {update_log}' in caplog.text
 
 
+def test_cleanup_update_residue_removes_update_cache_and_empty_temp_folder(
+        monkeypatch, tmp_path):
+    """正常启动时应删除 UpdateCache，并在临时目录为空后删除临时目录。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    temp_folder = tmp_path / 'temp'
+    install_dir = temp_folder / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    (install_dir / 'TwoPush-v2.0.0.exe').write_bytes(b'update')
+    monkeypatch.setattr(UpdateState, 'load', lambda: None)
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_update_cache'),
+        temp_folder=str(temp_folder),
+    )
+
+    assert not (temp_folder / 'UpdateCache').exists()
+    assert not temp_folder.exists()
+
+
+def test_cleanup_update_residue_keeps_nonempty_temp_folder(monkeypatch, tmp_path):
+    """临时目录中存在非更新文件时只删除 UpdateCache，保留临时目录。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    temp_folder = tmp_path / 'temp'
+    install_dir = temp_folder / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    (install_dir / 'TwoPush-v2.0.0.exe').write_bytes(b'update')
+    keep_file = temp_folder / 'keep.json'
+    keep_file.write_text('keep', encoding='utf-8')
+    monkeypatch.setattr(UpdateState, 'load', lambda: None)
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_keep_nonempty_temp'),
+        temp_folder=str(temp_folder),
+    )
+
+    assert not (temp_folder / 'UpdateCache').exists()
+    assert temp_folder.exists()
+    assert keep_file.exists()
+
+
+def test_cleanup_update_residue_keeps_update_cache_during_retry(monkeypatch, tmp_path):
+    """重试更新启动时应保留 UpdateCache 供断点续传和缓存复用。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    temp_folder = tmp_path / 'temp'
+    install_dir = temp_folder / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    cached_exe = install_dir / 'TwoPush-v2.0.0.exe'
+    cached_exe.write_bytes(b'update')
+    monkeypatch.setattr(UpdateState, 'load', lambda: None)
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_keep_retry_cache'),
+        temp_folder=str(temp_folder),
+        clean_cache=False,
+    )
+
+    assert cached_exe.exists()
+
+
 def test_cleanup_update_residue_removes_legacy_residue_when_verified(monkeypatch, tmp_path):
     """verified 状态应额外清理旧版程序目录残留和固定旧缓存目录"""
     from modules.self_config import UpdateState
