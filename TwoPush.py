@@ -508,8 +508,8 @@ def main():
     if args.update or args.update_force:
         handle_update_command(config, logger, force=args.update_force)
 
-    # 自动更新检查仅在非 -p 模式下执行（--update/--update-force 始终生效）
-    if not args.push:
+    # 自动更新检查仅在非推送模式下执行（--update/--update-force 始终生效）
+    if push_file is None:
         auto_update_check(config, logger)
 
     if push_exit_code is not None:

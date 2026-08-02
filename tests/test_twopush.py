@@ -1126,6 +1126,42 @@ def test_main_push_mode_skips_auto_update_check(monkeypatch, tmp_path, mock_clea
     assert 'auto_check' not in call_log
 
 
+def test_main_drag_drop_push_skips_auto_update_check(monkeypatch, tmp_path, mock_cleanup_residue):
+    """拖放 JSON 推送模式应跳过 auto_update_check"""
+    config_file = tmp_path / 'config.ini'
+    push_file = tmp_path / 'push.json'
+    config_file.write_text(
+        '[Network]\nproxy = \nenable_proxy_for_push = false\n'
+        '[Push]\nretry_interval = 3s\nretry_max_count = 3\n'
+        '[Update]\nauto_check = true\nchannel = stable\n'
+        '[Logs]\nsave_enabled = false\nmax_files = 15\n',
+        encoding='utf-8',
+    )
+    push_file.write_text('{}', encoding='utf-8')
+
+    call_log = {}
+
+    def fake_execute_push(push_file, config, logger):
+        return 0
+
+    def fake_auto_check(config, logger):
+        call_log['auto_check'] = True
+
+    monkeypatch.setattr(
+        sys, 'argv',
+        ['TwoPush.py', '-c', str(config_file), str(push_file)],
+    )
+    monkeypatch.setattr(TwoPush, 'execute_push', fake_execute_push)
+    monkeypatch.setattr(TwoPush, 'auto_update_check', fake_auto_check)
+    monkeypatch.setattr('builtins.input', lambda prompt='': None)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert 'auto_check' not in call_log
+
+
 def test_main_push_with_update_still_runs_update_command(monkeypatch, tmp_path, mock_cleanup_residue):
     """-p --update 组合时 handle_update_command 仍应被调用"""
     config_file = tmp_path / 'config.ini'
