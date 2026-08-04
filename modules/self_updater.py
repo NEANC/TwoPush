@@ -944,17 +944,20 @@ class SelfUpdater:
         Args:
             logger: 日志记录器
         """
-        if clean_cache:
-            resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
-            SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
-
         state = UpdateState.load()
         if not state:
+            if clean_cache and temp_folder:
+                resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
+                SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
             return
 
         current_state = state.get("State", "state", fallback="")
         if current_state != "verified":
             return
+
+        if clean_cache and temp_folder:
+            resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
+            SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
 
         logger.info("清理上次更新残留文件...")
         target_value = state.get("Files", "target", fallback="")

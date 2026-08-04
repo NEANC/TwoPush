@@ -349,6 +349,48 @@ def test_cleanup_update_residue_keeps_update_cache_during_retry(monkeypatch, tmp
     assert cached_exe.exists()
 
 
+def test_cleanup_update_residue_keeps_update_cache_when_state_not_verified(
+        monkeypatch, tmp_path):
+    """非 verified 状态（如 replacing）应保留 UpdateCache 与旧版目录缓存。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    runtime_dir = tmp_path / 'runtime'
+    temp_folder = tmp_path / 'temp'
+    legacy_temp = program_dir / 'TEMP'
+    legacy_temp_cache = legacy_temp / 'UpdateCache'
+
+    for path in [program_dir, runtime_dir, temp_folder, legacy_temp_cache]:
+        path.mkdir(parents=True)
+
+    target = program_dir / 'TwoPush.exe'
+    target.write_bytes(b'exe')
+    install_dir = temp_folder / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    cached_exe = install_dir / 'TwoPush-v2.0.0.exe'
+    cached_exe.write_bytes(b'update')
+    (legacy_temp_cache / 'old.bin').write_bytes(b'cache')
+
+    monkeypatch.setattr(sys, 'argv', [str(target)])
+    state = UpdateState()
+    state['state'] = 'replacing'
+    state['target'] = str(target)
+    state['runtime_dir'] = str(runtime_dir)
+    state.save()
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_keep_cache_not_verified'),
+        temp_folder=str(temp_folder),
+    )
+
+    assert cached_exe.exists()
+    assert install_dir.exists()
+    assert legacy_temp_cache.exists()
+    assert (legacy_temp_cache / 'old.bin').exists()
+    assert (program_dir / 'update_state.ini').exists()
+
+
 def test_cleanup_update_residue_removes_legacy_residue_when_verified(monkeypatch, tmp_path):
     """verified 状态应额外清理旧版程序目录残留和固定旧缓存目录"""
     from modules.self_config import UpdateState
