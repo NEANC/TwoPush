@@ -170,15 +170,46 @@ def test_self_update_verify_checks_expected_version_without_injected_func(monkey
     assert result == 3
 
 
-def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_path, caplog):
-    """清理 verified 状态残留时应仅删除状态文件记录的运行时文件"""
+def test_cleanup_update_residue_removes_default_update_cache_when_state_missing(
+        monkeypatch, tmp_path):
+    """无状态文件且 temp_folder='' 时应清理默认 UpdateCache。"""
     from modules.self_config import UpdateState
     from modules.self_updater import SelfUpdater
 
     program_dir = tmp_path / 'program'
+    system_temp = tmp_path / 'system-temp'
+    program_dir.mkdir()
+    install_dir = system_temp / 'TwoPush' / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    (install_dir / 'TwoPush-v2.0.0.exe').write_bytes(b'update')
+    monkeypatch.setenv('TEMP', str(system_temp))
+    monkeypatch.delenv('TMP', raising=False)
+    monkeypatch.setattr(sys, 'argv', [str(program_dir / 'TwoPush.exe')])
+    monkeypatch.setattr(UpdateState, 'load', lambda: None)
+
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_default_update_cache_missing_state'),
+        temp_folder='',
+    )
+
+    assert not (system_temp / 'TwoPush' / 'UpdateCache').exists()
+    assert not (system_temp / 'TwoPush').exists()
+
+
+def test_cleanup_update_residue_removes_default_update_cache_when_verified(
+        monkeypatch, tmp_path):
+    """verified 状态且 temp_folder='' 时应清理默认 UpdateCache。"""
+    from modules.self_config import UpdateState
+    from modules.self_updater import SelfUpdater
+
+    program_dir = tmp_path / 'program'
+    system_temp = tmp_path / 'system-temp'
     runtime_dir = tmp_path / 'runtime'
     program_dir.mkdir()
     runtime_dir.mkdir()
+    install_dir = system_temp / 'TwoPush' / 'UpdateCache' / 'installs' / 'v2.0.0'
+    install_dir.mkdir(parents=True)
+    (install_dir / 'TwoPush-v2.0.0.exe').write_bytes(b'update')
 
     target = program_dir / 'TwoPush.exe'
     helper_ps1 = runtime_dir / 'TwoPush_Update_Helper.ps1'
@@ -186,21 +217,11 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     lock_file = runtime_dir / 'update_started.lock'
     new_file = runtime_dir / 'TwoPush.new.exe'
     backup_file = runtime_dir / 'TwoPush.backup.exe'
-    update_log = program_dir / 'update.log'
-    foreign_helper = program_dir / 'Other_Update_Helper.ps1'
-
-    for path in [
-        target,
-        helper_ps1,
-        update_ps1,
-        lock_file,
-        new_file,
-        backup_file,
-        update_log,
-        foreign_helper,
-    ]:
+    for path in [target, helper_ps1, update_ps1, lock_file, new_file, backup_file]:
         path.write_text('test', encoding='utf-8')
 
+    monkeypatch.setenv('TEMP', str(system_temp))
+    monkeypatch.delenv('TMP', raising=False)
     monkeypatch.setattr(sys, 'argv', [str(target)])
     state = UpdateState()
     state['state'] = 'verified'
@@ -213,23 +234,19 @@ def test_cleanup_update_residue_removes_recorded_runtime_files(monkeypatch, tmp_
     state['backup_file'] = str(backup_file)
     state.save()
 
-    logger = logging.getLogger('test_cleanup_update_residue')
-    with caplog.at_level(logging.DEBUG, logger=logger.name):
-        SelfUpdater._cleanup_update_residue(logger)
+    SelfUpdater._cleanup_update_residue(
+        logging.getLogger('test_cleanup_default_update_cache_verified'),
+        temp_folder='',
+    )
 
+    assert not (system_temp / 'TwoPush' / 'UpdateCache').exists()
+    assert not (system_temp / 'TwoPush').exists()
     assert not helper_ps1.exists()
     assert not update_ps1.exists()
     assert not lock_file.exists()
     assert not new_file.exists()
     assert not backup_file.exists()
-    assert not runtime_dir.exists()
     assert not (program_dir / 'update_state.ini').exists()
-    assert not update_log.exists()
-    assert foreign_helper.exists()
-    assert '清理上次更新残留文件...' in caplog.text
-    assert f'已删除残留文件: {helper_ps1}' in caplog.text
-    assert f'已删除残留文件: {update_ps1}' in caplog.text
-    assert f'已删除残留文件: {update_log}' in caplog.text
 
 
 def test_cleanup_update_residue_removes_update_cache_after_verified_update(

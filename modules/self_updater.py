@@ -946,7 +946,7 @@ class SelfUpdater:
         """
         state = UpdateState.load()
         if not state:
-            if clean_cache and temp_folder:
+            if clean_cache:
                 resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
                 SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
             return
@@ -955,7 +955,7 @@ class SelfUpdater:
         if current_state != "verified":
             return
 
-        if clean_cache and temp_folder:
+        if clean_cache:
             resolved_temp_folder = SelfUpdater._resolve_temp_folder(temp_folder)
             SelfUpdater.clean_update_cache(resolved_temp_folder, logger)
 
