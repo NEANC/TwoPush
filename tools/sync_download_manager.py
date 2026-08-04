@@ -770,7 +770,7 @@ def main(source_path=None, target_path=None) -> None:
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
-    print(f'已生成: {target_path}')
+    print(f'Generated: {target_path}')
 
 
 def _parse_args():

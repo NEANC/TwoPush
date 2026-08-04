@@ -172,7 +172,7 @@ def test_cli_subprocess_paths_override_environment_variables(tmp_path, source_te
     env['TWOPUSH_DOWNLOAD_MANAGER_TARGET'] = str(tmp_path / 'wrong_env_target.py')
     cli_source.write_text(source_text, encoding='utf-8', newline='')
 
-    subprocess.run(
+    result = subprocess.run(
         [
             sys.executable,
             str(script_path),
@@ -183,11 +183,16 @@ def test_cli_subprocess_paths_override_environment_variables(tmp_path, source_te
         ],
         cwd=tmp_path,
         env=env,
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
 
+    assert result.returncode == 0, (
+        f'子进程退出码 {result.returncode}\n'
+        f'stdout: {result.stdout!r}\n'
+        f'stderr: {result.stderr!r}'
+    )
     assert cli_target.read_text(encoding='utf-8') == (
         sync_download_manager.transform_manager(source_text)
     )
