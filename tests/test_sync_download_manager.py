@@ -199,6 +199,48 @@ def test_cli_subprocess_paths_override_environment_variables(tmp_path, source_te
     assert not Path(env['TWOPUSH_DOWNLOAD_MANAGER_TARGET']).exists()
 
 
+def test_cli_subprocess_succeeds_with_non_ascii_target_under_ascii_stdout(
+        tmp_path, source_text):
+    """ASCII 标准输出下含中文目标路径的真实 CLI 同步应成功。"""
+    script_path = sync_download_manager.PROJECT_ROOT / 'tools' / 'sync_download_manager.py'
+    cli_source = tmp_path / '来源' / 'manager.py'
+    cli_target = tmp_path / '生成目录' / '下载管理器.py'
+    env = os.environ.copy()
+    env['PYTHONIOENCODING'] = 'ascii'
+    env['TWOPUSH_DOWNLOAD_MANAGER_SOURCE'] = str(tmp_path / 'missing_env_manager.py')
+    env['TWOPUSH_DOWNLOAD_MANAGER_TARGET'] = str(tmp_path / 'wrong_env_target.py')
+    cli_source.parent.mkdir()
+    cli_source.write_text(source_text, encoding='utf-8', newline='')
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script_path),
+            '--source',
+            str(cli_source),
+            '--target',
+            str(cli_target),
+        ],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, (
+        f'子进程退出码 {result.returncode}\n'
+        f'stdout: {result.stdout!r}\n'
+        f'stderr: {result.stderr!r}'
+    )
+    assert cli_target.read_text(encoding='utf-8') == (
+        sync_download_manager.transform_manager(source_text)
+    )
+    assert result.stdout == 'Generated successfully\n'
+    result.stdout.encode('ascii')
+    assert not Path(env['TWOPUSH_DOWNLOAD_MANAGER_TARGET']).exists()
+
+
 def test_main_explicit_paths_override_environment_variables(
         monkeypatch, tmp_path, source_text):
     """main 显式来源与目标参数应覆盖环境变量路径。"""
