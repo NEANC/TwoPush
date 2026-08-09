@@ -1204,6 +1204,15 @@ class TestTwoPushDingTalkMasking:
         assert "?access_token=xyz" not in text
         assert "?access_token=***" in text
 
+    def test_mask_bare_token_param(self):
+        """裸 token= 参数应脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text("https://sctapi.ftqq.com/SCTabc.send?token=xyz")
+
+        assert "token=xyz" not in text
+        assert "token=***" in text
+
     def test_success_log_masks_title_sensitive_data(self, monkeypatch):
         """成功日志中的标题含敏感信息时应脱敏。"""
         from modules import notification

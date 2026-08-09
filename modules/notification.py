@@ -269,7 +269,7 @@ def _mask_dingtalk_sensitive_text(text):
         return text
     masked = str(text)
     masked = re.sub(r'(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)', r'\1****\2', masked)
-    masked = re.sub(r'\b(access_token=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
+    masked = re.sub(r'\b((?:access_)?token)=[^&\s]+', r'\1=***', masked, flags=re.IGNORECASE)
     masked = re.sub(r'\b(sign=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
     masked = re.sub(r'\b(secret=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
     return masked
