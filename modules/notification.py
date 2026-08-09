@@ -134,6 +134,43 @@ def _append_missing_dingtalk_mentions(text, mobiles):
     return f'{text}\n\n{suffix}' if text else suffix
 
 
+def _build_dingtalk_payload(params, title, content):
+    """构造钉钉 text 或 markdown Webhook 请求体
+
+    Args:
+        params: 通道参数字典
+        title: 通知标题
+        content: 通知内容
+
+    Returns:
+        dict: 钉钉 Webhook 请求体
+    """
+    msgtype = str(params.get('msgtype') or 'markdown').strip().lower()
+    if msgtype not in ('text', 'markdown'):
+        msgtype = 'markdown'
+
+    at = _normalize_dingtalk_at(params)
+    mobiles = at.get('atMobiles', [])
+
+    if msgtype == 'text':
+        message = '\n'.join(part for part in (title, content) if part)
+        message = _append_missing_dingtalk_mentions(message, mobiles)
+        payload = {'msgtype': 'text', 'text': {'content': message}}
+    else:
+        text = _append_missing_dingtalk_mentions(content or '', mobiles)
+        payload = {
+            'msgtype': 'markdown',
+            'markdown': {
+                'title': title or '',
+                'text': text,
+            },
+        }
+
+    if at.get('isAtAll') or at.get('atMobiles'):
+        payload['at'] = at
+    return payload
+
+
 def _send_dingtalk_webhook(channel, title, content):
     """发送 TwoPush 钉钉增强 Webhook 请求
 

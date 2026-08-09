@@ -948,3 +948,55 @@ class TestTwoPushDingTalkAt:
         assert _normalize_dingtalk_at({"is_at_all": True})["isAtAll"] is True
         assert _normalize_dingtalk_at({"isAtAll": True})["isAtAll"] is True
         assert _normalize_dingtalk_at({"at": ["13800138000"]})["isAtAll"] is False
+
+
+class TestTwoPushDingTalkPayload:
+    """测试 TwoPush 钉钉请求体构造。"""
+
+    def test_build_markdown_payload_with_at(self):
+        """markdown 请求体应包含 markdown 与 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": ["13800138000"]},
+            "通知标题",
+            "## 通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
+        assert "## 通知内容" in payload["markdown"]["text"]
+        assert "@13800138000" in payload["markdown"]["text"]
+        assert payload["at"] == {
+            "atMobiles": ["13800138000"],
+            "isAtAll": False,
+        }
+
+    def test_build_text_payload_with_at(self):
+        """text 请求体应包含 text 与 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": ["13800138000"]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "text"
+        assert "通知标题" in payload["text"]["content"]
+        assert "通知内容" in payload["text"]["content"]
+        assert "@13800138000" in payload["text"]["content"]
+        assert payload["at"]["atMobiles"] == ["13800138000"]
+
+    def test_default_msgtype_is_markdown_for_enhanced_path(self):
+        """增强路径未指定 msgtype 但携带 at 时默认使用 markdown。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"at": ["13800138000"]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
