@@ -924,3 +924,27 @@ class TestTwoPushDingTalkAt:
         )
 
         assert text.count("@13800138000") == 1
+
+    def test_duplicate_mobiles_are_deduplicated(self):
+        """重复手机号应去重且保持顺序。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": ["13800138000", "13900139000", "13800138000"]})
+
+        assert at["atMobiles"] == ["13800138000", "13900139000"]
+
+    def test_at_mobiles_camel_case_alias_is_supported(self):
+        """atMobiles 驼峰别名应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"atMobiles": ["13800138000"]})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+    def test_is_at_all_flags_are_passed_through(self):
+        """is_at_all 与 isAtAll 应传递到 at 结构。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": True})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"isAtAll": True})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"at": ["13800138000"]})["isAtAll"] is False
