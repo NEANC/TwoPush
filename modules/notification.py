@@ -94,6 +94,46 @@ def _is_enhanced_dingtalk_channel(provider, params):
     return any(key in params for key in DINGTALK_ENHANCED_KEYS)
 
 
+def _as_string_list(value):
+    """将字符串或列表值归一为字符串列表。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _normalize_dingtalk_at(params):
+    """归一化钉钉 @ 配置，默认仅支持手机号。"""
+    mobiles = []
+    raw_at = params.get('at')
+
+    if isinstance(raw_at, dict):
+        mobiles.extend(_as_string_list(raw_at.get('atMobiles')))
+    else:
+        mobiles.extend(_as_string_list(raw_at))
+
+    mobiles.extend(_as_string_list(params.get('at_mobiles')))
+    mobiles.extend(_as_string_list(params.get('atMobiles')))
+
+    is_at_all = bool(params.get('is_at_all') or params.get('isAtAll'))
+    at = {'isAtAll': is_at_all}
+    if mobiles:
+        at['atMobiles'] = list(dict.fromkeys(mobiles))
+    return at
+
+
+def _append_missing_dingtalk_mentions(text, mobiles):
+    """将缺失的 @手机号 追加到钉钉消息正文。"""
+    missing = [mobile for mobile in mobiles if f'@{mobile}' not in text]
+    if not missing:
+        return text
+    suffix = ' '.join(f'@{mobile}' for mobile in missing)
+    return f'{text}\n\n{suffix}' if text else suffix
+
+
 def _send_dingtalk_webhook(channel, title, content):
     """发送 TwoPush 钉钉增强 Webhook 请求
 

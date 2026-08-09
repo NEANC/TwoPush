@@ -866,3 +866,61 @@ class TestTwoPushDingTalkUrlBuilder:
 
         assert url == full_url
         assert url.count("access_token=") == 1
+
+
+class TestTwoPushDingTalkAt:
+    """测试 TwoPush 钉钉手机号 @ 处理。"""
+
+    def test_string_at_normalizes_to_mobile_list(self):
+        """字符串 at 应归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": "13800138000"})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+    def test_list_at_normalizes_to_mobile_list(self):
+        """数组 at 应归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": ["13800138000", "13900139000"]})
+
+        assert at == {
+            "atMobiles": ["13800138000", "13900139000"],
+            "isAtAll": False,
+        }
+
+    def test_dict_at_mobiles_is_supported(self):
+        """字典 at.atMobiles 应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": {"atMobiles": ["13800138000"]}})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+    def test_at_mobiles_alias_is_supported(self):
+        """at_mobiles 别名应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at_mobiles": ["13800138000"]})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+    def test_append_missing_mobile_mentions(self):
+        """正文缺少 @手机号 时应自动补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions("通知内容", ["13800138000"])
+
+        assert text == "通知内容\n\n@13800138000"
+
+    def test_existing_mobile_mentions_are_not_duplicated(self):
+        """正文已有 @手机号 时不应重复补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions(
+            "通知内容\n\n@13800138000",
+            ["13800138000"],
+        )
+
+        assert text.count("@13800138000") == 1
