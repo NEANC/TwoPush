@@ -856,3 +856,13 @@ class TestTwoPushDingTalkUrlBuilder:
         assert url.count("sign=") == 1
         assert "timestamp=old" not in url
         assert "sign=old" not in url
+
+    def test_http_full_webhook_url_is_reused(self):
+        """http 完整 Webhook URL 应原样复用且不重复追加 access_token。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "http://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
