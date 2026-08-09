@@ -1058,6 +1058,7 @@ class TestTwoPushDingTalkDirectSend:
             captured["url"] = url
             captured["json"] = kwargs.get("json")
             captured["headers"] = kwargs.get("headers")
+            captured["timeout"] = kwargs.get("timeout")
             return fake_response
 
         monkeypatch.setattr(notification, "request", fake_request)
@@ -1076,5 +1077,18 @@ class TestTwoPushDingTalkDirectSend:
         assert captured["method"] == "post"
         assert "access_token=abc123" in captured["url"]
         assert captured["headers"] == {"Content-Type": "application/json"}
+        assert captured["timeout"] == 10
         assert captured["json"]["msgtype"] == "markdown"
         assert captured["json"]["at"]["atMobiles"] == ["13800138000"]
+
+    def test_send_dingtalk_webhook_without_token_raises_value_error(self, monkeypatch):
+        """缺少 token 时应抛出 ValueError。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("缺少 token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            notification._send_dingtalk_webhook({}, "通知标题", "通知内容")

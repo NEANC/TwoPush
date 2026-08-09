@@ -176,14 +176,26 @@ def _build_dingtalk_payload(params, title, content):
 
 
 def _send_dingtalk_webhook(channel, title, content):
-    """发送 TwoPush 钉钉增强 Webhook 请求。"""
+    """发送 TwoPush 钉钉增强 Webhook 请求。
+
+    Args:
+        channel: 钉钉通道参数字典，需包含 token，可包含 secret 与 msgtype/at
+        title: 通知标题
+        content: 通知内容
+
+    Returns:
+        requests.Response: 钉钉 Webhook 响应对象
+
+    Raises:
+        ValueError: 通道缺少 token 时抛出
+    """
     token = channel.get('token')
     if not token:
         raise ValueError("钉钉通道缺少 token")
     url = _build_dingtalk_webhook_url(token, channel.get('secret'))
     payload = _build_dingtalk_payload(channel, title, content)
     headers = {'Content-Type': 'application/json'}
-    return request('post', url, json=payload, headers=headers)
+    return request('post', url, json=payload, headers=headers, timeout=10)
 
 
 def _parse_response_body(response):
