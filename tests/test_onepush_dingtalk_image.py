@@ -975,6 +975,14 @@ class TestTwoPushDingTalkAt:
         assert _normalize_dingtalk_at({"isAtAll": True})["isAtAll"] is True
         assert _normalize_dingtalk_at({"at": ["13800138000"]})["isAtAll"] is False
 
+    def test_non_mobile_values_are_filtered_out(self):
+        """非手机号值应被过滤，不进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": ["13800138000", "alice", "userId123"]})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
 
 class TestTwoPushDingTalkPayload:
     """测试 TwoPush 钉钉请求体构造。"""

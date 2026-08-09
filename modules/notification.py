@@ -119,6 +119,11 @@ def _as_string_list(value):
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _is_mobile_number(value):
+    """判断字符串是否为 11 位中国大陆手机号（1 开头）。"""
+    return bool(re.fullmatch(r'1\d{10}', value))
+
+
 def _normalize_dingtalk_at(params):
     """归一化钉钉 @ 配置，默认仅支持手机号。"""
     mobiles = []
@@ -131,6 +136,7 @@ def _normalize_dingtalk_at(params):
 
     mobiles.extend(_as_string_list(params.get('at_mobiles')))
     mobiles.extend(_as_string_list(params.get('atMobiles')))
+    mobiles = [m for m in mobiles if _is_mobile_number(m)]
 
     is_at_all = bool(params.get('is_at_all') or params.get('isAtAll'))
     at = {'isAtAll': is_at_all}
