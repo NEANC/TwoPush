@@ -25,9 +25,8 @@ from modules.logger_manager import (
 from modules.notification import (
     render_template_vars,
     send_notification,
-    _mask_dingtalk_sensitive_text,
 )
-from modules.utils import parse_push_channels, parse_time_string
+from modules.utils import mask_sensitive_fields, parse_push_channels, parse_time_string
 from modules.json_manager import (
     DEFAULT_TEMPLATE_FILE,
     ensure_default_template_on_first_run,
@@ -241,9 +240,13 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
         'max_count': retry_settings.get('max_count'),
     }
     proxy_preview = mask_proxy_authentication(proxy)
-    # 复用通知模块脱敏函数，避免预览日志泄露手机号与令牌等敏感信息
-    masked_title = _mask_dingtalk_sensitive_text(title)
-    masked_content = _mask_dingtalk_sensitive_text(content)
+    # 仅对声明为敏感的 title/content 字段脱敏，避免预览日志泄露敏感信息
+    masked_fields = mask_sensitive_fields(
+        {'title': title, 'content': content},
+        sensitive_fields={'title', 'content'},
+    )
+    masked_title = masked_fields['title']
+    masked_content = masked_fields['content']
     return '\n'.join([
         f'"title": {json.dumps(masked_title, ensure_ascii=False)},',
         f'"content": {json.dumps(masked_content, ensure_ascii=False)},',
