@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import hmac
 import logging
+import re
 import requests
 import socket
 import time
@@ -253,6 +254,18 @@ def _is_push_successful(response):
     return True, ""
 
 
+def _mask_dingtalk_sensitive_text(text):
+    """脱敏钉钉日志中的手机号、token、secret 与 sign。"""
+    if text is None:
+        return text
+    masked = str(text)
+    masked = re.sub(r'(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)', r'\1****\2', masked)
+    masked = re.sub(r'(access_token=)[^&\s]+', r'\1***', masked)
+    masked = re.sub(r'(sign=)[^&\s]+', r'\1***', masked)
+    masked = re.sub(r'(secret=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
+    return masked
+
+
 def _handle_attempt_failure(provider, attempt, max_count, reason, retry_interval, log):
     """记录单次发送失败并决定是否继续重试
 
@@ -267,6 +280,7 @@ def _handle_attempt_failure(provider, attempt, max_count, reason, retry_interval
     Returns:
         bool: True 表示应继续重试
     """
+    reason = _mask_dingtalk_sensitive_text(reason)
     log.error(
         f"通道 [{provider}] 通知发送失败 (尝试 {attempt}/{max_count}): {reason}"
     )

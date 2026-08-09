@@ -1092,3 +1092,48 @@ class TestTwoPushDingTalkDirectSend:
 
         with pytest.raises(ValueError, match="缺少 token"):
             notification._send_dingtalk_webhook({}, "通知标题", "通知内容")
+
+
+class TestTwoPushDingTalkMasking:
+    """测试钉钉日志脱敏。"""
+
+    def test_mask_mobile(self):
+        """手机号应脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text("通知 @13800138000")
+
+        assert "13800138000" not in text
+        assert "138****8000" in text
+
+    def test_mask_webhook_query(self):
+        """Webhook URL query 中的敏感参数应脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text(
+            "https://oapi.dingtalk.com/robot/send?access_token=abc&sign=xyz"
+        )
+
+        assert "access_token=abc" not in text
+        assert "sign=xyz" not in text
+        assert "access_token=***" in text
+        assert "sign=***" in text
+
+    def test_failure_reason_is_masked(self):
+        """失败原因日志不得泄露手机号或 token。"""
+        from modules.notification import _handle_attempt_failure
+
+        log = unittest.mock.MagicMock()
+        _handle_attempt_failure(
+            "dingtalk",
+            1,
+            1,
+            "手机号 13800138000 access_token=abc sign=xyz",
+            0,
+            log,
+        )
+
+        messages = "\n".join(call.args[0] for call in log.error.call_args_list)
+        assert "13800138000" not in messages
+        assert "access_token=abc" not in messages
+        assert "sign=xyz" not in messages
