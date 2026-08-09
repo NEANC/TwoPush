@@ -990,6 +990,15 @@ class TestTwoPushDingTalkAt:
         assert _normalize_dingtalk_at({"is_at_all": "false"})["isAtAll"] is False
         assert _normalize_dingtalk_at({"isAtAll": "False"})["isAtAll"] is False
 
+    def test_is_at_all_string_truthy_values_are_parsed_as_true(self):
+        """字符串形式的真值应被解析为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": "TRUE"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "1"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "yes"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "on"})["isAtAll"] is True
+
 
 class TestTwoPushDingTalkPayload:
     """测试 TwoPush 钉钉请求体构造。"""

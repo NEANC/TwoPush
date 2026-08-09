@@ -128,7 +128,7 @@ def _parse_boolean(value):
     """将布尔或字符串形式解析为布尔值。
 
     Args:
-        value: 布尔值或字符串（true/false/1/0/yes/no）
+        value: 布尔值或字符串（true/false/1/0/yes/no/on）
 
     Returns:
         bool: 解析后的布尔值
