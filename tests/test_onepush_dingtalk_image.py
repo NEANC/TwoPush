@@ -1031,6 +1031,34 @@ class TestTwoPushDingTalkAt:
         assert _normalize_dingtalk_at({"is_at_all": "yes"})["isAtAll"] is True
         assert _normalize_dingtalk_at({"is_at_all": "on"})["isAtAll"] is True
 
+    def test_dict_at_is_at_all_inside_dict_is_honored(self):
+        """at 字典内部的 isAtAll 应被识别为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at(
+            {"at": {"atMobiles": ["13800138000"], "isAtAll": True}}
+        )
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": True}
+        assert _normalize_dingtalk_at({"at": {"isAtAll": True}})["isAtAll"] is True
+
+    def test_dict_at_is_at_all_merges_with_top_level(self):
+        """at 字典内部与顶层的 isAtAll 应取 or 合并。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at(
+            {"at": {"isAtAll": True}, "isAtAll": False}
+        )["isAtAll"] is True
+        assert _normalize_dingtalk_at(
+            {"at": {"isAtAll": "false"}, "is_at_all": "on"}
+        )["isAtAll"] is True
+
+    def test_dict_at_is_at_all_string_false_is_parsed_as_false(self):
+        """at 字典内部字符串形式的 false 不应被判定为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"at": {"isAtAll": "false"}})["isAtAll"] is False
+
 
 class TestTwoPushDingTalkPayload:
     """测试 TwoPush 钉钉请求体构造。"""

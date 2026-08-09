@@ -168,6 +168,8 @@ def _normalize_dingtalk_at(params):
     mobiles = [m for m in mobiles if _is_mobile_number(m)]
 
     is_at_all = _parse_boolean(params.get('is_at_all')) or _parse_boolean(params.get('isAtAll'))
+    if isinstance(raw_at, dict):
+        is_at_all = is_at_all or _parse_boolean(raw_at.get('isAtAll'))
     at = {'isAtAll': is_at_all}
     if mobiles:
         at['atMobiles'] = list(dict.fromkeys(mobiles))
