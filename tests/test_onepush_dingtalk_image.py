@@ -1194,6 +1194,16 @@ class TestTwoPushDingTalkMasking:
 
         assert _mask_dingtalk_sensitive_text(None) is None
 
+    def test_mask_does_not_break_prefixed_token_words(self):
+        """带前缀的 access_token（如 xaccess_token）不应被误脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text("xaccess_token=abc ?access_token=xyz")
+
+        assert "xaccess_token=abc" in text
+        assert "?access_token=xyz" not in text
+        assert "?access_token=***" in text
+
 
 class TestTwoPushDingTalkMultipleChannels:
     """测试多通道中普通钉钉与增强钉钉并存。"""
