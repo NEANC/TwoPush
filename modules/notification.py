@@ -338,7 +338,8 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
 
         success, reason = _is_push_successful(response)
         if success:
-            log.info(f"通知发送成功 [{provider}]: {title}")
+            masked_title = _mask_dingtalk_sensitive_text(title)
+            log.info(f"通知发送成功 [{provider}]: {masked_title}")
             return True
 
         if not _handle_attempt_failure(
@@ -385,7 +386,8 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
 
     channel_names = ', '.join(c.get('provider', '?') for c in channels)
     log.info(f"共 {len(channels)} 个推送通道: {channel_names}")
-    log.info(f"通知标题: {title}")
+    masked_title = _mask_dingtalk_sensitive_text(title)
+    log.info(f"通知标题: {masked_title}")
     log.debug(f"通知内容长度: {len(content)}")
 
     max_workers = min(len(channels), 8)
