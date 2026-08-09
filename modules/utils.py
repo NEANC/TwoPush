@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import re
 
 from onepush import all_providers, get_notifier
 
@@ -28,6 +29,48 @@ CHANNEL_KEY_ALIASES = {
     'serverchanturbo': {'key': 'sctkey'},
     'pushdeer': {'key': 'pushkey'},
 }
+
+
+def mask_sensitive_fields(fields, sensitive_fields):
+    """仅对调用方声明的字段执行敏感片段脱敏
+
+    在字段字典的副本上进行处理：11 位手机号保留前 3 位与后 4 位，
+    access_token/token、sign、secret 键值对的值替换为 ***；
+    未声明字段与 None 值原样保留
+
+    Args:
+        fields (dict): 原始字段字典，不会被修改
+        sensitive_fields (set | list | tuple | dict): 需要脱敏的字段名集合，
+            dict 仅取其键名
+
+    Returns:
+        dict: 脱敏后的新字典
+
+    Raises:
+        TypeError: fields 不是 dict，或 sensitive_fields 不是
+            set/list/tuple/dict 时抛出
+    """
+    if not isinstance(fields, dict):
+        raise TypeError('fields 必须是 dict')
+    if not isinstance(sensitive_fields, (set, list, tuple, dict)):
+        raise TypeError('sensitive_fields 必须是 set、list、tuple 或 dict')
+
+    result = dict(fields)
+    for field in sensitive_fields:
+        if field not in result or result[field] is None:
+            continue
+        value = str(result[field])
+        value = re.sub(r'(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)', r'\1****\2', value)
+        value = re.sub(
+            r'\b((?:access_)?token)=[^&\s]+',
+            r'\1=***',
+            value,
+            flags=re.IGNORECASE,
+        )
+        value = re.sub(r'\b(sign=)[^&\s]+', r'\1***', value, flags=re.IGNORECASE)
+        value = re.sub(r'\b(secret=)[^&\s]+', r'\1***', value, flags=re.IGNORECASE)
+        result[field] = value
+    return result
 
 
 def strip_wrapping_quotes(value):
