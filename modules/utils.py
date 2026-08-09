@@ -40,20 +40,19 @@ def mask_sensitive_fields(fields, sensitive_fields):
 
     Args:
         fields (dict): 原始字段字典，不会被修改
-        sensitive_fields (set | list | tuple | dict): 需要脱敏的字段名集合，
-            dict 仅取其键名
+        sensitive_fields (set | list | tuple): 需要脱敏的字段名集合
 
     Returns:
         dict: 脱敏后的新字典
 
     Raises:
         TypeError: fields 不是 dict，或 sensitive_fields 不是
-            set/list/tuple/dict 时抛出
+            set/list/tuple 时抛出
     """
     if not isinstance(fields, dict):
         raise TypeError('fields 必须是 dict')
-    if not isinstance(sensitive_fields, (set, list, tuple, dict)):
-        raise TypeError('sensitive_fields 必须是 set、list、tuple 或 dict')
+    if not isinstance(sensitive_fields, (set, list, tuple)):
+        raise TypeError('sensitive_fields 必须是 set、list 或 tuple')
 
     result = dict(fields)
     for field in sensitive_fields:
