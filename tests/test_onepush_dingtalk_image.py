@@ -1038,3 +1038,43 @@ class TestTwoPushDingTalkPayload:
 
         assert payload["at"] == {"isAtAll": True}
         assert "atMobiles" not in payload["at"]
+
+
+class TestTwoPushDingTalkDirectSend:
+    """测试 TwoPush 钉钉直发请求。"""
+
+    def test_send_dingtalk_webhook_posts_json(self, monkeypatch):
+        """钉钉直发应 POST JSON 请求体。"""
+        from modules import notification
+
+        captured = {}
+        fake_response = unittest.mock.MagicMock()
+        fake_response.status_code = 200
+        fake_response.text = '{"errcode": 0, "errmsg": "ok"}'
+        fake_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+
+        def fake_request(method, url, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            captured["headers"] = kwargs.get("headers")
+            return fake_response
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        response = notification._send_dingtalk_webhook(
+            {
+                "token": "abc123",
+                "msgtype": "markdown",
+                "at": ["13800138000"],
+            },
+            "通知标题",
+            "通知内容",
+        )
+
+        assert response is fake_response
+        assert captured["method"] == "post"
+        assert "access_token=abc123" in captured["url"]
+        assert captured["headers"] == {"Content-Type": "application/json"}
+        assert captured["json"]["msgtype"] == "markdown"
+        assert captured["json"]["at"]["atMobiles"] == ["13800138000"]

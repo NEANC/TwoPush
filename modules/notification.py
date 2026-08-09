@@ -8,6 +8,7 @@ import datetime
 import hashlib
 import hmac
 import logging
+import requests
 import socket
 import time
 import urllib.parse
@@ -15,6 +16,9 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
+
+# 绑定 requests.request 便于测试时 monkeypatch 替换
+request = requests.request
 
 LOGGER = logging.getLogger(__name__)
 
@@ -172,20 +176,14 @@ def _build_dingtalk_payload(params, title, content):
 
 
 def _send_dingtalk_webhook(channel, title, content):
-    """发送 TwoPush 钉钉增强 Webhook 请求
-
-    Args:
-        channel: 钉钉通道参数字典
-        title: 通知标题
-        content: 通知内容
-
-    Returns:
-        requests.Response: 钉钉接口响应对象
-
-    Raises:
-        NotImplementedError: 增强直发功能尚未实现
-    """
-    raise NotImplementedError("钉钉增强直发尚未实现")
+    """发送 TwoPush 钉钉增强 Webhook 请求。"""
+    token = channel.get('token')
+    if not token:
+        raise ValueError("钉钉通道缺少 token")
+    url = _build_dingtalk_webhook_url(token, channel.get('secret'))
+    payload = _build_dingtalk_payload(channel, title, content)
+    headers = {'Content-Type': 'application/json'}
+    return request('post', url, json=payload, headers=headers)
 
 
 def _parse_response_body(response):
