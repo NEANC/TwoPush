@@ -399,7 +399,7 @@ TwoPush 默认只支持手机号 @。`at` 可写为字符串或数组，程序�
 
 ### 日志脱敏
 
-TwoPush 日志会脱敏手机号、`access_token`、`secret` 与 `sign`，避免敏感信息进入控制台或日志文件。
+TwoPush 日志会脱敏手机号、`token`（含 `access_token`）、`secret` 与 `sign`，避免敏感信息进入控制台或日志文件。
 
 ## 能力总结
 

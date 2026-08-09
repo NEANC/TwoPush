@@ -1308,6 +1308,16 @@ class TestTwoPushDingTalkMasking:
         assert "13800138000" not in messages
         assert "138****8000" in messages
 
+    def test_mask_does_not_touch_unrelated_params(self):
+        """无关参数形式不应被误脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text("design=good assign=bad xaccess_token=abc")
+
+        assert "design=good" in text
+        assert "assign=bad" in text
+        assert "xaccess_token=abc" in text
+
 
 class TestTwoPushDingTalkMultipleChannels:
     """测试多通道中普通钉钉与增强钉钉并存。"""
