@@ -124,6 +124,24 @@ def _is_mobile_number(value):
     return bool(re.fullmatch(r'1\d{10}', value))
 
 
+def _parse_boolean(value):
+    """将布尔或字符串形式解析为布尔值。
+
+    Args:
+        value: 布尔值或字符串（true/false/1/0/yes/no）
+
+    Returns:
+        bool: 解析后的布尔值
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes', 'on')
+    return bool(value)
+
+
 def _normalize_dingtalk_at(params):
     """归一化钉钉 @ 配置，默认仅支持手机号。"""
     mobiles = []
@@ -138,7 +156,7 @@ def _normalize_dingtalk_at(params):
     mobiles.extend(_as_string_list(params.get('atMobiles')))
     mobiles = [m for m in mobiles if _is_mobile_number(m)]
 
-    is_at_all = bool(params.get('is_at_all') or params.get('isAtAll'))
+    is_at_all = _parse_boolean(params.get('is_at_all')) or _parse_boolean(params.get('isAtAll'))
     at = {'isAtAll': is_at_all}
     if mobiles:
         at['atMobiles'] = list(dict.fromkeys(mobiles))

@@ -983,6 +983,13 @@ class TestTwoPushDingTalkAt:
 
         assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
 
+    def test_is_at_all_string_false_is_parsed_as_false(self):
+        """字符串形式的 false 不应被判定为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": "false"})["isAtAll"] is False
+        assert _normalize_dingtalk_at({"isAtAll": "False"})["isAtAll"] is False
+
 
 class TestTwoPushDingTalkPayload:
     """测试 TwoPush 钉钉请求体构造。"""
