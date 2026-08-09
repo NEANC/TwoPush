@@ -1137,3 +1137,33 @@ class TestTwoPushDingTalkMasking:
         assert "13800138000" not in messages
         assert "access_token=abc" not in messages
         assert "sign=xyz" not in messages
+
+    def test_mask_secret_and_case_insensitive(self):
+        """secret 应脱敏，且 access_token/sign/secret 大小写不敏感。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text(
+            "secret=SECabc ACCESS_TOKEN=abc SIGN=xyz"
+        )
+
+        assert "SECabc" not in text
+        assert "ACCESS_TOKEN=abc" not in text
+        assert "SIGN=xyz" not in text
+        assert "secret=***" in text
+        assert "ACCESS_TOKEN=***" in text
+        assert "SIGN=***" in text
+
+    def test_mask_does_not_break_plain_words(self):
+        """普通单词（如 design）不应被误脱敏。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        text = _mask_dingtalk_sensitive_text("design=good assign=bad")
+
+        assert "design=good" in text
+        assert "assign=bad" in text
+
+    def test_mask_none_returns_none(self):
+        """None 输入应原样返回。"""
+        from modules.notification import _mask_dingtalk_sensitive_text
+
+        assert _mask_dingtalk_sensitive_text(None) is None
