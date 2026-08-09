@@ -12,7 +12,6 @@ import re
 import requests
 import socket
 import time
-import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -44,7 +43,17 @@ def _is_full_url(value):
 
 
 def _make_dingtalk_sign(secret):
-    """生成钉钉加签所需的 timestamp 与 sign。"""
+    """生成钉钉加签所需的 timestamp 与 sign。
+
+    返回的 sign 为未编码的原始 base64 字符串，由调用方在拼入 URL query
+    时统一 URL 编码，避免双重编码导致服务端校验失败。
+
+    Args:
+        secret: 钉钉加签密钥
+
+    Returns:
+        tuple[str, str]: (timestamp, sign)，sign 为未 URL 编码的 base64
+    """
     timestamp = str(round(time.time() * 1000))
     string_to_sign = f'{timestamp}\n{secret}'
     hmac_code = hmac.new(
@@ -52,7 +61,7 @@ def _make_dingtalk_sign(secret):
         string_to_sign.encode('utf-8'),
         digestmod=hashlib.sha256,
     ).digest()
-    sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+    sign = base64.b64encode(hmac_code).decode('utf-8')
     return timestamp, sign
 
 

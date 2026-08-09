@@ -867,6 +867,32 @@ class TestTwoPushDingTalkUrlBuilder:
         assert url == full_url
         assert url.count("access_token=") == 1
 
+    def test_sign_is_encoded_exactly_once(self):
+        """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
+        import base64
+        import hashlib
+        import hmac
+        import time
+        from urllib.parse import parse_qsl, urlsplit
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123", secret="SECtest")
+
+        query = dict(parse_qsl(urlsplit(url).query))
+        assert "%25" not in url, "sign 不应被双重 URL 编码"
+
+        timestamp = query["timestamp"]
+        string_to_sign = f"{timestamp}\nSECtest"
+        expected = base64.b64encode(
+            hmac.new(
+                b"SECtest",
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+        ).decode("utf-8")
+
+        assert query["sign"] == expected
+
 
 class TestTwoPushDingTalkAt:
     """测试 TwoPush 钉钉手机号 @ 处理。"""
