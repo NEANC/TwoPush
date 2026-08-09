@@ -1000,3 +1000,41 @@ class TestTwoPushDingTalkPayload:
 
         assert payload["msgtype"] == "markdown"
         assert payload["markdown"]["title"] == "通知标题"
+
+    def test_invalid_msgtype_falls_back_to_markdown(self):
+        """非法 msgtype 应兜底为 markdown。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "image", "at": ["13800138000"]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
+
+    def test_no_at_means_no_at_field(self):
+        """无 at 时不附加 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown"},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "at" not in payload
+
+    def test_is_at_all_appends_at_field_without_mobiles(self):
+        """isAtAll=True 时附加 at 字段（仅含 isAtAll）。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "is_at_all": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["at"] == {"isAtAll": True}
+        assert "atMobiles" not in payload["at"]
