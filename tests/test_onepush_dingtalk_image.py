@@ -798,3 +798,61 @@ class TestTwoPushDingTalkRouting:
 
         assert result is True
         assert calls == {"onepush": 0, "direct": 1}
+
+
+class TestTwoPushDingTalkUrlBuilder:
+    """测试 TwoPush 钉钉 Webhook URL 构造。"""
+
+    def test_token_only_builds_webhook_url(self):
+        """仅传 access token 时应拼接钉钉 Webhook URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123")
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+
+    def test_full_webhook_url_is_reused(self):
+        """完整 Webhook URL 不应重复追加 access_token。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
+    def test_token_with_secret_adds_sign(self):
+        """token + secret 应生成 timestamp 与 sign。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123", secret="SECtest")
+
+        assert "access_token=abc123" in url
+        assert "timestamp=" in url
+        assert "sign=" in url
+
+    def test_full_url_with_secret_does_not_duplicate_access_token(self):
+        """完整 URL 加签时不应重复追加 access_token。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url, secret="SECtest")
+
+        assert url.count("access_token=") == 1
+        assert "timestamp=" in url
+        assert "sign=" in url
+
+    def test_existing_sign_params_are_replaced(self):
+        """已有 timestamp/sign 时应以本次生成值覆盖，避免重复参数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "access_token=abc123&timestamp=old&sign=old"
+        )
+        url = _build_dingtalk_webhook_url(full_url, secret="SECtest")
+
+        assert url.count("timestamp=") == 1
+        assert url.count("sign=") == 1
+        assert "timestamp=old" not in url
+        assert "sign=old" not in url

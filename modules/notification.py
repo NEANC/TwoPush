@@ -3,11 +3,16 @@
 
 """基于 onepush 的通知推送模块，支持多通道并发发送和自动重试"""
 
-import socket
+import base64
 import datetime
-import time
+import hashlib
+import hmac
 import logging
+import socket
+import time
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
 
@@ -22,6 +27,56 @@ DINGTALK_ENHANCED_KEYS = {
     'is_at_all',
     'isAtAll',
 }
+
+# 钉钉自定义机器人 Webhook 基础地址
+DINGTALK_WEBHOOK_BASE_URL = 'https://oapi.dingtalk.com/robot/send'
+
+
+def _is_full_url(value):
+    """判断字符串是否为完整 URL。"""
+    parsed = urlsplit(str(value))
+    return bool(parsed.scheme and parsed.netloc)
+
+
+def _make_dingtalk_sign(secret):
+    """生成钉钉加签所需的 timestamp 与 sign。"""
+    timestamp = str(round(time.time() * 1000))
+    string_to_sign = f'{timestamp}\n{secret}'
+    hmac_code = hmac.new(
+        secret.encode('utf-8'),
+        string_to_sign.encode('utf-8'),
+        digestmod=hashlib.sha256,
+    ).digest()
+    sign = urllib.parse.quote_plus(base64.b64encode(hmac_code))
+    return timestamp, sign
+
+
+def _build_dingtalk_webhook_url(token, secret=None):
+    """根据 token 或完整 Webhook URL 构造钉钉请求 URL。"""
+    if _is_full_url(token):
+        url = str(token)
+    else:
+        query = urlencode({'access_token': str(token)})
+        url = f'{DINGTALK_WEBHOOK_BASE_URL}?{query}'
+
+    if not secret:
+        return url
+
+    timestamp, sign = _make_dingtalk_sign(str(secret))
+    parsed = urlsplit(url)
+    query_pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in ('timestamp', 'sign')
+    ]
+    query_pairs.extend([('timestamp', timestamp), ('sign', sign)])
+    return urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urlencode(query_pairs),
+        parsed.fragment,
+    ))
 
 
 def _is_enhanced_dingtalk_channel(provider, params):
