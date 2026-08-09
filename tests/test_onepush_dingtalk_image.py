@@ -1145,24 +1145,25 @@ class TestTwoPushDingTalkDirectSend:
 
 
 class TestTwoPushDingTalkMasking:
-    """测试钉钉日志脱敏。"""
+    """测试钉钉日志脱敏与通用脱敏工具。"""
 
     def test_mask_mobile(self):
         """手机号应脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text("通知 @13800138000")
+        text = mask_sensitive_fields({'text': '通知 @13800138000'}, {'text'})['text']
 
         assert "13800138000" not in text
         assert "138****8000" in text
 
     def test_mask_webhook_query(self):
         """Webhook URL query 中的敏感参数应脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text(
-            "https://oapi.dingtalk.com/robot/send?access_token=abc&sign=xyz"
-        )
+        text = mask_sensitive_fields(
+            {'text': "https://oapi.dingtalk.com/robot/send?access_token=abc&sign=xyz"},
+            {'text'},
+        )['text']
 
         assert "access_token=abc" not in text
         assert "sign=xyz" not in text
@@ -1175,6 +1176,7 @@ class TestTwoPushDingTalkMasking:
 
         log = unittest.mock.MagicMock()
         _handle_attempt_failure(
+            "dingtalk(onepush)",
             "dingtalk",
             1,
             1,
@@ -1190,11 +1192,12 @@ class TestTwoPushDingTalkMasking:
 
     def test_mask_secret_and_case_insensitive(self):
         """secret 应脱敏，且 access_token/sign/secret 大小写不敏感。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text(
-            "secret=SECabc ACCESS_TOKEN=abc SIGN=xyz"
-        )
+        text = mask_sensitive_fields(
+            {'text': "secret=SECabc ACCESS_TOKEN=abc SIGN=xyz"},
+            {'text'},
+        )['text']
 
         assert "SECabc" not in text
         assert "ACCESS_TOKEN=abc" not in text
@@ -1205,24 +1208,27 @@ class TestTwoPushDingTalkMasking:
 
     def test_mask_does_not_break_plain_words(self):
         """普通单词（如 design）不应被误脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text("design=good assign=bad")
+        text = mask_sensitive_fields({'text': "design=good assign=bad"}, {'text'})['text']
 
         assert "design=good" in text
         assert "assign=bad" in text
 
     def test_mask_none_returns_none(self):
         """None 输入应原样返回。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        assert _mask_dingtalk_sensitive_text(None) is None
+        assert mask_sensitive_fields({'text': None}, {'text'})['text'] is None
 
     def test_mask_does_not_break_prefixed_token_words(self):
         """带前缀的 access_token（如 xaccess_token）不应被误脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text("xaccess_token=abc ?access_token=xyz")
+        text = mask_sensitive_fields(
+            {'text': "xaccess_token=abc ?access_token=xyz"},
+            {'text'},
+        )['text']
 
         assert "xaccess_token=abc" in text
         assert "?access_token=xyz" not in text
@@ -1230,15 +1236,18 @@ class TestTwoPushDingTalkMasking:
 
     def test_mask_bare_token_param(self):
         """裸 token= 参数应脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text("https://sctapi.ftqq.com/SCTabc.send?token=xyz")
+        text = mask_sensitive_fields(
+            {'text': "https://sctapi.ftqq.com/SCTabc.send?token=xyz"},
+            {'text'},
+        )['text']
 
         assert "token=xyz" not in text
         assert "token=***" in text
 
-    def test_success_log_masks_title_sensitive_data(self, monkeypatch):
-        """成功日志中的标题含敏感信息时应脱敏。"""
+    def test_success_log_does_not_log_title(self, monkeypatch):
+        """成功路径不应输出标题相关日志。"""
         from modules import notification
 
         log = unittest.mock.MagicMock()
@@ -1266,12 +1275,10 @@ class TestTwoPushDingTalkMasking:
         )
 
         assert result is True
-        messages = "\n".join(call.args[0] for call in log.info.call_args_list)
-        assert "13800138000" not in messages
-        assert "138****8000" in messages
+        assert log.info.call_args_list == []
 
-    def test_send_notification_logs_masked_title(self, monkeypatch):
-        """send_notification 的标题日志应脱敏。"""
+    def test_send_notification_does_not_log_title(self, monkeypatch):
+        """send_notification 不应输出标题相关日志。"""
         from modules import notification
 
         log = unittest.mock.MagicMock()
@@ -1306,13 +1313,16 @@ class TestTwoPushDingTalkMasking:
 
         messages = "\n".join(call.args[0] for call in log.info.call_args_list)
         assert "13800138000" not in messages
-        assert "138****8000" in messages
+        assert "通知标题" not in messages
 
     def test_mask_does_not_touch_unrelated_params(self):
         """无关参数形式不应被误脱敏。"""
-        from modules.notification import _mask_dingtalk_sensitive_text
+        from modules.utils import mask_sensitive_fields
 
-        text = _mask_dingtalk_sensitive_text("design=good assign=bad xaccess_token=abc")
+        text = mask_sensitive_fields(
+            {'text': "design=good assign=bad xaccess_token=abc"},
+            {'text'},
+        )['text']
 
         assert "design=good" in text
         assert "assign=bad" in text
