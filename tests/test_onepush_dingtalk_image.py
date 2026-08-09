@@ -1167,3 +1167,56 @@ class TestTwoPushDingTalkMasking:
         from modules.notification import _mask_dingtalk_sensitive_text
 
         assert _mask_dingtalk_sensitive_text(None) is None
+
+
+class TestTwoPushDingTalkMultipleChannels:
+    """测试多通道中普通钉钉与增强钉钉并存。"""
+
+    def test_plain_and_enhanced_dingtalk_can_coexist(self, monkeypatch):
+        """普通钉钉走 OnePush，增强钉钉走直发，二者各发送一次。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        class FakeNotifier:
+            def notify(self, **kwargs):
+                calls["onepush"] += 1
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+        def fake_get_notifier(provider):
+            assert provider == "dingtalk"
+            return FakeNotifier()
+
+        def fake_direct(channel, title, content):
+            calls["direct"] += 1
+            response = unittest.mock.MagicMock()
+            response.status_code = 200
+            response.text = '{"errcode": 0, "errmsg": "ok"}'
+            response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            return response
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        results = notification.send_notification(
+            "标题",
+            "内容",
+            [
+                {"provider": "dingtalk", "token": "plain-token"},
+                {
+                    "provider": "dingtalk",
+                    "token": "enhanced-token",
+                    "msgtype": "markdown",
+                    "at": ["13800138000"],
+                },
+            ],
+            retry_settings={"interval": 0, "max_count": 1},
+            logger=unittest.mock.MagicMock(),
+        )
+
+        assert results == [("dingtalk", True), ("dingtalk", True)]
+        assert calls == {"onepush": 1, "direct": 1}
