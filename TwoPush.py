@@ -22,7 +22,11 @@ from modules.logger_manager import (
     raw_read_save_enabled,
     setup_logger,
 )
-from modules.notification import render_template_vars, send_notification
+from modules.notification import (
+    render_template_vars,
+    send_notification,
+    _mask_dingtalk_sensitive_text,
+)
 from modules.utils import parse_push_channels, parse_time_string
 from modules.json_manager import (
     DEFAULT_TEMPLATE_FILE,
@@ -237,9 +241,12 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
         'max_count': retry_settings.get('max_count'),
     }
     proxy_preview = mask_proxy_authentication(proxy)
+    # 复用通知模块脱敏函数，避免预览日志泄露手机号与令牌等敏感信息
+    masked_title = _mask_dingtalk_sensitive_text(title)
+    masked_content = _mask_dingtalk_sensitive_text(content)
     return '\n'.join([
-        f'"title": {json.dumps(title, ensure_ascii=False)},',
-        f'"content": {json.dumps(content, ensure_ascii=False)},',
+        f'"title": {json.dumps(masked_title, ensure_ascii=False)},',
+        f'"content": {json.dumps(masked_content, ensure_ascii=False)},',
         f'"proxy": {json.dumps(proxy_preview, ensure_ascii=False)},',
         f'"retry": {json.dumps(retry_preview, ensure_ascii=False)},',
         f'"channels": {json.dumps(channel_names, ensure_ascii=False)}',

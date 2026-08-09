@@ -451,6 +451,23 @@ def test_format_push_preview_hides_channel_parameters():
         assert forbidden_value not in preview
 
 
+def test_format_push_preview_masks_sensitive_title_and_content():
+    """预览中的标题与正文含敏感信息时应脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='通知 13800138000 access_token=abc',
+        content='正文 sign=xyz secret=SECa',
+        proxy=None,
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'dingtalk'}],
+    )
+
+    assert '13800138000' not in preview
+    assert '138****8000' in preview
+    assert 'access_token=abc' not in preview
+    assert 'sign=xyz' not in preview
+    assert 'SECa' not in preview
+
+
 def test_parse_args_accepts_template_options(monkeypatch):
     """模板生成参数应支持 README 中定义的形式"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-T'])
