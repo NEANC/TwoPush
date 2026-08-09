@@ -305,12 +305,11 @@ def _describe_channel_route(provider, enhanced):
     return str(provider)
 
 
-def _handle_attempt_failure(route_label, provider, attempt, max_count, reason, retry_interval, log):
+def _handle_attempt_failure(route_label, attempt, max_count, reason, retry_interval, log):
     """记录单次发送失败并决定是否继续重试
 
     Args:
         route_label: 通道路由标识（如 dingtalk(builtin)）
-        provider: 推送渠道名称
         attempt: 当前尝试序号（从 1 开始）
         max_count: 最大重试次数
         reason: 失败原因描述
@@ -320,7 +319,7 @@ def _handle_attempt_failure(route_label, provider, attempt, max_count, reason, r
     Returns:
         bool: True 表示应继续重试
     """
-    reason = mask_sensitive_fields({'reason': reason}, {'reason'})['reason']
+    reason = mask_sensitive_fields({'reason': reason}, sensitive_fields={'reason'})['reason']
     log.error(
         f"通道 [{route_label}] 通知发送失败 (尝试 {attempt}/{max_count}): {reason}"
     )
@@ -351,20 +350,19 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
         log.error("推送通道缺少 provider 键，已跳过该通道")
         return False
 
-    route_label = _describe_channel_route(
-        provider, _is_enhanced_dingtalk_channel(provider, params)
-    )
+    enhanced = _is_enhanced_dingtalk_channel(provider, params)
+    route_label = _describe_channel_route(provider, enhanced)
 
     for attempt in range(1, max_count + 1):
         try:
-            if _is_enhanced_dingtalk_channel(provider, params):
+            if enhanced:
                 response = _send_dingtalk_webhook(params, title, content)
             else:
                 notifier = get_notifier(provider)
                 response = notifier.notify(title=title, content=content, **params)
         except Exception as e:
             if not _handle_attempt_failure(
-                    route_label, provider, attempt, max_count, str(e),
+                    route_label, attempt, max_count, str(e),
                     retry_interval, log):
                 return False
             continue
@@ -374,7 +372,7 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             return True
 
         if not _handle_attempt_failure(
-                route_label, provider, attempt, max_count, reason,
+                route_label, attempt, max_count, reason,
                 retry_interval, log):
             return False
     return False

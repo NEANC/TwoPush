@@ -130,6 +130,7 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
             title='标题',
             content='正文',
             channels=[{'provider': 'dingtalk'}],
+            retry_settings={'interval': 0, 'max_count': 1},
         )
 
     assert result == [('dingtalk', False)]
@@ -140,6 +141,7 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
     assert 'secret=***' in caplog.text
     assert '13800138000' not in caplog.text
     assert 'access_token=abc' not in caplog.text
+    assert '已超过最大重试次数' not in caplog.text
 
 
 def test_builtin_dingtalk_failure_logs_builtin_branch(monkeypatch, caplog):
@@ -156,6 +158,7 @@ def test_builtin_dingtalk_failure_logs_builtin_branch(monkeypatch, caplog):
             title='标题',
             content='正文',
             channels=[{'provider': 'dingtalk', 'msgtype': 'markdown'}],
+            retry_settings={'interval': 0, 'max_count': 1},
         )
 
     assert result == [('dingtalk', False)]
@@ -178,6 +181,7 @@ def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
             title='标题',
             content='正文',
             channels=[{'provider': 'serverchan'}],
+            retry_settings={'interval': 0, 'max_count': 1},
         )
 
     assert result == [('serverchan', False)]

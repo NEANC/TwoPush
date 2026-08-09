@@ -1177,7 +1177,6 @@ class TestTwoPushDingTalkMasking:
         log = unittest.mock.MagicMock()
         _handle_attempt_failure(
             "dingtalk(onepush)",
-            "dingtalk",
             1,
             1,
             "手机号 13800138000 access_token=abc sign=xyz",
