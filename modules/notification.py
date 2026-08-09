@@ -39,9 +39,18 @@ DINGTALK_WEBHOOK_BASE_URL = 'https://oapi.dingtalk.com/robot/send'
 
 
 def _is_full_url(value):
-    """判断字符串是否为完整 URL。"""
+    """判断字符串是否为完整的 http(s) Webhook URL。
+
+    Args:
+        value: 待判断的字符串
+
+    Returns:
+        bool: scheme 为 http/https（大小写不敏感）且 netloc 存在时返回 True
+    """
     parsed = urlsplit(str(value))
-    return bool(parsed.scheme and parsed.netloc)
+    return bool(
+        parsed.netloc and parsed.scheme.lower() in ('http', 'https')
+    )
 
 
 def _make_dingtalk_sign(secret):
