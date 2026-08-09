@@ -349,6 +349,58 @@ body = {
 r = requests.post(url, json=body, headers={"Content-Type": "application/json"})
 ```
 
+## TwoPush 钉钉增强配置
+
+TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgtype`、`at`、`at_mobiles`、`atMobiles`、`is_at_all` 或 `isAtAll` 时，TwoPush 会直接调用钉钉 Webhook；未包含这些参数时继续使用 OnePush 原逻辑。
+
+### token 写法
+
+`token` 支持两种输入：
+
+- 仅 access token：`xxx`
+- 完整 Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`
+
+配置 `secret` 时，TwoPush 会自动追加 `timestamp` 与 `sign`。
+
+### 多配置示例
+
+```json
+{
+  "title": "每日报告",
+  "content": "系统运行正常",
+  "channels": [
+    {
+      "provider": "dingtalk",
+      "token": "xxx",
+      "secret": "SECxxx",
+      "msgtype": "markdown",
+      "at": ["13800138000"]
+    },
+    {
+      "provider": "dingtalk",
+      "token": "https://oapi.dingtalk.com/robot/send?access_token=yyy",
+      "secret": "SECyyy",
+      "msgtype": "text",
+      "at": ["13900139000"]
+    }
+  ]
+}
+```
+
+运行：
+
+```powershell
+python TwoPush.py -p .\test.json
+```
+
+### @ 规则
+
+TwoPush 默认只支持手机号 @。`at` 可写为字符串或数组，程序会归一为 `atMobiles`，并自动在正文中补齐 `@手机号`。
+
+### 日志脱敏
+
+TwoPush 日志会脱敏手机号、`access_token`、`secret` 与 `sign`，避免敏感信息进入控制台或日志文件。
+
 ## 能力总结
 
 | 能力              | 支持 | 方式                                |
