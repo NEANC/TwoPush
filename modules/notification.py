@@ -13,6 +13,48 @@ from onepush import get_notifier
 
 LOGGER = logging.getLogger(__name__)
 
+# 触发 TwoPush 钉钉直发增强路径的参数键（任一存在即走增强路径）
+DINGTALK_ENHANCED_KEYS = {
+    'msgtype',
+    'at',
+    'at_mobiles',
+    'atMobiles',
+    'is_at_all',
+    'isAtAll',
+}
+
+
+def _is_enhanced_dingtalk_channel(provider, params):
+    """判断钉钉通道是否需要使用 TwoPush 直发增强路径
+
+    Args:
+        provider: 推送渠道名称
+        params: 通道参数字典
+
+    Returns:
+        bool: 需要走增强路径时返回 True
+    """
+    if str(provider).strip().lower() != 'dingtalk':
+        return False
+    return any(key in params for key in DINGTALK_ENHANCED_KEYS)
+
+
+def _send_dingtalk_webhook(channel, title, content):
+    """发送 TwoPush 钉钉增强 Webhook 请求
+
+    Args:
+        channel: 钉钉通道参数字典
+        title: 通知标题
+        content: 通知内容
+
+    Returns:
+        requests.Response: 钉钉接口响应对象
+
+    Raises:
+        NotImplementedError: 增强直发功能尚未实现
+    """
+    raise NotImplementedError("钉钉增强直发尚未实现")
+
 
 def _parse_response_body(response):
     """尝试将响应体解析为 JSON 字典
@@ -118,8 +160,11 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
 
     for attempt in range(1, max_count + 1):
         try:
-            notifier = get_notifier(provider)
-            response = notifier.notify(title=title, content=content, **params)
+            if _is_enhanced_dingtalk_channel(provider, params):
+                response = _send_dingtalk_webhook(params, title, content)
+            else:
+                notifier = get_notifier(provider)
+                response = notifier.notify(title=title, content=content, **params)
         except Exception as e:
             if not _handle_attempt_failure(
                     provider, attempt, max_count, str(e), retry_interval, log):

@@ -718,3 +718,83 @@ class TestOnePushHighLevelAPI:
         )
         assert response is not None
         assert response.text == '{"errcode": 0, "errmsg": "ok"}'
+
+
+class TestTwoPushDingTalkRouting:
+    """测试 TwoPush 钉钉增强路径与 OnePush 原路径互斥。"""
+
+    def test_dingtalk_without_enhanced_params_uses_onepush(self, monkeypatch):
+        """未携带增强参数时应继续调用 OnePush。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        class FakeNotifier:
+            def notify(self, **kwargs):
+                calls["onepush"] += 1
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+        def fake_get_notifier(provider):
+            assert provider == "dingtalk"
+            return FakeNotifier()
+
+        def fake_direct(*args, **kwargs):
+            calls["direct"] += 1
+            return unittest.mock.MagicMock()
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        result = notification._notify_single_channel(
+            {"provider": "dingtalk", "token": "token-only"},
+            "标题",
+            "内容",
+            0,
+            1,
+            unittest.mock.MagicMock(),
+        )
+
+        assert result is True
+        assert calls == {"onepush": 1, "direct": 0}
+
+    def test_dingtalk_with_enhanced_params_uses_direct_once(self, monkeypatch):
+        """携带增强参数时应只调用 TwoPush 直发路径一次。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        def fake_get_notifier(provider):
+            calls["onepush"] += 1
+            raise AssertionError("增强钉钉通道不应调用 OnePush")
+
+        def fake_direct(channel, title, content):
+            calls["direct"] += 1
+            response = unittest.mock.MagicMock()
+            response.status_code = 200
+            response.text = '{"errcode": 0, "errmsg": "ok"}'
+            response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            return response
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        result = notification._notify_single_channel(
+            {
+                "provider": "dingtalk",
+                "token": "token-only",
+                "msgtype": "markdown",
+                "at": ["13800138000"],
+            },
+            "标题",
+            "内容",
+            0,
+            1,
+            unittest.mock.MagicMock(),
+        )
+
+        assert result is True
+        assert calls == {"onepush": 0, "direct": 1}
