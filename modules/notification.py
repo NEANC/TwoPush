@@ -17,6 +17,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
 
+from modules.utils import mask_sensitive_fields
+
 # 绑定 requests.request 便于测试时 monkeypatch 替换
 request = requests.request
 
@@ -287,22 +289,27 @@ def _is_push_successful(response):
     return True, ""
 
 
-def _mask_dingtalk_sensitive_text(text):
-    """脱敏钉钉日志中的手机号、token、secret 与 sign。"""
-    if text is None:
-        return text
-    masked = str(text)
-    masked = re.sub(r'(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)', r'\1****\2', masked)
-    masked = re.sub(r'\b((?:access_)?token)=[^&\s]+', r'\1=***', masked, flags=re.IGNORECASE)
-    masked = re.sub(r'\b(sign=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
-    masked = re.sub(r'\b(secret=)[^&\s]+', r'\1***', masked, flags=re.IGNORECASE)
-    return masked
+def _describe_channel_route(provider, enhanced):
+    """描述推送通道实际使用的路由分支
+
+    Args:
+        provider: 推送渠道名称
+        enhanced: 是否为 TwoPush 钉钉直发增强路径
+
+    Returns:
+        str: 路由标识；钉钉分为 dingtalk(builtin) 与 dingtalk(onepush)，
+            其他渠道保留原 provider
+    """
+    if str(provider).strip().lower() == 'dingtalk':
+        return 'dingtalk(builtin)' if enhanced else 'dingtalk(onepush)'
+    return str(provider)
 
 
-def _handle_attempt_failure(provider, attempt, max_count, reason, retry_interval, log):
+def _handle_attempt_failure(route_label, provider, attempt, max_count, reason, retry_interval, log):
     """记录单次发送失败并决定是否继续重试
 
     Args:
+        route_label: 通道路由标识（如 dingtalk(builtin)）
         provider: 推送渠道名称
         attempt: 当前尝试序号（从 1 开始）
         max_count: 最大重试次数
@@ -313,16 +320,13 @@ def _handle_attempt_failure(provider, attempt, max_count, reason, retry_interval
     Returns:
         bool: True 表示应继续重试
     """
-    reason = _mask_dingtalk_sensitive_text(reason)
+    reason = mask_sensitive_fields({'reason': reason}, {'reason'})['reason']
     log.error(
-        f"通道 [{provider}] 通知发送失败 (尝试 {attempt}/{max_count}): {reason}"
+        f"通道 [{route_label}] 通知发送失败 (尝试 {attempt}/{max_count}): {reason}"
     )
     if attempt < max_count:
         time.sleep(retry_interval)
         return True
-    log.warning(
-        f"通道 [{provider}] 通知发送失败，已超过最大重试次数"
-    )
     return False
 
 
@@ -347,6 +351,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
         log.error("推送通道缺少 provider 键，已跳过该通道")
         return False
 
+    route_label = _describe_channel_route(
+        provider, _is_enhanced_dingtalk_channel(provider, params)
+    )
+
     for attempt in range(1, max_count + 1):
         try:
             if _is_enhanced_dingtalk_channel(provider, params):
@@ -356,18 +364,18 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                 response = notifier.notify(title=title, content=content, **params)
         except Exception as e:
             if not _handle_attempt_failure(
-                    provider, attempt, max_count, str(e), retry_interval, log):
+                    route_label, provider, attempt, max_count, str(e),
+                    retry_interval, log):
                 return False
             continue
 
         success, reason = _is_push_successful(response)
         if success:
-            masked_title = _mask_dingtalk_sensitive_text(title)
-            log.info(f"通知发送成功 [{provider}]: {masked_title}")
             return True
 
         if not _handle_attempt_failure(
-                provider, attempt, max_count, reason, retry_interval, log):
+                route_label, provider, attempt, max_count, reason,
+                retry_interval, log):
             return False
     return False
 
@@ -410,8 +418,6 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
 
     channel_names = ', '.join(c.get('provider', '?') for c in channels)
     log.info(f"共 {len(channels)} 个推送通道: {channel_names}")
-    masked_title = _mask_dingtalk_sensitive_text(title)
-    log.info(f"通知标题: {masked_title}")
     log.debug(f"通知内容长度: {len(content)}")
 
     max_workers = min(len(channels), 8)

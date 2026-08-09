@@ -84,3 +84,103 @@ def test_send_notification_limits_thread_pool_workers(monkeypatch):
 
     assert len(result) == 20
     assert RecordingExecutor.created_max_workers == [8]
+
+
+def test_send_notification_success_does_not_log_title(monkeypatch, caplog):
+    """成功发送不应输出成功日志与独立标题日志"""
+    import modules.notification as notification
+
+    class DummyResponse:
+        status_code = 200
+        text = 'ok'
+
+        def json(self):
+            return {'errcode': 0, 'errmsg': 'ok'}
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': lambda self=None, **kwargs: DummyResponse()}
+    )())
+
+    with caplog.at_level('INFO'):
+        result = notification.send_notification(
+            title='# 测试推送',
+            content='正文',
+            channels=[{'provider': 'dingtalk'}],
+        )
+
+    assert result == [('dingtalk', True)]
+    assert '通知发送成功 [dingtalk]' not in caplog.text
+    assert '通知标题:' not in caplog.text
+    assert '# 测试推送' not in caplog.text
+
+
+def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch, caplog):
+    """失败日志应区分路由分支并对失败原因脱敏"""
+    import modules.notification as notification
+
+    def fail_notify(*args, **kwargs):
+        raise RuntimeError('手机号 13800138000 access_token=abc sign=xyz secret=SECa')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+
+    with caplog.at_level('ERROR'):
+        result = notification.send_notification(
+            title='标题',
+            content='正文',
+            channels=[{'provider': 'dingtalk'}],
+        )
+
+    assert result == [('dingtalk', False)]
+    assert '通道 [dingtalk(onepush)] 通知发送失败' in caplog.text
+    assert '138****8000' in caplog.text
+    assert 'access_token=***' in caplog.text
+    assert 'sign=***' in caplog.text
+    assert 'secret=***' in caplog.text
+    assert '13800138000' not in caplog.text
+    assert 'access_token=abc' not in caplog.text
+
+
+def test_builtin_dingtalk_failure_logs_builtin_branch(monkeypatch, caplog):
+    """内置直发路径失败应输出 builtin 分支标识"""
+    import modules.notification as notification
+
+    def fail_webhook(*args, **kwargs):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', fail_webhook)
+
+    with caplog.at_level('ERROR'):
+        result = notification.send_notification(
+            title='标题',
+            content='正文',
+            channels=[{'provider': 'dingtalk', 'msgtype': 'markdown'}],
+        )
+
+    assert result == [('dingtalk', False)]
+    assert '通道 [dingtalk(builtin)] 通知发送失败' in caplog.text
+
+
+def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
+    """其他渠道失败应保留原 provider 作为路由标识"""
+    import modules.notification as notification
+
+    def fail_send(*args, **kwargs):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_send}
+    )())
+
+    with caplog.at_level('ERROR'):
+        result = notification.send_notification(
+            title='标题',
+            content='正文',
+            channels=[{'provider': 'serverchan'}],
+        )
+
+    assert result == [('serverchan', False)]
+    assert '通道 [serverchan] 通知发送失败' in caplog.text
+    assert 'dingtalk(onepush)' not in caplog.text
+    assert 'dingtalk(builtin)' not in caplog.text
