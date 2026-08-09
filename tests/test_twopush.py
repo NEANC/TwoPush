@@ -1259,3 +1259,46 @@ def test_main_push_failed_exits_before_update(monkeypatch, tmp_path, mock_cleanu
     assert exc_info.value.code == 2
     assert 'update' not in call_log
     assert 'auto_check' not in call_log
+
+
+def test_format_push_preview_keeps_existing_shape_and_content():
+    """推送预览应保持原有结构，不新增分支字段"""
+    preview = TwoPush.format_push_preview(
+        title='每日报告 - HOST',
+        content='截止 2026/07/12 12:00:00，系统运行正常',
+        proxy='http://127.0.0.1:7890',
+        retry_settings={'interval': 5, 'max_count': 2},
+        channels=[{'provider': 'dingtalk'}],
+    )
+
+    assert 'branch=' not in preview
+    assert 'dingtalk(onepush)' not in preview
+    assert 'dingtalk(builtin)' not in preview
+    assert '每日报告 - HOST' in preview
+
+
+def test_execute_push_sends_original_title_and_content_after_preview_masking(
+        monkeypatch, tmp_path):
+    """推送预览脱敏不应影响实际发送参数，发送仍用原始 title/content"""
+    original_title = '标题 13800138000'
+    original_content = '# 测试推送\n\n正文 access_token=raw-token'
+    captured = {}
+
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': original_title,
+        'content': original_content,
+        'channels': [{'provider': 'dingtalk'}],
+    })
+    monkeypatch.setattr(
+        TwoPush,
+        'send_notification',
+        lambda **kwargs: captured.update(kwargs) or [('dingtalk', True)],
+    )
+    monkeypatch.setattr(TwoPush, 'resolve_proxy', lambda template, config: None)
+    logger = logging.getLogger('test_execute_push_sends_original_title_and_content_after_preview_masking')
+
+    result = TwoPush.execute_push(str(tmp_path / 'push.json'), FakeConfig(), logger)
+
+    assert result == 0
+    assert captured['title'] == original_title
+    assert captured['content'] == original_content
