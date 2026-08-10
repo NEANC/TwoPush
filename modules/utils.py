@@ -34,8 +34,8 @@ CHANNEL_KEY_ALIASES = {
 def mask_sensitive_fields(fields, sensitive_fields):
     """仅对调用方声明的字段执行敏感片段脱敏
 
-    在字段字典的副本上进行处理：11 位手机号保留前 3 位与后 4 位，
-    access_token/token、sign、secret 键值对的值替换为 ***；
+    在字段字典的副本上进行处理：11 位手机号（1[3-9] 开头号段）保留前 3 位
+    与后 4 位，access_token/token、sign、secret 键值对的值替换为 ***；
     未声明字段与 None 值原样保留
 
     Args:
@@ -59,7 +59,7 @@ def mask_sensitive_fields(fields, sensitive_fields):
         if field not in result or result[field] is None:
             continue
         value = str(result[field])
-        value = re.sub(r'(?<!\d)(1\d{2})\d{4}(\d{4})(?!\d)', r'\1****\2', value)
+        value = re.sub(r'(?<!\d)(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
         value = re.sub(
             r'\b((?:access_)?token)=[^&\s]+',
             r'\1=***',

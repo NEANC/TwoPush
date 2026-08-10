@@ -46,3 +46,18 @@ def test_mask_sensitive_fields_validates_input_and_returns_copy():
         mask_sensitive_fields([], sensitive_fields={'reason'})
     with pytest.raises(TypeError):
         mask_sensitive_fields(fields, sensitive_fields='reason')
+
+
+def test_mask_sensitive_fields_keeps_non_mobile_segments_untouched():
+    """1 开头但第二位非 3-9 的 11 位数字（如订单号）不应被脱敏"""
+    text = mask_sensitive_fields({'text': '订单号 12000000000'}, {'text'})['text']
+
+    assert '12000000000' in text
+
+
+def test_mask_sensitive_fields_still_masks_valid_mobile_segments():
+    """11 位且第二位为 3-9 的手机号仍应被脱敏为 138****8000 形式"""
+    text = mask_sensitive_fields({'text': '手机号 13800138000'}, {'text'})['text']
+
+    assert '13800138000' not in text
+    assert '138****8000' in text

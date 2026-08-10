@@ -150,8 +150,8 @@ def _as_string_list(value):
 
 
 def _is_mobile_number(value):
-    """判断字符串是否为 11 位中国大陆手机号（1 开头）。"""
-    return bool(re.fullmatch(r'1\d{10}', value))
+    """判断字符串是否为 11 位中国大陆手机号（1[3-9] 开头）。"""
+    return bool(re.fullmatch(r'1[3-9]\d{9}', value))
 
 
 def _parse_boolean(value):

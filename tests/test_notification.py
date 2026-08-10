@@ -165,6 +165,31 @@ def test_builtin_dingtalk_failure_logs_builtin_branch(monkeypatch, caplog):
     assert '通道 [dingtalk(builtin)] 通知发送失败' in caplog.text
 
 
+def test_is_mobile_number_accepts_valid_mobile_segments():
+    """11 位且第二位为 3-9 的数字应判定为手机号"""
+    from modules.notification import _is_mobile_number
+
+    assert _is_mobile_number('13800138000') is True
+
+
+def test_is_mobile_number_rejects_other_segments():
+    """1 开头但第二位非 3-9 的 11 位数字不应判定为手机号"""
+    from modules.notification import _is_mobile_number
+
+    assert _is_mobile_number('12000000000') is False
+    assert _is_mobile_number('11000000000') is False
+    assert _is_mobile_number('10000000000') is False
+
+
+def test_is_mobile_number_rejects_non_numeric():
+    """非 11 位纯数字字符串不应判定为手机号"""
+    from modules.notification import _is_mobile_number
+
+    assert _is_mobile_number('1380013800a') is False
+    assert _is_mobile_number('1380013800') is False
+    assert _is_mobile_number('') is False
+
+
 def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
     """其他渠道失败应保留原 provider 作为路由标识"""
     import modules.notification as notification
