@@ -259,6 +259,30 @@ def test_onepush_path_missing_token_not_retried(monkeypatch):
     assert '缺少 token' in log.error.call_args[0][0]
 
 
+def test_missing_access_token_in_full_url_not_retried(monkeypatch):
+    """完整 Webhook URL 缺少 access_token 时应前置拦截，不调用 onepush 也不重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def boom_notifier(provider):
+        raise AssertionError("完整 URL 缺 access_token 时不应调用 get_notifier")
+
+    monkeypatch.setattr(notification, 'get_notifier', boom_notifier)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'https://oapi.dingtalk.com/robot/send'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert 'access_token' in log.error.call_args[0][0]
+
+
 def test_retryable_exception_still_retries(monkeypatch):
     """普通异常（RuntimeError）仍应按 max_count 次数重试"""
     import modules.notification as notification
