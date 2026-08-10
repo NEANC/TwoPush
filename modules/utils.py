@@ -39,11 +39,11 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
     (?P<separator>\s*(?:=|:)\s*)
     (?:
         (?P<double_open>")
-        (?P<double_value>(?:[^"\\]|\\.)*)
+        (?P<double_value>(?:[^"\\]|\\.)*\\?)
         (?P<double_close>"|$)
         |
         (?P<single_open>')
-        (?P<single_value>(?:[^'\\]|\\.)*)
+        (?P<single_value>(?:[^'\\]|\\.)*\\?)
         (?P<single_close>'|$)
         |
         (?P<bare_value>[^"'\s,}\]]+)

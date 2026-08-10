@@ -319,3 +319,30 @@ def test_single_quoted_sign_with_unclosed_value_is_masked():
 
     assert result == "{'sign': '***"
     assert 'top-secret' not in result
+
+
+@pytest.mark.parametrize(
+    'original',
+    [
+        "secret='abc\\",
+        r"secret='abc\\",
+        'secret="abc\\',
+        r'secret="abc\\',
+    ],
+)
+def test_unclosed_sensitive_value_ending_with_backslashes_is_masked(original):
+    """未闭合单双引号值末尾一个或两个反斜杠时均应完整脱敏"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == f'{original[:8]}***'
+    assert 'abc' not in result
+
+
+def test_truncated_consecutive_sensitive_text_ending_with_backslash_is_masked():
+    """连续敏感文本在孤立反斜杠处截断时不应泄漏后续内容"""
+    original = "secret='abc\\token=xyz\\"
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == "secret='***"
+    assert 'abc' not in result
+    assert 'xyz' not in result
