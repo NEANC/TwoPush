@@ -102,3 +102,27 @@ def test_whitespace_separated_sensitive_values_are_masked():
     assert 'secret=***' in result
     assert 'xyz' not in result
     assert 'SECa' not in result
+
+
+def test_cjk_prefix_before_sensitive_key_is_masked():
+    """中文（非 ASCII）直接粘连敏感键名时仍应脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': '参数access_token=abc 密钥secret=SECa 签名sign=xyz'}, {'reason'}
+    )['reason']
+
+    assert 'abc' not in result
+    assert 'SECa' not in result
+    assert 'xyz' not in result
+    assert 'access_token=***' in result
+    assert 'secret=***' in result
+    assert 'sign=***' in result
+
+
+def test_ascii_prefix_before_sensitive_key_not_masked():
+    """ASCII 字母数字下划线前缀（如 xaccess_token=）不应被脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'xaccess_token=keep mytoken=keep'}, {'reason'}
+    )['reason']
+
+    assert 'xaccess_token=keep' in result
+    assert 'mytoken=keep' in result
