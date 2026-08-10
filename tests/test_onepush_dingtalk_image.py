@@ -800,6 +800,43 @@ class TestTwoPushDingTalkRouting:
         assert calls == {"onepush": 0, "direct": 1}
 
 
+class TestIsEnhancedDingtalkChannel:
+    """测试 _is_enhanced_dingtalk_channel 的增强路径判定。"""
+
+    def test_at_null_does_not_trigger_enhanced_path(self):
+        """显式 at 为 None 时不应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel("dingtalk", {"at": None}) is False
+
+    def test_none_value_keys_do_not_trigger_enhanced_path(self):
+        """多个增强键值均为 None 时不应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"at": None, "isAtAll": None}
+        ) is False
+
+    def test_non_none_enhanced_values_still_trigger(self):
+        """增强键存在且值非 None 时应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"at": ["13800138000"]}
+        ) is True
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"msgtype": "markdown"}
+        ) is True
+
+    def test_non_dingtalk_provider_never_enhanced(self):
+        """非钉钉渠道即使携带增强键也不应走钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "serverchan", {"at": ["13800138000"]}
+        ) is False
+
+
 class TestTwoPushDingTalkUrlBuilder:
     """测试 TwoPush 钉钉 Webhook URL 构造。"""
 

@@ -135,7 +135,7 @@ def _is_enhanced_dingtalk_channel(provider, params):
     """
     if str(provider).strip().lower() != 'dingtalk':
         return False
-    return any(key in params for key in DINGTALK_ENHANCED_KEYS)
+    return any(params.get(key) is not None for key in DINGTALK_ENHANCED_KEYS)
 
 
 def _as_string_list(value):
