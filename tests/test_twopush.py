@@ -1272,9 +1272,25 @@ def test_format_push_preview_keeps_existing_shape_and_content():
     )
 
     assert 'branch=' not in preview
-    assert 'dingtalk(onepush)' not in preview
+    assert 'dingtalk(onepush)' in preview
     assert 'dingtalk(builtin)' not in preview
     assert '每日报告 - HOST' in preview
+
+
+def test_format_push_preview_shows_route_labels():
+    """推送预览的 channels 应为钉钉通道标注 builtin/onepush 路由标识"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy=None,
+        retry_settings={},
+        channels=[
+            {'provider': 'dingtalk'},
+            {'provider': 'dingtalk', 'msgtype': 'markdown'},
+        ],
+    )
+
+    assert '"channels": ["dingtalk(onepush)", "dingtalk(builtin)"]' in preview
 
 
 def test_format_push_preview_keeps_non_string_values_unchanged():

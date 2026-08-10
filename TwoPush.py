@@ -23,6 +23,7 @@ from modules.logger_manager import (
     setup_logger,
 )
 from modules.notification import (
+    describe_channel_routes,
     render_template_vars,
     send_notification,
 )
@@ -234,7 +235,7 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
     Returns:
         str: 无最外层大括号的 5 行 JSON 风格预览。
     """
-    channel_names = [channel.get('provider', '?') for channel in channels]
+    channel_names = describe_channel_routes(channels)
     retry_preview = {
         'interval': retry_settings.get('interval'),
         'max_count': retry_settings.get('max_count'),

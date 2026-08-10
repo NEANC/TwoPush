@@ -402,6 +402,28 @@ def _describe_channel_route(provider, enhanced):
     return str(provider)
 
 
+def describe_channel_routes(channels):
+    """描述各推送通道实际使用的路由标识
+
+    Args:
+        channels: 标准通道字典列表
+
+    Returns:
+        list: 每个通道对应的路由标识列表；钉钉分为 dingtalk(builtin)
+            与 dingtalk(onepush)，其他渠道保留原 provider，缺失时为 '?'
+    """
+    return [
+        _describe_channel_route(
+            channel.get('provider', '?'),
+            _is_enhanced_dingtalk_channel(
+                channel.get('provider', '?'),
+                {key: value for key, value in channel.items() if key != 'provider'},
+            ),
+        )
+        for channel in channels
+    ]
+
+
 def _handle_attempt_failure(route_label, attempt, max_count, reason, retry_interval, log):
     """记录单次发送失败并决定是否继续重试
 
@@ -533,16 +555,7 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
         return []
 
     # 汇总日志按通道计算路由标识，与 _notify_single_channel 的增强判定保持一致
-    route_labels = [
-        _describe_channel_route(
-            channel.get('provider', '?'),
-            _is_enhanced_dingtalk_channel(
-                channel.get('provider', '?'),
-                {key: value for key, value in channel.items() if key != 'provider'},
-            ),
-        )
-        for channel in channels
-    ]
+    route_labels = describe_channel_routes(channels)
     channel_names = ', '.join(route_labels)
     log.info(f"共 {len(channels)} 个推送通道: {channel_names}")
     log.debug(f"通知内容长度: {len(content)}")

@@ -151,6 +151,20 @@ def test_send_notification_summary_keeps_other_provider(monkeypatch, caplog):
     assert '共 1 个推送通道: serverchan' in caplog.text
 
 
+def test_describe_channel_routes_returns_route_labels():
+    """describe_channel_routes 应为各通道返回对应路由标识"""
+    import modules.notification as notification
+
+    routes = notification.describe_channel_routes([
+        {'provider': 'dingtalk'},
+        {'provider': 'dingtalk', 'msgtype': 'markdown'},
+        {'provider': 'serverchan', 'sckey': 'SCTx'},
+        {},
+    ])
+
+    assert routes == ['dingtalk(onepush)', 'dingtalk(builtin)', 'serverchan', '?']
+
+
 def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch, caplog):
     """失败日志应区分路由分支并对失败原因脱敏"""
     import modules.notification as notification
