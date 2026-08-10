@@ -173,3 +173,24 @@ def test_json_keys_with_sensitive_name_substrings_not_masked():
     )['reason']
 
     assert result == '{"design":"keep","assign":"keep","mytoken":"keep"}'
+
+
+def test_json_value_with_escaped_quote_is_fully_masked():
+    """JSON 引号形式的值内含转义引号时应完整脱敏，不残留引号后片段"""
+    result = mask_sensitive_fields(
+        {'reason': '{"secret":"abc\\"def"}'}, {'reason'}
+    )['reason']
+
+    assert result == '{secret=***}'
+    assert 'abc"def' not in result
+
+
+def test_json_value_with_comma_is_fully_masked():
+    """JSON 引号形式的值内含逗号时应完整脱敏，不残留逗号后片段"""
+    result = mask_sensitive_fields(
+        {'reason': '{"secret":"a,b"}'}, {'reason'}
+    )['reason']
+
+    assert result == '{secret=***}'
+    assert 'a' not in result
+    assert 'b' not in result
