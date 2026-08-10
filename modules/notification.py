@@ -262,12 +262,26 @@ def _normalize_dingtalk_at(params):
     return at
 
 
-def _append_missing_dingtalk_mentions(text, mobiles):
-    """将缺失的 @手机号 追加到钉钉消息正文。"""
+def _append_missing_dingtalk_mentions(text, mobiles, is_at_all=False):
+    """将缺失的 @手机号 与 @所有人 追加到钉钉消息正文。
+
+    钉钉要求 @ 生效时正文必须包含对应的 @文本，故在请求体 at 字段设置
+    atMobiles/isAtAll 的同时，需将缺失的 @手机号 与 @所有人 补入正文末尾。
+
+    Args:
+        text: 消息正文
+        mobiles: 需要 @ 的手机号列表
+        is_at_all: 是否启用全员 @；为 True 且正文不含 @所有人 时自动补齐
+
+    Returns:
+        str: 补齐缺失 @ 文本后的正文
+    """
     missing = [mobile for mobile in mobiles if f'@{mobile}' not in text]
+    if is_at_all and '@所有人' not in text:
+        missing.append('所有人')
     if not missing:
         return text
-    suffix = ' '.join(f'@{mobile}' for mobile in missing)
+    suffix = ' '.join(f'@{item}' for item in missing)
     return f'{text}\n\n{suffix}' if text else suffix
 
 
@@ -288,13 +302,16 @@ def _build_dingtalk_payload(params, title, content):
 
     at = _normalize_dingtalk_at(params)
     mobiles = at.get('atMobiles', [])
+    is_at_all = at.get('isAtAll', False)
 
     if msgtype == 'text':
         message = '\n\n'.join(part for part in (title, content) if part)
-        message = _append_missing_dingtalk_mentions(message, mobiles)
+        message = _append_missing_dingtalk_mentions(
+            message, mobiles, is_at_all=is_at_all)
         payload = {'msgtype': 'text', 'text': {'content': message}}
     else:
-        text = _append_missing_dingtalk_mentions(content or '', mobiles)
+        text = _append_missing_dingtalk_mentions(
+            content or '', mobiles, is_at_all=is_at_all)
         payload = {
             'msgtype': 'markdown',
             'markdown': {

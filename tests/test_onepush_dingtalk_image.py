@@ -1438,6 +1438,101 @@ class TestTwoPushDingTalkPayload:
         assert payload["at"] == {"isAtAll": True}
         assert "atMobiles" not in payload["at"]
 
+    def test_text_is_at_all_appends_at_everyone(self):
+        """text 消息 isAtAll=True 时正文应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["text"]["content"]
+        assert payload["at"] == {"isAtAll": True}
+
+    def test_markdown_is_at_all_appends_at_everyone(self):
+        """markdown 消息 isAtAll=True 时 text 应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["markdown"]["text"]
+        assert payload["at"] == {"isAtAll": True}
+
+    def test_text_is_at_all_existing_at_everyone_not_duplicated(self):
+        """text 消息正文已有 @所有人 时不应重复补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "isAtAll": True},
+            "通知标题",
+            "通知内容 @所有人",
+        )
+
+        assert payload["text"]["content"].count("@所有人") == 1
+
+    def test_markdown_is_at_all_existing_at_everyone_not_duplicated(self):
+        """markdown 消息正文已有 @所有人 时不应重复补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "isAtAll": True},
+            "通知标题",
+            "通知内容 @所有人",
+        )
+
+        assert payload["markdown"]["text"].count("@所有人") == 1
+
+    def test_text_is_at_all_with_mobiles_appends_both(self):
+        """text 消息同时配置手机号与 isAtAll=True 时两者都应补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": ["13800138000"], "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        content = payload["text"]["content"]
+        assert "@13800138000" in content
+        assert "@所有人" in content
+        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert payload["at"]["isAtAll"] is True
+
+    def test_markdown_is_at_all_with_mobiles_appends_both(self):
+        """markdown 消息同时配置手机号与 isAtAll=True 时两者都应补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": ["13800138000"], "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        text = payload["markdown"]["text"]
+        assert "@13800138000" in text
+        assert "@所有人" in text
+        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert payload["at"]["isAtAll"] is True
+
+    def test_is_at_all_dict_nested_flag_appends_at_everyone(self):
+        """at 字典内部 isAtAll=True 时正文也应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": {"isAtAll": True}},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["text"]["content"]
+        assert payload["at"] == {"isAtAll": True}
+
 
 class TestTwoPushDingTalkDirectSend:
     """测试 TwoPush 钉钉直发请求。"""
