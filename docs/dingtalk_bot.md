@@ -87,6 +87,14 @@ notify(
 ```python
 import requests
 
+
+def check_dingtalk_response(response):
+    """检查钉钉 Webhook 的业务响应。"""
+    data = response.json()
+    if isinstance(data, dict) and "errcode" in data and data["errcode"] != 0:
+        raise RuntimeError(f"钉钉 Webhook 请求失败：{data.get('errmsg', '')}")
+
+
 webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 body = {
     "msgtype": "markdown",
@@ -97,6 +105,7 @@ body = {
 }
 response = requests.post(webhook_url, json=body, timeout=10)
 response.raise_for_status()
+check_dingtalk_response(response)
 ```
 
 ## @ 功能
@@ -301,6 +310,14 @@ response.raise_for_status()
 ```python
 import hashlib, hmac, base64, time, urllib.parse, requests
 
+
+def check_dingtalk_response(response):
+    """检查钉钉 Webhook 的业务响应。"""
+    data = response.json()
+    if isinstance(data, dict) and "errcode" in data and data["errcode"] != 0:
+        raise RuntimeError(f"钉钉 Webhook 请求失败：{data.get('errmsg', '')}")
+
+
 TOKEN = "你的 access_token"
 SECRET = "你的加签密钥"
 
@@ -349,12 +366,13 @@ r = requests.post(
     timeout=10,
 )
 r.raise_for_status()
+check_dingtalk_response(r)
 print(r.status_code, r.text)  # 200 {"errcode":0,"errmsg":"ok"}
 ```
 
 ### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
 
-以下代码复用上一完整示例已导入的 `requests` 和已生成的 `url`，仅替换请求体并发送。
+以下代码复用上一完整示例已导入的 `requests`、已生成的 `url` 和 `check_dingtalk_response`，仅替换请求体并发送。
 
 ```python
 body = {
@@ -380,6 +398,7 @@ r = requests.post(
     timeout=10,
 )
 r.raise_for_status()
+check_dingtalk_response(r)
 ```
 
 ## TwoPush 钉钉增强配置
