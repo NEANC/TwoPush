@@ -135,12 +135,10 @@ def test_json_key_value_sensitive_fields_are_masked():
         {'reason'},
     )['reason']
 
+    assert result == '{"access_token":"***","secret":"***","sign":"***"}'
     assert 'abc123' not in result
     assert 'SECxyz' not in result
     assert 'sigxyz' not in result
-    assert 'access_token=***' in result
-    assert 'sign=***' in result
-    assert 'secret=***' in result
 
 
 def test_colon_form_sensitive_values_are_masked():
@@ -161,7 +159,7 @@ def test_quoted_value_with_ampersand_is_fully_masked():
         {'reason': '"secret":"abc&def"'}, {'reason'}
     )['reason']
 
-    assert result == 'secret=***'
+    assert result == '"secret":"***"'
     assert '&def' not in result
 
 
@@ -181,7 +179,7 @@ def test_json_value_with_escaped_quote_is_fully_masked():
         {'reason': '{"secret":"abc\\"def"}'}, {'reason'}
     )['reason']
 
-    assert result == '{secret=***}'
+    assert result == '{"secret":"***"}'
     assert 'abc"def' not in result
 
 
@@ -191,6 +189,21 @@ def test_json_value_with_comma_is_fully_masked():
         {'reason': '{"secret":"a,b"}'}, {'reason'}
     )['reason']
 
-    assert result == '{secret=***}'
+    assert result == '{"secret":"***"}'
     assert 'a' not in result
     assert 'b' not in result
+
+
+def test_mixed_bare_and_json_forms_are_masked_respectively():
+    """裸值形式与 JSON 引号形式同时存在时，各自按对应规则脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=abc {"secret":"SECa","sign":"xyz"}'},
+        {'reason'},
+    )['reason']
+
+    assert 'access_token=***' in result
+    assert '"secret":"***"' in result
+    assert '"sign":"***"' in result
+    assert 'abc' not in result
+    assert 'SECa' not in result
+    assert 'xyz' not in result
