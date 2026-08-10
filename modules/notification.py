@@ -532,7 +532,18 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
         log.error("推送通道为空，无法发送通知")
         return []
 
-    channel_names = ', '.join(c.get('provider', '?') for c in channels)
+    # 汇总日志按通道计算路由标识，与 _notify_single_channel 的增强判定保持一致
+    route_labels = [
+        _describe_channel_route(
+            channel.get('provider', '?'),
+            _is_enhanced_dingtalk_channel(
+                channel.get('provider', '?'),
+                {key: value for key, value in channel.items() if key != 'provider'},
+            ),
+        )
+        for channel in channels
+    ]
+    channel_names = ', '.join(route_labels)
     log.info(f"共 {len(channels)} 个推送通道: {channel_names}")
     log.debug(f"通知内容长度: {len(content)}")
 

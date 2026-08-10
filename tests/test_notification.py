@@ -114,6 +114,43 @@ def test_send_notification_success_does_not_log_title(monkeypatch, caplog):
     assert '# 测试推送' not in caplog.text
 
 
+def test_send_notification_summary_shows_route_labels(monkeypatch, caplog):
+    """推送汇总日志应为钉钉通道标注 builtin/onepush 路由标识"""
+    import modules.notification as notification
+
+    monkeypatch.setattr(notification, '_notify_single_channel', lambda *args: True)
+
+    with caplog.at_level('INFO'):
+        result = notification.send_notification(
+            title='标题',
+            content='正文',
+            channels=[
+                {'provider': 'dingtalk', 'token': 'tok'},
+                {'provider': 'dingtalk', 'token': 'tok', 'msgtype': 'markdown'},
+            ],
+        )
+
+    assert result == [('dingtalk', True), ('dingtalk', True)]
+    assert '共 2 个推送通道: dingtalk(onepush), dingtalk(builtin)' in caplog.text
+
+
+def test_send_notification_summary_keeps_other_provider(monkeypatch, caplog):
+    """推送汇总日志应为非钉钉渠道保留原 provider 名"""
+    import modules.notification as notification
+
+    monkeypatch.setattr(notification, '_notify_single_channel', lambda *args: True)
+
+    with caplog.at_level('INFO'):
+        result = notification.send_notification(
+            title='标题',
+            content='正文',
+            channels=[{'provider': 'serverchan', 'sckey': 'SCTx'}],
+        )
+
+    assert result == [('serverchan', True)]
+    assert '共 1 个推送通道: serverchan' in caplog.text
+
+
 def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch, caplog):
     """失败日志应区分路由分支并对失败原因脱敏"""
     import modules.notification as notification
