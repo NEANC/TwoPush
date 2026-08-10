@@ -204,7 +204,7 @@ def _build_dingtalk_payload(params, title, content):
     mobiles = at.get('atMobiles', [])
 
     if msgtype == 'text':
-        message = '\n'.join(part for part in (title, content) if part)
+        message = '\n\n'.join(part for part in (title, content) if part)
         message = _append_missing_dingtalk_mentions(message, mobiles)
         payload = {'msgtype': 'text', 'text': {'content': message}}
     else:

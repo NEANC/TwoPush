@@ -1098,6 +1098,23 @@ class TestTwoPushDingTalkPayload:
         assert "@13800138000" in payload["text"]["content"]
         assert payload["at"]["atMobiles"] == ["13800138000"]
 
+    def test_build_text_payload_joins_title_and_content_with_double_newline(self):
+        """text 请求体应以双换行分隔 title 与 content，与 onepush 行为一致。"""
+        from modules.notification import _build_dingtalk_payload
+        from onepush.core import Provider
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text"},
+            "标题",
+            "内容",
+        )
+
+        content = payload["text"]["content"]
+
+        assert "标题\n\n内容" in content
+        assert "标题\n内容" not in content
+        assert content == Provider.process_message("标题", "内容")
+
     def test_default_msgtype_is_markdown_for_enhanced_path(self):
         """增强路径未指定 msgtype 但携带 at 时默认使用 markdown。"""
         from modules.notification import _build_dingtalk_payload
