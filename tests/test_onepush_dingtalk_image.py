@@ -1094,6 +1094,26 @@ class TestTwoPushDingTalkUrlBuilder:
 
         assert url == full_url
 
+    def test_domain_error_prioritized_over_missing_access_token(self):
+        """域名错误应优先于缺失 access_token 报错。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError) as exc:
+            _build_dingtalk_webhook_url("https://evil.com/robot/send")
+
+        assert "域名" in str(exc.value)
+        assert "access_token" not in str(exc.value)
+
+    def test_path_error_prioritized_over_missing_access_token(self):
+        """路径错误应优先于缺失 access_token 报错。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError) as exc:
+            _build_dingtalk_webhook_url("https://oapi.dingtalk.com/other/path")
+
+        assert "路径" in str(exc.value)
+        assert "access_token" not in str(exc.value)
+
 
 class TestTwoPushDingTalkAt:
     """测试 TwoPush 钉钉手机号 @ 处理。"""

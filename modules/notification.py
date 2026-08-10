@@ -102,13 +102,6 @@ def _build_dingtalk_webhook_url(token, secret=None):
     """
     if _is_full_url(token):
         parsed = urlsplit(str(token))
-        access_tokens = [
-            value
-            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-            if key == 'access_token'
-        ]
-        if not any(value.strip() for value in access_tokens):
-            raise ValueError('完整 Webhook URL 必须包含 access_token 参数')
         if parsed.hostname != DINGTALK_WEBHOOK_HOST:
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉官方域名 {DINGTALK_WEBHOOK_HOST}'
@@ -117,6 +110,13 @@ def _build_dingtalk_webhook_url(token, secret=None):
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉标准路径 {DINGTALK_WEBHOOK_PATH}'
             )
+        access_tokens = [
+            value
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key == 'access_token'
+        ]
+        if not any(value.strip() for value in access_tokens):
+            raise ValueError('完整 Webhook URL 必须包含 access_token 参数')
         url = str(token)
     else:
         query = urlencode({'access_token': str(token)})
