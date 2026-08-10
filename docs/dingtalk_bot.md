@@ -6,7 +6,13 @@
 
 原始人工能力验证环境：钉钉自定义机器人（Webhook + 加签）；Python 与 OnePush 的具体版本未留存可核实证据。
 
-当前源码/自动测试核对环境：Python 3.12 + OnePush 1.9.0。项目依赖声明为 `onepush>=1.2.0`，未锁定 OnePush 版本；下文 `dingtalk(onepush)` 路由的 URL 处理细节基于 OnePush 1.9.0，其他版本的行为可能不同。
+当前源码/自动测试核对环境（2026-08-11）：Python 3.12.7，OnePush 1.9.0。
+
+```powershell
+.\.venv\Scripts\python.exe -c "import sys, importlib.metadata as m; print(sys.version.split()[0], m.version('onepush'))"
+```
+
+`requirements` 中的 `onepush>=1.2.0` 仅表示最低版本约束，未锁定实际版本。下文 `dingtalk(onepush)` 路由的 URL 处理细节仅按上述环境核对，不外推至其他版本。
 
 ## 消息类型支持
 
