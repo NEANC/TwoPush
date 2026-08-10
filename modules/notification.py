@@ -37,6 +37,9 @@ DINGTALK_ENHANCED_KEYS = {
 # 钉钉自定义机器人 Webhook 基础地址
 DINGTALK_WEBHOOK_BASE_URL = 'https://oapi.dingtalk.com/robot/send'
 
+# 钉钉 Webhook 官方域名（从 base URL 提取，保持单一数据源）
+DINGTALK_WEBHOOK_HOST = urlsplit(DINGTALK_WEBHOOK_BASE_URL).hostname
+
 # 钉钉 Webhook 请求超时时间（秒）
 DINGTALK_REQUEST_TIMEOUT = 10
 
@@ -90,7 +93,8 @@ def _build_dingtalk_webhook_url(token, secret=None):
         str: 钉钉 Webhook 请求 URL
 
     Raises:
-        ValueError: token 为完整 Webhook URL 但缺少 access_token 参数时抛出
+        ValueError: token 为完整 Webhook URL 但缺少 access_token 参数时抛出；
+            或完整 Webhook URL 的域名不是钉钉官方域名 DINGTALK_WEBHOOK_HOST 时抛出
     """
     if _is_full_url(token):
         parsed = urlsplit(str(token))
@@ -98,6 +102,10 @@ def _build_dingtalk_webhook_url(token, secret=None):
             key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
         }:
             raise ValueError('完整 Webhook URL 必须包含 access_token 参数')
+        if parsed.hostname != DINGTALK_WEBHOOK_HOST:
+            raise ValueError(
+                f'完整 Webhook URL 必须使用钉钉官方域名 {DINGTALK_WEBHOOK_HOST}'
+            )
         url = str(token)
     else:
         query = urlencode({'access_token': str(token)})

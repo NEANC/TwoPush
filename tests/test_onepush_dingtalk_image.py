@@ -963,6 +963,44 @@ class TestTwoPushDingTalkUrlBuilder:
         assert url == full_url
         assert url.count("access_token=") == 1
 
+    def test_non_dingtalk_domain_full_url_raises_value_error(self):
+        """非钉钉域名的完整 Webhook URL 应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="oapi.dingtalk.com"):
+            _build_dingtalk_webhook_url(
+                "https://example.com/robot/send?access_token=abc123"
+            )
+
+    def test_non_dingtalk_domain_with_secret_raises_value_error(self):
+        """非钉钉域名（如内网地址）即使加签也应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="oapi.dingtalk.com"):
+            _build_dingtalk_webhook_url(
+                "http://internal.local/robot/send?access_token=abc123",
+                secret="SECtest",
+            )
+
+    def test_dingtalk_domain_full_url_still_works(self):
+        """钉钉官方域名的完整 Webhook URL 应原样返回（守护既有行为）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
+    def test_dingtalk_domain_with_port_still_works(self):
+        """钉钉官方域名带端口（如 :443）的完整 Webhook URL 应放行。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com:443/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+
     def test_sign_is_encoded_exactly_once(self):
         """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
         import base64
