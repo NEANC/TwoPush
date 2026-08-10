@@ -19,7 +19,7 @@
 ```
 
 上述测试核对了裸 token URL 构造、HTTPS 完整 URL 复用、secret 加签，以及仅含 token 时选择 `dingtalk(onepush)`、含 `msgtype` 等增强参数时选择 `dingtalk(builtin)` 并在汇总与失败日志中使用对应路由标识。
-未完整测试的 HTTP 完整 URL、已有签名参数行为归因于 OnePush 1.9.0 的 `DingTalk._prepare_url` 实现，可在安装包 `onepush/providers/dingtalk.py` 中定位。
+仅在 `dingtalk(onepush)` 路由中，未完整测试的 HTTP 完整 URL、已有签名参数行为归因于 OnePush 1.9.0 的 `onepush.providers.dingtalk.DingTalk._prepare_url` 实现。
 
 ## 消息类型支持
 
