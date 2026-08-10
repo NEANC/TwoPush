@@ -1129,6 +1129,30 @@ class TestTwoPushDingTalkUrlBuilder:
         assert "路径" in str(exc.value)
         assert "access_token" not in str(exc.value)
 
+    def test_whitespace_padded_token_is_stripped(self):
+        """带首尾空白的裸 token 应先 strip 再拼接 Webhook URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("  abc123  ")
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+
+    def test_whitespace_padded_full_url_is_stripped(self):
+        """带首尾空白的完整 Webhook URL 应先 strip 再原样复用。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(f"  {full_url}  ")
+
+        assert url == full_url
+
+    def test_blank_token_still_rejected(self):
+        """strip 后为空的 token 应抛出 ValueError（守护守卫）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            _build_dingtalk_webhook_url("   ")
+
 
 class TestTwoPushDingTalkAt:
     """测试 TwoPush 钉钉手机号 @ 处理。"""
