@@ -90,9 +90,36 @@ import requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    data = response.json()
-    if isinstance(data, dict) and "errcode" in data and data["errcode"] != 0:
-        raise RuntimeError(f"钉钉 Webhook 请求失败：{data.get('errmsg', '')}")
+    def sanitize(value, default, limit):
+        """生成适合错误消息的安全单行文本。"""
+        try:
+            text = str(value)
+        except Exception:
+            text = default
+        return text.replace("\r", " ").replace("\n", " ")[:limit]
+
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from e
+
+    if not isinstance(data, dict) or "errcode" not in data:
+        raise RuntimeError("钉钉 Webhook 响应格式异常")
+
+    errcode = data["errcode"]
+    success = (
+        type(errcode) is int and errcode == 0
+    ) or (
+        isinstance(errcode, str) and errcode.strip() == "0"
+    )
+    if success:
+        return
+
+    safe_errcode = sanitize(errcode, "无法显示", 100)
+    safe_errmsg = sanitize(data.get("errmsg", "未知错误"), "未知错误", 200)
+    raise RuntimeError(
+        f"钉钉 Webhook 请求失败：errcode={safe_errcode}，errmsg={safe_errmsg}"
+    )
 
 
 webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=xxx"
@@ -313,9 +340,36 @@ import hashlib, hmac, base64, time, urllib.parse, requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    data = response.json()
-    if isinstance(data, dict) and "errcode" in data and data["errcode"] != 0:
-        raise RuntimeError(f"钉钉 Webhook 请求失败：{data.get('errmsg', '')}")
+    def sanitize(value, default, limit):
+        """生成适合错误消息的安全单行文本。"""
+        try:
+            text = str(value)
+        except Exception:
+            text = default
+        return text.replace("\r", " ").replace("\n", " ")[:limit]
+
+    try:
+        data = response.json()
+    except ValueError as e:
+        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from e
+
+    if not isinstance(data, dict) or "errcode" not in data:
+        raise RuntimeError("钉钉 Webhook 响应格式异常")
+
+    errcode = data["errcode"]
+    success = (
+        type(errcode) is int and errcode == 0
+    ) or (
+        isinstance(errcode, str) and errcode.strip() == "0"
+    )
+    if success:
+        return
+
+    safe_errcode = sanitize(errcode, "无法显示", 100)
+    safe_errmsg = sanitize(data.get("errmsg", "未知错误"), "未知错误", 200)
+    raise RuntimeError(
+        f"钉钉 Webhook 请求失败：errcode={safe_errcode}，errmsg={safe_errmsg}"
+    )
 
 
 TOKEN = "你的 access_token"
