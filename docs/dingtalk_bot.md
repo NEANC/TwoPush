@@ -4,7 +4,9 @@
 
 本文档记录了使用 [OnePush](https://github.com/y1ndan/onepush) 及钉钉 Webhook API 直接发送消息的验证结果，覆盖消息类型、Markdown 语法支持、@ 功能、图片推送等核心能力。
 
-测试环境：Python 3.12 + OnePush 1.3.0 + 钉钉自定义机器人（Webhook + 加签）
+原始人工能力验证环境：钉钉自定义机器人（Webhook + 加签）；Python 与 OnePush 的具体版本未留存可核实证据。
+
+当前源码/自动测试核对环境：Python 3.12 + OnePush 1.9.0。项目依赖声明为 `onepush>=1.2.0`，未锁定 OnePush 版本；下文 `dingtalk(onepush)` 路由的 URL 处理细节基于 OnePush 1.9.0，其他版本的行为可能不同。
 
 ## 消息类型支持
 
