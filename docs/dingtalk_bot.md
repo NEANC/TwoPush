@@ -360,6 +360,8 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 - 仅 access token：`xxx`
 - 完整 Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`
 
+完整 Webhook URL 仅接受钉钉官方域名 `oapi.dingtalk.com`（不支持内网地址或自定义转发域名），且必须包含 `access_token` 参数。配置不合规时（域名非官方或缺少 `access_token`）会在发送前报「配置错误」并跳过该通道，不进入重试。
+
 配置 `secret` 时，TwoPush 会自动追加 `timestamp` 与 `sign`。
 
 ### 多配置示例
