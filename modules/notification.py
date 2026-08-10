@@ -12,6 +12,7 @@ import re
 import requests
 import socket
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -262,19 +263,41 @@ def _normalize_dingtalk_at(params):
     return at
 
 
-def _has_independent_dingtalk_mention(text, mention, unicode_boundary=False):
-    """判断正文是否包含尾部边界独立的钉钉提醒 token。
+def _is_dingtalk_mention_word_character(character):
+    """判断字符是否会令相邻钉钉提醒失去独立边界。
+
+    Args:
+        character: 待判断的单个字符
+
+    Returns:
+        bool: Unicode 单词字符或组合附加符返回 True
+    """
+    return bool(re.match(r'\w', character)) or unicodedata.category(
+        character).startswith('M')
+
+
+def _has_independent_dingtalk_mention(text, mention):
+    """判断正文是否包含前后边界独立的钉钉提醒 token。
 
     Args:
         text: 消息正文
         mention: 包含 @ 前缀的提醒文本
-        unicode_boundary: 是否将 Unicode 单词字符视为相邻 token
 
     Returns:
         bool: 正文包含独立提醒 token 时返回 True
     """
-    trailing_word = r'\w' if unicode_boundary else r'[A-Za-z0-9_]'
-    return re.search(rf'{re.escape(mention)}(?!{trailing_word})', text) is not None
+    for match in re.finditer(re.escape(mention), text):
+        start = match.start()
+        end = match.end()
+        if start:
+            prefix = text[start - 1]
+            if prefix in ('@', '\\') or _is_dingtalk_mention_word_character(
+                    prefix):
+                continue
+        if end < len(text) and _is_dingtalk_mention_word_character(text[end]):
+            continue
+        return True
+    return False
 
 
 def _append_missing_dingtalk_mentions(text, mobiles, is_at_all=False):
@@ -295,8 +318,7 @@ def _append_missing_dingtalk_mentions(text, mobiles, is_at_all=False):
         mobile for mobile in mobiles
         if not _has_independent_dingtalk_mention(text, f'@{mobile}')
     ]
-    if is_at_all and not _has_independent_dingtalk_mention(
-            text, '@所有人', unicode_boundary=True):
+    if is_at_all and not _has_independent_dingtalk_mention(text, '@所有人'):
         missing.append('所有人')
     if not missing:
         return text

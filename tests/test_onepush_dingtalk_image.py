@@ -1256,15 +1256,43 @@ class TestTwoPushDingTalkAt:
         assert text.count("@13800138000") == 1
 
     @pytest.mark.parametrize(
+        "prefix",
+        ["x", "9", "_", "中", "@", "\\"],
+    )
+    @pytest.mark.parametrize(
+        ("mention", "mobiles", "is_at_all"),
+        [
+            ("@13800138000", ["13800138000"], False),
+            ("@所有人", [], True),
+        ],
+    )
+    def test_mention_with_non_independent_prefix_is_appended(
+        self, prefix, mention, mobiles, is_at_all
+    ):
+        """单词字符、额外 @ 与反斜杠前缀后的提醒不应视为独立。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 {prefix}{mention}"
+        text = _append_missing_dingtalk_mentions(
+            content, mobiles, is_at_all=is_at_all
+        )
+
+        assert text == f"{content}\n\n{mention}"
+
+    @pytest.mark.parametrize(
         "content",
         [
             "通知内容 @138001380001",
             "通知内容 @13800138000abc",
             "通知内容 @13800138000_",
+            "通知内容 @13800138000１",
+            "通知内容 @13800138000é",
+            "通知内容 @13800138000中",
+            "通知内容 @13800138000\u0301",
         ],
     )
-    def test_mobile_mention_followed_by_word_character_is_not_independent(self, content):
-        """手机号提醒后紧跟 ASCII 单词字符时应补齐独立提醒。"""
+    def test_mobile_mention_followed_by_unicode_word_is_not_independent(self, content):
+        """手机号提醒后紧跟 Unicode 单词字符或组合符时应补齐独立提醒。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
         text = _append_missing_dingtalk_mentions(content, ["13800138000"])
@@ -1277,10 +1305,13 @@ class TestTwoPushDingTalkAt:
             "通知内容 @13800138000，已发送",
             "通知内容 @13800138000 已发送",
             "通知内容\n@13800138000",
+            "@13800138000 通知内容",
+            "通知内容 @13800138000\r\n下一行",
+            "通知内容 @13800138000😀已发送",
         ],
     )
     def test_mobile_mention_with_independent_boundary_is_not_duplicated(self, content):
-        """手机号提醒后接标点、空白或行尾时不应重复补齐。"""
+        """手机号提醒位于文本边界或后接分隔字符时不应重复补齐。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
         text = _append_missing_dingtalk_mentions(content, ["13800138000"])
@@ -1293,6 +1324,9 @@ class TestTwoPushDingTalkAt:
             "通知内容 @所有人员",
             "通知内容 @所有人abc",
             "通知内容 @所有人_",
+            "通知内容 @所有人１",
+            "通知内容 @所有人é",
+            "通知内容 @所有人\u0301",
         ],
     )
     def test_at_everyone_followed_by_word_character_is_not_independent(self, content):
@@ -1309,6 +1343,9 @@ class TestTwoPushDingTalkAt:
             "通知内容 @所有人，已发送",
             "通知内容 @所有人 已发送",
             "通知内容\n@所有人",
+            "@所有人 通知内容",
+            "通知内容 @所有人\r\n下一行",
+            "通知内容 @所有人😀已发送",
         ],
     )
     def test_at_everyone_with_independent_boundary_is_not_duplicated(self, content):
@@ -1463,6 +1500,39 @@ class TestTwoPushDingTalkPayload:
 
         body_field = "content" if msgtype == "text" else "text"
         assert payload[body_key][body_field].endswith("\n\n@13800138000")
+
+    @pytest.mark.parametrize(
+        ("msgtype", "body_key", "body_field"),
+        [
+            ("text", "text", "content"),
+            ("markdown", "markdown", "text"),
+        ],
+    )
+    def test_payload_escaped_mention_is_appended_for_each_message_type(
+        self, msgtype, body_key, body_field
+    ):
+        """text 与 markdown 均按文本边界处理反斜杠转义提醒。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": msgtype, "at": ["13800138000"]},
+            "通知标题",
+            "通知内容 \\@13800138000",
+        )
+
+        assert payload[body_key][body_field].endswith("\n\n@13800138000")
+
+    def test_markdown_inline_code_is_checked_only_by_text_boundary(self):
+        """markdown 行内代码中的独立提醒按普通文本处理且不重复。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": ["13800138000"]},
+            "通知标题",
+            "示例 `@13800138000`",
+        )
+
+        assert payload["markdown"]["text"] == "示例 `@13800138000`"
 
     def test_country_code_mobile_checks_normalized_mention_in_body(self):
         """国家码手机号应使用归一化号码检查正文中的独立提醒。"""
