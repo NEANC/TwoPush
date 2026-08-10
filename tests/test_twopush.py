@@ -1277,6 +1277,36 @@ def test_format_push_preview_keeps_existing_shape_and_content():
     assert '每日报告 - HOST' in preview
 
 
+def test_format_push_preview_keeps_non_string_values_unchanged():
+    """预览对非字符串 title/content 应原样保留，不被 str() 转换"""
+    preview = TwoPush.format_push_preview(
+        title=123,
+        content=456.5,
+        proxy=None,
+        retry_settings={},
+        channels=[],
+    )
+
+    assert '"title": 123,' in preview
+    assert '"content": 456.5,' in preview
+    assert '"title": "123"' not in preview
+    assert '"content": "456.5"' not in preview
+
+
+def test_format_push_preview_still_masks_string_values():
+    """预览对字符串 title/content 仍应执行脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='标题 13800138000',
+        content='正文 13800138000',
+        proxy=None,
+        retry_settings={},
+        channels=[],
+    )
+
+    assert '138****8000' in preview
+    assert '13800138000' not in preview
+
+
 def test_execute_push_sends_original_title_and_content_after_preview_masking(
         monkeypatch, tmp_path):
     """推送预览脱敏不应影响实际发送参数，发送仍用原始 title/content"""

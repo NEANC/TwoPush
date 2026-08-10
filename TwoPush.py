@@ -240,13 +240,18 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
         'max_count': retry_settings.get('max_count'),
     }
     proxy_preview = mask_proxy_authentication(proxy)
-    # 仅对声明为敏感的 title/content 字段脱敏，避免预览日志泄露敏感信息
-    masked_fields = mask_sensitive_fields(
-        {'title': title, 'content': content},
-        sensitive_fields={'title', 'content'},
+    # 仅对字符串类型的 title/content 脱敏，避免预览日志泄露敏感信息；
+    # 非字符串值原样保留，不被 str() 转换
+    masked_title = (
+        mask_sensitive_fields({'title': title}, {'title'})['title']
+        if isinstance(title, str)
+        else title
     )
-    masked_title = masked_fields['title']
-    masked_content = masked_fields['content']
+    masked_content = (
+        mask_sensitive_fields({'content': content}, {'content'})['content']
+        if isinstance(content, str)
+        else content
+    )
     return '\n'.join([
         f'"title": {json.dumps(masked_title, ensure_ascii=False)},',
         f'"content": {json.dumps(masked_content, ensure_ascii=False)},',
