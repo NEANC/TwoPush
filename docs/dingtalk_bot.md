@@ -57,7 +57,7 @@ from onepush import notify
 
 notify(
     "dingtalk",
-    token="完整的钉钉 Webhook URL",
+    token="你的 access_token",
     secret="你的加签密钥",
     title="图片推送",
     content="![示例图片](https://example.com/pic.png)",
@@ -372,7 +372,11 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
 
 **未包含增强键：`dingtalk(onepush)`**
 
-未配置增强键时，TwoPush 将原始 `token`、`secret` 等参数交给已安装的 OnePush 钉钉 provider。此路径应使用 OnePush 支持的裸 access token 写法：
+未配置增强键时，TwoPush 将原始 `token`、`secret` 等参数交给已安装的 OnePush 钉钉 provider。
+
+**当前 OnePush 1.9.0 的实现事实：** 裸 access token 会拼接到 OnePush 的基础 URL；完整 HTTPS URL 会原样复用；完整 HTTP URL 会被当作 token 再套入基础 URL。配置非空 `secret` 时，OnePush 会直接在结果 URL 后追加新的 `timestamp` 与 `sign`，不会去重或覆盖原有同名参数。
+
+**推荐用法：** 此路径始终使用裸 access token：
 
 ```json
 {
@@ -382,7 +386,7 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
 }
 ```
 
-不要依赖完整 Webhook URL 在此路径中被复用，也不要假定 TwoPush 会为此路径重新签名或覆盖 URL 中已有的 `timestamp`、`sign`；URL 构造和加签发送行为由 OnePush 负责。
+完整 HTTPS URL 在当前 OnePush 1.9.0 中可以复用，但该行为由 OnePush 版本实现决定，TwoPush 不保证兼容性；不要使用完整 HTTP URL。`secret` 由 OnePush 负责加签，不承诺覆盖 URL 中已有的 `timestamp`、`sign`，因此不要预先附加这些参数。
 
 **统一发送前校验**
 
@@ -392,6 +396,8 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
 
 ### 多配置示例
 
+以下通道按 `channels` 数组顺序路由：第一个仅含 OnePush 标准参数，走 `dingtalk(onepush)`；第二个包含增强键，走 `dingtalk(builtin)`，并由内置实现处理完整 HTTPS Webhook URL。
+
 ```json
 {
   "title": "每日报告",
@@ -400,15 +406,13 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
     {
       "provider": "dingtalk",
       "token": "xxx",
-      "secret": "SECxxx",
-      "msgtype": "markdown",
-      "at": ["13800138000"]
+      "secret": "SECxxx"
     },
     {
       "provider": "dingtalk",
       "token": "https://oapi.dingtalk.com/robot/send?access_token=yyy",
       "secret": "SECyyy",
-      "msgtype": "text",
+      "msgtype": "markdown",
       "at": ["13900139000"]
     }
   ]
