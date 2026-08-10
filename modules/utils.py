@@ -30,21 +30,22 @@ CHANNEL_KEY_ALIASES = {
     'pushdeer': {'key': 'pushkey'},
 }
 
-# 敏感键值对脱敏模式：支持 key=value、key: value 与 JSON 引号键值形式；
-# 值侧优先按带转义处理的 JSON 引号字符串整体匹配，否则取到空白、引号、
-# 逗号或右括号为止，值内含转义引号、逗号或 & 等连接符时均能完整脱敏
+# 敏感键值对脱敏模式：支持 key=value、key: value 与单双引号键值形式；
+# 值侧优先按带转义处理的引号字符串整体匹配，否则取到空白、引号、逗号或
+# 右括号为止，值内含转义引号、逗号或 & 等连接符时均能完整脱敏
 _SENSITIVE_KEY_VALUE_RE = re.compile(
-    r'(?<![A-Za-z0-9_])("?)((?:access_)?token|sign|secret)("?)'
-    r'(\s*(?:=|:)\s*)("(?:[^"\\]|\\.)*"|[^"\s,}\]]+)',
+    r'(?<![A-Za-z0-9_])(["\']?)((?:access_)?token|sign|secret)(["\']?)'
+    r'(\s*(?:=|:)\s*)('
+    r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[^"\'\s,}\]]+)',
     flags=re.IGNORECASE,
 )
 
 
 def _replace_sensitive_key_value(match):
-    """将匹配到的敏感键值对替换为脱敏形式，JSON 引号形式保留引号结构。"""
+    """将匹配到的敏感键值对替换为脱敏形式，引号形式保留原有结构。"""
     leading_quote, key, trailing_quote, separator, value = match.groups()
-    if value.startswith('"'):
-        return f'{leading_quote}{key}{trailing_quote}{separator}"***"'
+    if value.startswith(('"', "'")):
+        return f'{leading_quote}{key}{trailing_quote}{separator}{value[0]}***{value[0]}'
     return f'{leading_quote}{key}{trailing_quote}=***'
 
 
@@ -54,11 +55,11 @@ def mask_sensitive_fields(fields, sensitive_fields):
     在字段字典的副本上进行处理：11 位手机号（1[3-9] 开头号段，允许带
     可选 +86/86 国家码前缀）保留前 3 位与后 4 位，access_token/token、
     sign、secret 键值对的值替换为 ***
-    （支持 key=value、key: value、JSON 引号键值三种形式；值侧优先按
-    带转义处理的 JSON 引号字符串整体匹配，否则取到空白、引号、逗号或
+    （支持 key=value、key: value、单双引号键值形式；值侧优先按
+    带转义处理的引号字符串整体匹配，否则取到空白、引号、逗号或
     右括号为止，故值内含转义引号、逗号或 & 等连接符时均能完整脱敏；
-    JSON 引号形式脱敏后保留引号结构，如 "access_token":"abc123" 输出为
-    "access_token":"***"，裸值形式输出为 access_token=***）；
+    引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
+    'access_token': '***'，裸值形式输出为 access_token=***）；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留

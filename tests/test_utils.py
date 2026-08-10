@@ -207,3 +207,57 @@ def test_mixed_bare_and_json_forms_are_masked_respectively():
     assert 'abc' not in result
     assert 'SECa' not in result
     assert 'xyz' not in result
+
+
+@pytest.mark.parametrize('key', ['access_token', 'secret', 'token'])
+def test_single_quoted_dict_sensitive_fields_are_masked(key):
+    """单引号字典中的敏感键值应完整脱敏并保留单引号结构"""
+    result = mask_sensitive_fields(
+        {'reason': f"{{'{key}': 'top-secret'}}"}, {'reason'}
+    )['reason']
+
+    assert result == f"{{'{key}': '***'}}"
+    assert 'top-secret' not in result
+
+
+def test_single_quoted_value_with_escaped_quote_is_fully_masked():
+    """单引号值内含转义单引号时应完整脱敏，不残留引号后片段"""
+    result = mask_sensitive_fields(
+        {'reason': r"{'secret': 'SEC\'xyz'}"}, {'reason'}
+    )['reason']
+
+    assert result == "{'secret': '***'}"
+    assert 'SEC' not in result
+    assert 'xyz' not in result
+
+
+def test_single_quoted_value_with_comma_is_fully_masked():
+    """单引号值内含逗号时应完整脱敏，不残留逗号后片段"""
+    result = mask_sensitive_fields(
+        {'reason': "'token': 'abc,def'"}, {'reason'}
+    )['reason']
+
+    assert result == "'token': '***'"
+    assert 'abc' not in result
+    assert 'def' not in result
+
+
+def test_mixed_single_and_double_quoted_forms_are_masked():
+    """单双引号敏感键值混合出现时应分别保留原有结构"""
+    result = mask_sensitive_fields(
+        {'reason': "{'access_token': 'abc', \"secret\":\"SECxyz\"}"},
+        {'reason'},
+    )['reason']
+
+    assert result == "{'access_token': '***', \"secret\":\"***\"}"
+
+
+def test_single_quoted_sensitive_name_substrings_are_not_masked():
+    """单引号键中含敏感键名子串时不应误伤"""
+    original = (
+        "{'design': 'keep', 'assign': 'keep', 'mytoken': 'keep', "
+        "'xaccess_token': 'keep'}"
+    )
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
