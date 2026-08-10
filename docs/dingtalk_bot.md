@@ -80,13 +80,14 @@ notify(
 )
 ```
 
-**直接请求方式（绕过 OnePush，支持更多参数）：**
+**请求体片段（需配合已生成的 Webhook URL）：**
 
-以下代码仅展示请求体结构。使用加签安全设置时，`webhook_url` 必须是已附加 `timestamp` 和 `sign` 查询参数的完整 Webhook URL；完整加签实现请参考「请求完整示例」。
+以下代码展示请求体结构，并使用未加签 Webhook URL 占位。使用加签安全设置时，`webhook_url` 必须替换为已附加 `timestamp` 和 `sign` 查询参数的完整 Webhook URL；完整加签实现请参考「请求完整示例」。
 
 ```python
 import requests
 
+webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 body = {
     "msgtype": "markdown",
     "markdown": {
@@ -94,7 +95,8 @@ body = {
         "text": "![示例图片](https://example.com/pic.png)"
     }
 }
-requests.post(webhook_url, json=body)
+response = requests.post(webhook_url, json=body, timeout=10)
+response.raise_for_status()
 ```
 
 ## @ 功能
@@ -264,14 +266,16 @@ notify(
 ```python
 import requests
 
-requests.post(
+response = requests.post(
     "https://sctapi.ftqq.com/你的SendKey.send",
     data={
         "title": "推送标题",
         "desp": "## 正文\n\n**加粗** | *斜体* | ![图片](url)",
         "channel": "2",
     },
+    timeout=10,
 )
+response.raise_for_status()
 ```
 
 > **注意：** OnePush 的 ServerChan 提供者使用旧版 API 端点 (`sc.ftqq.com`)，不支持 `channel` 参数。如需指定通道，请直接调用 Server酱 新版 API（`sctapi.ftqq.com`）。
@@ -338,11 +342,19 @@ body = {
     }
 }
 
-r = requests.post(url, json=body, headers={"Content-Type": "application/json"})
+r = requests.post(
+    url,
+    json=body,
+    headers={"Content-Type": "application/json"},
+    timeout=10,
+)
+r.raise_for_status()
 print(r.status_code, r.text)  # 200 {"errcode":0,"errmsg":"ok"}
 ```
 
-### Markdown 图片 + @指定人（atMobiles）
+### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
+
+以下代码复用上一完整示例已导入的 `requests` 和已生成的 `url`，仅替换请求体并发送。
 
 ```python
 body = {
@@ -361,7 +373,13 @@ body = {
         "isAtAll": False
     }
 }
-r = requests.post(url, json=body, headers={"Content-Type": "application/json"})
+r = requests.post(
+    url,
+    json=body,
+    headers={"Content-Type": "application/json"},
+    timeout=10,
+)
+r.raise_for_status()
 ```
 
 ## TwoPush 钉钉增强配置
