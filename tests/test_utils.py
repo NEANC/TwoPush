@@ -61,3 +61,34 @@ def test_mask_sensitive_fields_still_masks_valid_mobile_segments():
 
     assert '13800138000' not in text
     assert '138****8000' in text
+
+
+def test_ampersand_in_sensitive_value_is_fully_masked():
+    """敏感值内含 & 时应完整脱敏，不残留 & 后缀片段"""
+    result = mask_sensitive_fields({'reason': 'secret=abc&def'}, {'reason'})['reason']
+
+    assert result == 'secret=***'
+    assert '&def' not in result
+
+
+def test_query_chain_is_fully_masked():
+    """含 & 的连续敏感键值对（如 query 链）应整体被脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=abc&sign=xyz'}, {'reason'}
+    )['reason']
+
+    assert 'abc' not in result
+    assert 'xyz' not in result
+    assert 'access_token=***' in result
+
+
+def test_whitespace_separated_sensitive_values_are_masked():
+    """空白分隔的敏感键值对各自被脱敏，空白作为分隔符保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'token=xyz secret=SECa'}, {'reason'}
+    )['reason']
+
+    assert 'token=***' in result
+    assert 'secret=***' in result
+    assert 'xyz' not in result
+    assert 'SECa' not in result

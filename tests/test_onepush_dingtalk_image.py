@@ -1430,7 +1430,8 @@ class TestTwoPushDingTalkMasking:
         assert "access_token=abc" not in text
         assert "sign=xyz" not in text
         assert "access_token=***" in text
-        assert "sign=***" in text
+        # query 链（含 & 连接的 sign=xyz）整体被 access_token 的脱敏覆盖，sign 键名不残留
+        assert "&sign=" not in text
 
     def test_failure_reason_is_masked(self):
         """失败原因日志不得泄露手机号或 token。"""
