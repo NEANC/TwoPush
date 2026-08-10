@@ -37,6 +37,9 @@ DINGTALK_ENHANCED_KEYS = {
 # 钉钉自定义机器人 Webhook 基础地址
 DINGTALK_WEBHOOK_BASE_URL = 'https://oapi.dingtalk.com/robot/send'
 
+# 钉钉 Webhook 请求超时时间（秒）
+DINGTALK_REQUEST_TIMEOUT = 10
+
 
 def _is_full_url(value):
     """判断字符串是否为完整的 http(s) Webhook URL。
@@ -258,7 +261,7 @@ def _send_dingtalk_webhook(channel, title, content):
     url = _build_dingtalk_webhook_url(token, channel.get('secret'))
     payload = _build_dingtalk_payload(channel, title, content)
     headers = {'Content-Type': 'application/json'}
-    return request('post', url, json=payload, headers=headers, timeout=10)
+    return request('post', url, json=payload, headers=headers, timeout=DINGTALK_REQUEST_TIMEOUT)
 
 
 def _parse_response_body(response):
