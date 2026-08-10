@@ -169,8 +169,30 @@ def _as_string_list(value):
 
 
 def _is_mobile_number(value):
-    """判断字符串是否为 11 位中国大陆手机号（1[3-9] 开头）。"""
-    return bool(re.fullmatch(r'1[3-9]\d{9}', value))
+    """判断字符串是否为带可选 +86/86 前缀的中国大陆手机号（1[3-9] 开头）。
+
+    Args:
+        value: 待判断的字符串
+
+    Returns:
+        bool: 匹配纯号段或带 +86/86 前缀的 11 位手机号时返回 True
+    """
+    return bool(re.fullmatch(r'(?:\+?86)?1[3-9]\d{9}', value))
+
+
+def _normalize_mobile_number(value):
+    """将带可选 +86/86 国家码前缀的手机号归一化为 11 位纯号段。
+
+    钉钉 atMobiles 需要纯手机号，不能带国家码前缀，故匹配到前缀时剥除。
+
+    Args:
+        value: 待归一化的字符串
+
+    Returns:
+        str: 匹配手机号时返回 11 位纯号段；否则原样返回
+    """
+    match = re.fullmatch(r'(?:\+?86)?(1[3-9]\d{9})', value)
+    return match.group(1) if match else value
 
 
 def _parse_boolean(value):
@@ -204,6 +226,7 @@ def _normalize_dingtalk_at(params):
     mobiles.extend(_as_string_list(params.get('at_mobiles')))
     mobiles.extend(_as_string_list(params.get('atMobiles')))
     mobiles = [m for m in mobiles if _is_mobile_number(m)]
+    mobiles = [_normalize_mobile_number(m) for m in mobiles]
 
     is_at_all = _parse_boolean(params.get('is_at_all')) or _parse_boolean(params.get('isAtAll'))
     if isinstance(raw_at, dict):

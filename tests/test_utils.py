@@ -63,6 +63,16 @@ def test_mask_sensitive_fields_still_masks_valid_mobile_segments():
     assert '138****8000' in text
 
 
+def test_mask_sensitive_fields_masks_country_code_prefixed_mobiles():
+    """带 +86/86 前缀的手机号应脱敏为纯号段掩码，不泄露完整号码"""
+    text = mask_sensitive_fields(
+        {'t': '手机号 +8613800138000 备用 8613800138000'}, {'t'}
+    )['t']
+
+    assert '8613800138000' not in text
+    assert text.count('138****8000') == 2
+
+
 def test_ampersand_in_sensitive_value_is_fully_masked():
     """敏感值内含 & 时应完整脱敏，不残留 & 后缀片段"""
     result = mask_sensitive_fields({'reason': 'secret=abc&def'}, {'reason'})['reason']

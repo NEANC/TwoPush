@@ -1117,6 +1117,18 @@ class TestTwoPushDingTalkAt:
             "isAtAll": False,
         }
 
+    def test_country_code_prefixed_mobiles_are_normalized(self):
+        """带 +86/86 前缀的手机号应归一化为纯号段进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": ["+8613800138000"]})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+        at = _normalize_dingtalk_at({"at": ["8613800138000", "13900139000"]})
+
+        assert at["atMobiles"] == ["13800138000", "13900139000"]
+
     def test_dict_at_mobiles_is_supported(self):
         """字典 at.atMobiles 应被支持。"""
         from modules.notification import _normalize_dingtalk_at

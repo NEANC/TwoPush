@@ -190,6 +190,17 @@ def test_is_mobile_number_rejects_non_numeric():
     assert _is_mobile_number('') is False
 
 
+def test_is_mobile_number_accepts_country_code_prefix():
+    """带 +86/86 前缀的 11 位手机号应判定为手机号"""
+    from modules.notification import _is_mobile_number
+
+    assert _is_mobile_number('+8613800138000') is True
+    assert _is_mobile_number('8613800138000') is True
+    assert _is_mobile_number('13800138000') is True
+    assert _is_mobile_number('+8612000000000') is False
+    assert _is_mobile_number('861380013800') is False
+
+
 def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
     """其他渠道失败应保留原 provider 作为路由标识"""
     import modules.notification as notification
