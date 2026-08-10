@@ -899,6 +899,33 @@ class TestTwoPushDingTalkUrlBuilder:
             "HTTP://oapi.dingtalk.com/robot/send?access_token=abc123"
         ) is True
 
+    def test_full_url_without_access_token_raises_value_error(self):
+        """完整 Webhook URL 缺少 access_token 参数时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url("https://oapi.dingtalk.com/robot/send")
+
+    def test_full_url_without_access_token_with_secret_raises_value_error(self):
+        """完整 Webhook URL 缺少 access_token 时即使加签也应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send",
+                secret="SECtest",
+            )
+
+    def test_full_url_with_access_token_still_works(self):
+        """含 access_token 的完整 Webhook URL 应原样返回（守护既有行为）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
     def test_sign_is_encoded_exactly_once(self):
         """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
         import base64
@@ -1219,6 +1246,22 @@ class TestTwoPushDingTalkDirectSend:
 
         with pytest.raises(ValueError, match="缺少 token"):
             notification._send_dingtalk_webhook({}, "通知标题", "通知内容")
+
+    def test_send_dingtalk_webhook_full_url_without_token_raises(self, monkeypatch):
+        """完整 Webhook URL 缺少 access_token 时发送前应抛出 ValueError。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("缺少 access_token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="access_token"):
+            notification._send_dingtalk_webhook(
+                {"token": "https://oapi.dingtalk.com/robot/send"},
+                "通知标题",
+                "通知内容",
+            )
 
 
 class TestTwoPushDingTalkMasking:

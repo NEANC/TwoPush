@@ -77,8 +77,24 @@ def _make_dingtalk_sign(secret):
 
 
 def _build_dingtalk_webhook_url(token, secret=None):
-    """根据 token 或完整 Webhook URL 构造钉钉请求 URL。"""
+    """根据 token 或完整 Webhook URL 构造钉钉请求 URL。
+
+    Args:
+        token: 裸 access token 或含 access_token 的完整 Webhook URL
+        secret: 可选的加签密钥
+
+    Returns:
+        str: 钉钉 Webhook 请求 URL
+
+    Raises:
+        ValueError: token 为完整 Webhook URL 但缺少 access_token 参数时抛出
+    """
     if _is_full_url(token):
+        parsed = urlsplit(str(token))
+        if 'access_token' not in {
+            key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
+        }:
+            raise ValueError('完整 Webhook URL 必须包含 access_token 参数')
         url = str(token)
     else:
         query = urlencode({'access_token': str(token)})
