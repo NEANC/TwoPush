@@ -491,3 +491,28 @@ def test_enhanced_dingtalk_value_error_still_retries(monkeypatch):
 
     assert result is False
     assert log.error.call_count == 3
+
+
+def test_config_error_value_error_reason_is_masked(monkeypatch):
+    """钉钉前置配置校验抛出的 ValueError 文本含敏感值时，配置错误日志应脱敏"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def boom_url(token):
+        raise ValueError('bad access_token=super-secret')
+
+    monkeypatch.setattr(notification, '_build_dingtalk_webhook_url', boom_url)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'tok'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert 'super-secret' not in log.error.call_args[0][0]
+    assert 'access_token=***' in log.error.call_args[0][0]

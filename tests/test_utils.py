@@ -126,3 +126,50 @@ def test_ascii_prefix_before_sensitive_key_not_masked():
 
     assert 'xaccess_token=keep' in result
     assert 'mytoken=keep' in result
+
+
+def test_json_key_value_sensitive_fields_are_masked():
+    """JSON 键值形式（"token":"value"）的敏感值应整体脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': '{"access_token":"abc123","secret":"SECxyz","sign":"sigxyz"}'},
+        {'reason'},
+    )['reason']
+
+    assert 'abc123' not in result
+    assert 'SECxyz' not in result
+    assert 'sigxyz' not in result
+    assert 'access_token=***' in result
+    assert 'sign=***' in result
+    assert 'secret=***' in result
+
+
+def test_colon_form_sensitive_values_are_masked():
+    """冒号形式（token: value）的敏感值应脱敏，冒号两侧空格可有可无"""
+    result = mask_sensitive_fields(
+        {'reason': 'token: xyz sign : SECa'}, {'reason'}
+    )['reason']
+
+    assert 'token=***' in result
+    assert 'sign=***' in result
+    assert 'xyz' not in result
+    assert 'SECa' not in result
+
+
+def test_quoted_value_with_ampersand_is_fully_masked():
+    """JSON 引号形式的值内含 & 时应完整脱敏，不残留 & 后缀片段"""
+    result = mask_sensitive_fields(
+        {'reason': '"secret":"abc&def"'}, {'reason'}
+    )['reason']
+
+    assert result == 'secret=***'
+    assert '&def' not in result
+
+
+def test_json_keys_with_sensitive_name_substrings_not_masked():
+    """design/assign/mytoken 等含敏感键名子串的键不应被误伤"""
+    result = mask_sensitive_fields(
+        {'reason': '{"design":"keep","assign":"keep","mytoken":"keep"}'},
+        {'reason'},
+    )['reason']
+
+    assert result == '{"design":"keep","assign":"keep","mytoken":"keep"}'

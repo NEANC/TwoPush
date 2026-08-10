@@ -499,7 +499,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
         try:
             _build_dingtalk_webhook_url(str(token))
         except ValueError as e:
-            log.error(f"通道 [{route_label}] 配置错误: {e}")
+            reason = mask_sensitive_fields(
+                {'reason': str(e)}, sensitive_fields={'reason'}
+            )['reason']
+            log.error(f"通道 [{route_label}] 配置错误: {reason}")
             return False
 
     for attempt in range(1, max_count + 1):
@@ -511,7 +514,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                 response = notifier.notify(title=title, content=content, **params)
         except NoSuchNotifierError as e:
             # 未知推送渠道属于配置性错误，重试无意义，立即返回 False
-            log.error(f"通道 [{route_label}] 配置错误: 未知推送渠道 {provider}")
+            reason = mask_sensitive_fields(
+                {'reason': f'未知推送渠道 {provider}'}, sensitive_fields={'reason'}
+            )['reason']
+            log.error(f"通道 [{route_label}] 配置错误: {reason}")
             return False
         except Exception as e:
             if not _handle_attempt_failure(

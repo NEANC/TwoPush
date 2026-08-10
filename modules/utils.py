@@ -37,7 +37,8 @@ def mask_sensitive_fields(fields, sensitive_fields):
     在字段字典的副本上进行处理：11 位手机号（1[3-9] 开头号段，允许带
     可选 +86/86 国家码前缀）保留前 3 位与后 4 位，access_token/token、
     sign、secret 键值对的值替换为 ***
-    （值取到空白为止，含 & 等连接符在内的完整敏感值一并脱敏）；
+    （支持 key=value、key: value、JSON 引号键值三种形式，值取到空白、
+    引号、逗号或右括号为止，含 & 等连接符在内的完整敏感值一并脱敏）；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留
@@ -65,20 +66,20 @@ def mask_sensitive_fields(fields, sensitive_fields):
         value = str(result[field])
         value = re.sub(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
         value = re.sub(
-            r'(?<![A-Za-z0-9_])((?:access_)?token)=[^\s]+',
-            r'\1=***',
+            r'(?<![A-Za-z0-9_])("?)((?:access_)?token)("?)\s*(?:=|:)\s*"?[^"\s,}\]]+"?',
+            r'\g<2>=***',
             value,
             flags=re.IGNORECASE,
         )
         value = re.sub(
-            r'(?<![A-Za-z0-9_])(sign=)[^\s]+',
-            r'\1***',
+            r'(?<![A-Za-z0-9_])("?)(sign)("?)\s*(?:=|:)\s*"?[^"\s,}\]]+"?',
+            r'\g<2>=***',
             value,
             flags=re.IGNORECASE,
         )
         value = re.sub(
-            r'(?<![A-Za-z0-9_])(secret=)[^\s]+',
-            r'\1***',
+            r'(?<![A-Za-z0-9_])("?)(secret)("?)\s*(?:=|:)\s*"?[^"\s,}\]]+"?',
+            r'\g<2>=***',
             value,
             flags=re.IGNORECASE,
         )
