@@ -343,3 +343,52 @@ def test_retryable_exception_still_retries(monkeypatch):
 
     assert result is False
     assert log.error.call_count == 3
+
+
+def test_unknown_provider_not_retried(monkeypatch):
+    """未知推送渠道（NoSuchNotifierError）应视为配置错误，记录一次后不重试"""
+    import modules.notification as notification
+    from unittest import mock
+    from onepush.exceptions import NoSuchNotifierError
+
+    def unknown_notifier(provider):
+        raise NoSuchNotifierError(provider)
+
+    monkeypatch.setattr(notification, 'get_notifier', unknown_notifier)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'no_such_provider_xyz'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert '未知' in log.error.call_args[0][0]
+    assert 'no_such_provider_xyz' in log.error.call_args[0][0]
+
+
+def test_unknown_provider_runtime_error_still_retries(monkeypatch):
+    """get_notifier 抛普通 RuntimeError 时仍应按 max_count 重试（守护 except Exception）"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notifier(provider):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', fail_notifier)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'no_such_provider_xyz'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3

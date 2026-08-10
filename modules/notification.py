@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
+from onepush.exceptions import NoSuchNotifierError
 
 from modules.utils import mask_sensitive_fields
 
@@ -469,6 +470,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             else:
                 notifier = get_notifier(provider)
                 response = notifier.notify(title=title, content=content, **params)
+        except NoSuchNotifierError as e:
+            # 未知推送渠道属于配置性错误，重试无意义，立即返回 False
+            log.error(f"通道 [{route_label}] 配置错误: 未知推送渠道 {provider}")
+            return False
         except ValueError as e:
             # 兜底：其他配置性 ValueError 重试无意义，立即返回 False
             log.error(f"通道 [{route_label}] 配置错误: {e}")
