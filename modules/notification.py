@@ -263,21 +263,25 @@ def _normalize_dingtalk_at(params):
     return at
 
 
-def _is_dingtalk_mention_word_character(character):
-    """判断字符是否会令相邻钉钉提醒失去独立边界。
+def _is_dingtalk_mention_token_continuation(character):
+    """判断字符是否会延续相邻钉钉提醒 token。
 
     Args:
         character: 待判断的单个字符
 
     Returns:
-        bool: Unicode 单词字符或组合附加符返回 True
+        bool: Unicode 单词字符、组合附加符或格式字符返回 True
     """
-    return bool(re.match(r'\w', character)) or unicodedata.category(
-        character).startswith('M')
+    category = unicodedata.category(character)
+    return bool(re.match(r'\w', character)) or category.startswith(
+        'M') or category == 'Cf'
 
 
 def _has_independent_dingtalk_mention(text, mention):
-    """判断正文是否包含前后边界独立的钉钉提醒 token。
+    """通过保守文本扫描判断正文是否包含独立钉钉提醒 token。
+
+    本函数不解析 msgtype 或 Markdown 语法。候选 @ 前紧邻任意数量的
+    反斜杠时均不视为独立提醒。
 
     Args:
         text: 消息正文
@@ -291,10 +295,10 @@ def _has_independent_dingtalk_mention(text, mention):
         end = match.end()
         if start:
             prefix = text[start - 1]
-            if prefix in ('@', '\\') or _is_dingtalk_mention_word_character(
+            if prefix in ('@', '\\') or _is_dingtalk_mention_token_continuation(
                     prefix):
                 continue
-        if end < len(text) and _is_dingtalk_mention_word_character(text[end]):
+        if end < len(text) and _is_dingtalk_mention_token_continuation(text[end]):
             continue
         return True
     return False

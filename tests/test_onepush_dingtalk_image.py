@@ -1256,6 +1256,44 @@ class TestTwoPushDingTalkAt:
         assert text.count("@13800138000") == 1
 
     @pytest.mark.parametrize(
+        "format_character",
+        [
+            "\u200c",
+            "\u200d",
+            "\u200e",
+            "\u200f",
+            "\u202a",
+            "\u202b",
+            "\u202c",
+            "\u202d",
+            "\u202e",
+            "\u2066",
+            "\u2067",
+            "\u2068",
+            "\u2069",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("mention", "mobiles", "is_at_all"),
+        [
+            ("@13800138000", ["13800138000"], False),
+            ("@所有人", [], True),
+        ],
+    )
+    def test_mention_followed_by_format_character_is_not_independent(
+        self, format_character, mention, mobiles, is_at_all
+    ):
+        """提醒后紧跟 Unicode 格式字符时应补齐独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 {mention}{format_character}后缀"
+        text = _append_missing_dingtalk_mentions(
+            content, mobiles, is_at_all=is_at_all
+        )
+
+        assert text == f"{content}\n\n{mention}"
+
+    @pytest.mark.parametrize(
         "prefix",
         ["x", "9", "_", "中", "@", "\\"],
     )
@@ -1366,6 +1404,25 @@ class TestTwoPushDingTalkAt:
         )
 
         assert text == "通知内容 @13800138000，关联 @13900139000abc\n\n@13900139000"
+
+    def test_later_independent_mention_is_found_after_invalid_candidate(self):
+        """先出现无效候选时仍应识别后续独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = "通知内容 @13800138000\u200d后缀，随后 @13800138000。"
+        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+
+        assert text == content
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+    def test_isolated_surrogate_boundary_does_not_crash(self, surrogate):
+        """孤立代理字符作为边界时扫描不应崩溃。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 @13800138000{surrogate}"
+        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+
+        assert text == content
 
     def test_duplicate_mobiles_are_deduplicated(self):
         """重复手机号应去重且保持顺序。"""
@@ -1501,6 +1558,7 @@ class TestTwoPushDingTalkPayload:
         body_field = "content" if msgtype == "text" else "text"
         assert payload[body_key][body_field].endswith("\n\n@13800138000")
 
+    @pytest.mark.parametrize("backslash_count", [1, 2, 3])
     @pytest.mark.parametrize(
         ("msgtype", "body_key", "body_field"),
         [
@@ -1509,15 +1567,16 @@ class TestTwoPushDingTalkPayload:
         ],
     )
     def test_payload_escaped_mention_is_appended_for_each_message_type(
-        self, msgtype, body_key, body_field
+        self, msgtype, body_key, body_field, backslash_count
     ):
-        """text 与 markdown 均按文本边界处理反斜杠转义提醒。"""
+        """text 与 markdown 均保守拒绝反斜杠紧邻的提醒。"""
         from modules.notification import _build_dingtalk_payload
 
+        escaped_mention = f"{'\\' * backslash_count}@13800138000"
         payload = _build_dingtalk_payload(
             {"msgtype": msgtype, "at": ["13800138000"]},
             "通知标题",
-            "通知内容 \\@13800138000",
+            f"通知内容 {escaped_mention}",
         )
 
         assert payload[body_key][body_field].endswith("\n\n@13800138000")
