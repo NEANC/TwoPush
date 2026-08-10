@@ -173,11 +173,20 @@ def _is_enhanced_dingtalk_channel(provider, params):
 
 
 def _as_string_list(value):
-    """将字符串或列表值归一为字符串列表。"""
+    """将字符串、数字标量或列表值归一为字符串列表。
+
+    Args:
+        value: 字符串、数字（int/float，排除 bool）或字符串列表/元组
+
+    Returns:
+        list: 归一化后的字符串列表；None 或无法归一时返回空列表
+    """
     if value is None:
         return []
     if isinstance(value, str):
         value = [value]
+    elif isinstance(value, (int, float)) and not isinstance(value, bool):
+        value = [str(value)]
     if not isinstance(value, (list, tuple)):
         return []
     return [str(item).strip() for item in value if str(item).strip()]

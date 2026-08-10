@@ -1204,6 +1204,38 @@ class TestTwoPushDingTalkAt:
 
         assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
 
+    def test_numeric_at_normalizes_to_mobile_list(self):
+        """数字 at 应转字符串归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": 13800138000})
+
+        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+
+    def test_numeric_at_mobiles_alias_works(self):
+        """数字 at_mobiles 别名应转字符串生效。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at_mobiles": 13800138000})
+
+        assert at["atMobiles"] == ["13800138000"]
+
+    def test_non_mobile_numeric_at_is_filtered(self):
+        """非手机号数字 at 应被过滤，不进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": 12345})
+
+        assert "atMobiles" not in at
+
+    def test_boolean_at_is_not_converted(self):
+        """布尔 at 不应转字符串进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": True})
+
+        assert "atMobiles" not in at
+
     def test_append_missing_mobile_mentions(self):
         """正文缺少 @手机号 时应自动补齐。"""
         from modules.notification import _append_missing_dingtalk_mentions
