@@ -1055,6 +1055,45 @@ class TestTwoPushDingTalkUrlBuilder:
 
         assert query["sign"] == expected
 
+    def test_empty_access_token_value_raises_value_error(self):
+        """完整 Webhook URL 的 access_token 值为空时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token="
+            )
+
+    def test_blank_access_token_value_raises_value_error(self):
+        """完整 Webhook URL 的 access_token 值为空白时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=%20%20"
+            )
+
+    def test_non_empty_access_token_still_works(self):
+        """access_token 值非空时完整 Webhook URL 应原样返回（守护既有行为）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
+    def test_multiple_access_tokens_one_non_empty_passes(self):
+        """多个 access_token 参数中至少一个非空时应放行。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=&access_token=abc"
+        )
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+
 
 class TestTwoPushDingTalkAt:
     """测试 TwoPush 钉钉手机号 @ 处理。"""
