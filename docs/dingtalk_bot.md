@@ -397,6 +397,14 @@ python TwoPush.py -p .\test.json
 
 TwoPush 默认只支持手机号 @。`at` 可写为字符串或数组，程序会归一为 `atMobiles`，并自动在正文中补齐 `@手机号`。
 
+`at` 支持以下写法：
+
+- 字符串或数组：`"at": "13800138000"` 或 `"at": ["13800138000"]`，程序归一为 `atMobiles`
+- 字典：`"at": {"atMobiles": ["13800138000"], "isAtAll": true}`
+- 顶层键：`at_mobiles` / `atMobiles`（手机号数组）、`is_at_all` / `isAtAll`（@ 全员）
+
+@ 全员（`isAtAll`）的布尔解析规则：布尔值原样生效；字符串 `true`、`1`、`yes`、`on`（大小写不敏感）视为真，其余字符串（含 `false`、`0`、`no`、`off`）视为假。`at` 字典内部的 `isAtAll` 与顶层 `is_at_all`/`isAtAll` 取或生效。
+
 ### 日志脱敏
 
 TwoPush 日志会脱敏手机号、`token`（含 `access_token`）、`secret` 与 `sign`，避免敏感信息进入控制台或日志文件。
