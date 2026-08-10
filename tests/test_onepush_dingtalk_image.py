@@ -1001,6 +1001,34 @@ class TestTwoPushDingTalkUrlBuilder:
 
         assert url == full_url
 
+    def test_non_standard_path_full_url_raises_value_error(self):
+        """完整 Webhook URL 使用非标准路径时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="robot/send"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/other/path?access_token=abc123"
+            )
+
+    def test_trailing_slash_path_raises_value_error(self):
+        """完整 Webhook URL 路径带尾部斜杠（非标准路径）时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="robot/send"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send/?access_token=abc123"
+            )
+
+    def test_standard_path_full_url_still_works(self):
+        """完整 Webhook URL 使用标准路径 /robot/send 时应原样返回（守护既有行为）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
     def test_sign_is_encoded_exactly_once(self):
         """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
         import base64
