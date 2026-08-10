@@ -18,7 +18,8 @@
 .\.venv\Scripts\python.exe -m pytest -q tests\test_onepush_dingtalk_image.py tests\test_notification.py
 ```
 
-下文 `dingtalk(onepush)` 的关键 URL/路由行为可通过上述测试核对；完整 HTTP URL 与已有签名参数等版本细节以当前 OnePush 源码核对结果为准。
+上述测试核对了裸 token URL 构造、HTTPS 完整 URL 复用、secret 加签，以及仅含 token 时选择 `dingtalk(onepush)`、含 `msgtype` 等增强参数时选择 `dingtalk(builtin)` 并在汇总与失败日志中使用对应路由标识。
+未完整测试的 HTTP 完整 URL、已有签名参数行为归因于 OnePush 1.9.0 的 `DingTalk._prepare_url` 实现，可在安装包 `onepush/providers/dingtalk.py` 中定位。
 
 ## 消息类型支持
 
