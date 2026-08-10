@@ -262,6 +262,21 @@ def _normalize_dingtalk_at(params):
     return at
 
 
+def _has_independent_dingtalk_mention(text, mention, unicode_boundary=False):
+    """判断正文是否包含尾部边界独立的钉钉提醒 token。
+
+    Args:
+        text: 消息正文
+        mention: 包含 @ 前缀的提醒文本
+        unicode_boundary: 是否将 Unicode 单词字符视为相邻 token
+
+    Returns:
+        bool: 正文包含独立提醒 token 时返回 True
+    """
+    trailing_word = r'\w' if unicode_boundary else r'[A-Za-z0-9_]'
+    return re.search(rf'{re.escape(mention)}(?!{trailing_word})', text) is not None
+
+
 def _append_missing_dingtalk_mentions(text, mobiles, is_at_all=False):
     """将缺失的 @手机号 与 @所有人 追加到钉钉消息正文。
 
@@ -276,8 +291,12 @@ def _append_missing_dingtalk_mentions(text, mobiles, is_at_all=False):
     Returns:
         str: 补齐缺失 @ 文本后的正文
     """
-    missing = [mobile for mobile in mobiles if f'@{mobile}' not in text]
-    if is_at_all and '@所有人' not in text:
+    missing = [
+        mobile for mobile in mobiles
+        if not _has_independent_dingtalk_mention(text, f'@{mobile}')
+    ]
+    if is_at_all and not _has_independent_dingtalk_mention(
+            text, '@所有人', unicode_boundary=True):
         missing.append('所有人')
     if not missing:
         return text
