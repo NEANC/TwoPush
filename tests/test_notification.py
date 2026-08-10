@@ -213,3 +213,46 @@ def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
     assert '通道 [serverchan] 通知发送失败' in caplog.text
     assert 'dingtalk(onepush)' not in caplog.text
     assert 'dingtalk(builtin)' not in caplog.text
+
+
+def test_config_error_value_error_is_not_retried():
+    """配置性 ValueError（如缺 token）应记录一次错误后直接返回 False，不进入重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'msgtype': 'markdown'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert '缺少 token' in log.error.call_args[0][0]
+
+
+def test_retryable_exception_still_retries(monkeypatch):
+    """普通异常（RuntimeError）仍应按 max_count 次数重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_webhook(*args, **kwargs):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', fail_webhook)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'msgtype': 'markdown', 'token': 'abc'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3

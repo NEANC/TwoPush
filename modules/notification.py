@@ -390,6 +390,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             else:
                 notifier = get_notifier(provider)
                 response = notifier.notify(title=title, content=content, **params)
+        except ValueError as e:
+            # 配置性错误（如缺 token、完整 URL 缺 access_token），重试无意义
+            log.error(f"通道 [{route_label}] 配置错误: {e}")
+            return False
         except Exception as e:
             if not _handle_attempt_failure(
                     route_label, attempt, max_count, str(e),
