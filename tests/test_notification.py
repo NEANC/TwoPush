@@ -105,7 +105,7 @@ def test_send_notification_success_does_not_log_title(monkeypatch, caplog):
         result = notification.send_notification(
             title='# 测试推送',
             content='正文',
-            channels=[{'provider': 'dingtalk'}],
+            channels=[{'provider': 'dingtalk', 'token': 'token-only'}],
         )
 
     assert result == [('dingtalk', True)]
@@ -129,7 +129,7 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
         result = notification.send_notification(
             title='标题',
             content='正文',
-            channels=[{'provider': 'dingtalk'}],
+            channels=[{'provider': 'dingtalk', 'token': 'token-only'}],
             retry_settings={'interval': 0, 'max_count': 1},
         )
 
@@ -157,7 +157,7 @@ def test_builtin_dingtalk_failure_logs_builtin_branch(monkeypatch, caplog):
         result = notification.send_notification(
             title='标题',
             content='正文',
-            channels=[{'provider': 'dingtalk', 'msgtype': 'markdown'}],
+            channels=[{'provider': 'dingtalk', 'msgtype': 'markdown', 'token': 'token-only'}],
             retry_settings={'interval': 0, 'max_count': 1},
         )
 
@@ -223,6 +223,30 @@ def test_config_error_value_error_is_not_retried():
     log = mock.MagicMock()
     result = notification._notify_single_channel(
         {'provider': 'dingtalk', 'msgtype': 'markdown'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert '缺少 token' in log.error.call_args[0][0]
+
+
+def test_onepush_path_missing_token_not_retried(monkeypatch):
+    """非增强（onepush）路径缺 token 时应前置拦截，不调用 onepush 也不重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def boom_notifier(provider):
+        raise AssertionError("缺 token 时不应调用 get_notifier")
+
+    monkeypatch.setattr(notification, 'get_notifier', boom_notifier)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk'},
         '标题',
         '内容',
         retry_interval=0,

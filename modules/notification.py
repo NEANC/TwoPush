@@ -383,6 +383,19 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
     enhanced = _is_enhanced_dingtalk_channel(provider, params)
     route_label = _describe_channel_route(provider, enhanced)
 
+    # 配置性校验：钉钉通道必须有 token，且完整 Webhook URL 必须含 access_token；
+    # 增强直发/onepush 两种路径统一在此拦截，避免对配置错误做无意义重试
+    if str(provider).strip().lower() == 'dingtalk':
+        token = params.get('token')
+        if not token:
+            log.error(f"通道 [{route_label}] 配置错误: 钉钉通道缺少 token")
+            return False
+        try:
+            _build_dingtalk_webhook_url(str(token))
+        except ValueError as e:
+            log.error(f"通道 [{route_label}] 配置错误: {e}")
+            return False
+
     for attempt in range(1, max_count + 1):
         try:
             if enhanced:
@@ -391,7 +404,7 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                 notifier = get_notifier(provider)
                 response = notifier.notify(title=title, content=content, **params)
         except ValueError as e:
-            # 配置性错误（如缺 token、完整 URL 缺 access_token），重试无意义
+            # 兜底：其他配置性 ValueError 重试无意义，立即返回 False
             log.error(f"通道 [{route_label}] 配置错误: {e}")
             return False
         except Exception as e:
