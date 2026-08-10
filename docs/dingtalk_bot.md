@@ -357,21 +357,38 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 
 ### token 写法
 
-`token` 仅支持以下两种输入：
+`token` 的处理取决于通道实际使用的路由，不能将两条路径的行为混用。
 
-- 裸 access token：`xxx`。TwoPush 会先去除首尾空白，再将非空值拼接为标准 Webhook URL。
+**包含增强键：`dingtalk(builtin)`**
+
+配置中存在任一增强键时，由 TwoPush 内置实现发送。此路径支持：
+
+- 裸 access token：`xxx`。
 - 完整 HTTP(S) Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
 
-完整 URL 必须同时满足以下条件：
+TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `https` 协议、官方域名 `oapi.dingtalk.com` 和严格路径 `/robot/send`，并且查询参数中至少有一个去除首尾空白后非空的 `access_token`。`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
 
-- 协议为 `http` 或 `https`。
-- 域名必须为钉钉官方域名 `oapi.dingtalk.com`，不接受内网地址、自定义转发域名或其他域名。
-- 路径必须严格为 `/robot/send`，`/robot/send/` 等其他路径均不接受。
-- 查询参数中至少有一个 `access_token` 的值去除首尾空白后非空；只有空值或空白值等同于缺少有效 `access_token`。
+配置非空 `secret` 时，TwoPush 会按本次发送时间重新生成 `timestamp` 与 `sign`；完整 URL 中已有的同名参数会先被移除，再由新值覆盖，最终各保留一个。
 
-含 `://` 或 `=`、但不符合上述完整 URL 要求的字符串会被视为疑似 URL，并在发送前报错，不会回退为裸 token。空值、纯空白 token、非法完整 URL 等配置错误都会在发送前统一拦截，跳过该通道且不进入重试。
+**未包含增强键：`dingtalk(onepush)`**
 
-配置非空 `secret` 时，TwoPush 会根据本次发送时间重新生成 `timestamp` 与 `sign`。如果完整 URL 已包含这两个参数，原值会被移除并由新值覆盖，最终各保留一个。
+未配置增强键时，TwoPush 将原始 `token`、`secret` 等参数交给已安装的 OnePush 钉钉 provider。此路径应使用 OnePush 支持的裸 access token 写法：
+
+```json
+{
+  "provider": "dingtalk",
+  "token": "xxx",
+  "secret": "SECxxx"
+}
+```
+
+不要依赖完整 Webhook URL 在此路径中被复用，也不要假定 TwoPush 会为此路径重新签名或覆盖 URL 中已有的 `timestamp`、`sign`；URL 构造和加签发送行为由 OnePush 负责。
+
+**统一发送前校验**
+
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做配置预校验。因此，看似完整 URL 的值会在发送前检查协议、官方域名、严格路径和有效 `access_token`；该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 构造或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
+
+空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 
 ### 多配置示例
 
