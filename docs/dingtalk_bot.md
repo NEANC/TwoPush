@@ -18,7 +18,7 @@
 .\.venv\Scripts\python.exe -m pytest -q tests\test_onepush_dingtalk_image.py tests\test_notification.py
 ```
 
-下文 `dingtalk(onepush)` 的 URL/路由行为由上述测试覆盖，结论仅适用于本文档核对环境。
+下文 `dingtalk(onepush)` 的关键 URL/路由行为可通过上述测试核对；完整 HTTP URL 与已有签名参数等版本细节以当前 OnePush 源码核对结果为准。
 
 ## 消息类型支持
 
