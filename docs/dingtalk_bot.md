@@ -357,14 +357,21 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 
 ### token 写法
 
-`token` 支持两种输入：
+`token` 仅支持以下两种输入：
 
-- 仅 access token：`xxx`
-- 完整 Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`
+- 裸 access token：`xxx`。TwoPush 会先去除首尾空白，再将非空值拼接为标准 Webhook URL。
+- 完整 HTTP(S) Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
 
-完整 Webhook URL 仅接受钉钉官方域名 `oapi.dingtalk.com`（不支持内网地址或自定义转发域名），且必须包含 `access_token` 参数。配置不合规时（域名非官方或缺少 `access_token`）会在发送前报「配置错误」并跳过该通道，不进入重试。
+完整 URL 必须同时满足以下条件：
 
-配置 `secret` 时，TwoPush 会自动追加 `timestamp` 与 `sign`。
+- 协议为 `http` 或 `https`。
+- 域名必须为钉钉官方域名 `oapi.dingtalk.com`，不接受内网地址、自定义转发域名或其他域名。
+- 路径必须严格为 `/robot/send`，`/robot/send/` 等其他路径均不接受。
+- 查询参数中至少有一个 `access_token` 的值去除首尾空白后非空；只有空值或空白值等同于缺少有效 `access_token`。
+
+含 `://` 或 `=`、但不符合上述完整 URL 要求的字符串会被视为疑似 URL，并在发送前报错，不会回退为裸 token。空值、纯空白 token、非法完整 URL 等配置错误都会在发送前统一拦截，跳过该通道且不进入重试。
+
+配置非空 `secret` 时，TwoPush 会根据本次发送时间重新生成 `timestamp` 与 `sign`。如果完整 URL 已包含这两个参数，原值会被移除并由新值覆盖，最终各保留一个。
 
 ### 多配置示例
 
