@@ -905,25 +905,40 @@ class TestTwoPushDingTalkUrlBuilder:
         assert url.count("access_token=") == 1
 
     def test_non_http_scheme_is_treated_as_token(self):
-        """非 http(s) scheme 的地址应被视为裸 token 而非完整 Webhook URL。"""
+        """非 http(s) scheme 的地址不应被静默当作裸 token，应抛出 ValueError。"""
         from modules.notification import _build_dingtalk_webhook_url
 
         token = "ftp://example.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(token)
 
-        assert url.startswith("https://oapi.dingtalk.com/robot/send?access_token=")
-        assert "ftp%3A%2F%2Fexample.com" in url
-        assert "ftp://example.com" not in url
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url(token)
+
+    def test_schemeless_query_string_raises_value_error(self):
+        """无 scheme 但含 query（=）特征时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url(
+                "oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+    def test_plain_token_still_works(self):
+        """纯裸 token 应正常拼接（守护既有行为）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123")
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
 
     def test_scheme_without_netloc_is_not_full_url(self):
-        """仅有 scheme 而无 netloc 时不应视为完整 URL。"""
+        """仅有 scheme 而无 netloc 时不应视为完整 URL，且因含协议特征应抛出 ValueError。"""
         from modules.notification import _build_dingtalk_webhook_url, _is_full_url
 
         assert _is_full_url("https://") is False
         assert _is_full_url("http://") is False
 
-        url = _build_dingtalk_webhook_url("http://")
-        assert url.startswith("https://oapi.dingtalk.com/robot/send?access_token=")
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url("http://")
 
     def test_http_scheme_case_insensitive(self):
         """大写 http(s) scheme 应同样被识别为完整 URL。"""
