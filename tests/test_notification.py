@@ -283,6 +283,34 @@ def test_missing_access_token_in_full_url_not_retried(monkeypatch):
     assert 'access_token' in log.error.call_args[0][0]
 
 
+def test_blank_token_not_retried(monkeypatch):
+    """纯空白 token 应作为配置错误前置拦截，不调用 onepush 也不重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    calls = []
+
+    def boom_notifier(provider):
+        calls.append(provider)
+        raise AssertionError("空白 token 时不应调用 get_notifier")
+
+    monkeypatch.setattr(notification, 'get_notifier', boom_notifier)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': '   '},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 1
+    assert '缺少 token' in log.error.call_args[0][0]
+    assert calls == []
+
+
 def test_retryable_exception_still_retries(monkeypatch):
     """普通异常（RuntimeError）仍应按 max_count 次数重试"""
     import modules.notification as notification

@@ -275,7 +275,7 @@ def _send_dingtalk_webhook(channel, title, content):
         ValueError: 通道缺少 token 时抛出
     """
     token = channel.get('token')
-    if not token:
+    if not token or not str(token).strip():
         raise ValueError("钉钉通道缺少 token")
     url = _build_dingtalk_webhook_url(token, channel.get('secret'))
     payload = _build_dingtalk_payload(channel, title, content)
@@ -406,7 +406,7 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
     # 增强直发/onepush 两种路径统一在此拦截，避免对配置错误做无意义重试
     if str(provider).strip().lower() == 'dingtalk':
         token = params.get('token')
-        if not token:
+        if not token or not str(token).strip():
             log.error(f"通道 [{route_label}] 配置错误: 钉钉通道缺少 token")
             return False
         try:

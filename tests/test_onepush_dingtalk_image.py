@@ -1389,6 +1389,22 @@ class TestTwoPushDingTalkDirectSend:
         with pytest.raises(ValueError, match="缺少 token"):
             notification._send_dingtalk_webhook({}, "通知标题", "通知内容")
 
+    def test_send_dingtalk_webhook_blank_token_raises(self, monkeypatch):
+        """纯空白 token 应抛出 ValueError，不发起请求。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("空白 token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            notification._send_dingtalk_webhook(
+                {"token": "   ", "msgtype": "markdown"},
+                "通知标题",
+                "通知内容",
+            )
+
     def test_send_dingtalk_webhook_full_url_without_token_raises(self, monkeypatch):
         """完整 Webhook URL 缺少 access_token 时发送前应抛出 ValueError。"""
         from modules import notification
