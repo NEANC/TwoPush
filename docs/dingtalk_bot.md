@@ -353,6 +353,8 @@ r = requests.post(url, json=body, headers={"Content-Type": "application/json"})
 
 TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgtype`、`at`、`at_mobiles`、`atMobiles`、`is_at_all` 或 `isAtAll` 时，TwoPush 会直接调用钉钉 Webhook；未包含这些参数时继续使用 OnePush 原逻辑。
 
+注意：增强键只要存在即会触发直发增强路径（即使值为 `false`、空字符串或空数组），仅 `null` 值不会触发。增强路径未指定 `msgtype`（或指定了无效值）时默认发送 `markdown` 消息，与 OnePush 路径默认 `text`（标题与内容拼接）不同。
+
 ### token 写法
 
 `token` 支持两种输入：
