@@ -261,3 +261,61 @@ def test_single_quoted_sensitive_name_substrings_are_not_masked():
     result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
 
     assert result == original
+
+
+@pytest.mark.parametrize(
+    ('original', 'expected'),
+    [
+        ("{'secret': 'top-secret", "{'secret': '***"),
+        ('{"secret": "top-secret', '{"secret": "***'),
+    ],
+)
+def test_unclosed_quoted_sensitive_values_are_masked_without_closing_quote(
+    original, expected
+):
+    """未闭合单双引号敏感值应脱敏到末尾且不补闭合引号"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected
+    assert 'top-secret' not in result
+
+
+@pytest.mark.parametrize(
+    ('original', 'expected'),
+    [
+        ('{"secret\': \'top-secret', '{"secret\': \'***'),
+        ('{\'secret": "top-secret', '{\'secret": "***'),
+    ],
+)
+def test_mixed_key_quotes_with_unclosed_values_are_masked(original, expected):
+    """敏感键两侧引号混用时仍应保守脱敏未闭合值"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected
+    assert 'top-secret' not in result
+
+
+@pytest.mark.parametrize(
+    ('original', 'expected'),
+    [
+        (r"{'secret': 'abc\'def", "{'secret': '***"),
+        (r"{'secret': 'abc\\' tail", r"{'secret': '***' tail"),
+    ],
+)
+def test_backslash_parity_controls_sensitive_value_quote_boundary(
+    original, expected
+):
+    """奇数反斜杠转义引号，偶数反斜杠允许引号闭合"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected
+    assert 'abc' not in result
+
+
+def test_single_quoted_sign_with_unclosed_value_is_masked():
+    """单引号 sign 的未闭合敏感值应脱敏到字符串末尾"""
+    original = "{'sign': 'top-secret"
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == "{'sign': '***"
+    assert 'top-secret' not in result

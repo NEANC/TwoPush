@@ -30,23 +30,41 @@ CHANNEL_KEY_ALIASES = {
     'pushdeer': {'key': 'pushkey'},
 }
 
-# 敏感键值对脱敏模式：支持 key=value、key: value 与单双引号键值形式；
-# 值侧优先按带转义处理的引号字符串整体匹配，否则取到空白、引号、逗号或
-# 右括号为止，值内含转义引号、逗号或 & 等连接符时均能完整脱敏
 _SENSITIVE_KEY_VALUE_RE = re.compile(
-    r'(?<![A-Za-z0-9_])(["\']?)((?:access_)?token|sign|secret)(["\']?)'
-    r'(\s*(?:=|:)\s*)('
-    r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'|[^"\'\s,}\]]+)',
-    flags=re.IGNORECASE,
+    r'''
+    (?<![A-Za-z0-9_])
+    (?P<leading_quote>["']?)
+    (?P<key>(?:access_)?token|sign|secret)
+    (?P<trailing_quote>["']?)
+    (?P<separator>\s*(?:=|:)\s*)
+    (?:
+        (?P<double_open>")
+        (?P<double_value>(?:[^"\\]|\\.)*)
+        (?P<double_close>"|$)
+        |
+        (?P<single_open>')
+        (?P<single_value>(?:[^'\\]|\\.)*)
+        (?P<single_close>'|$)
+        |
+        (?P<bare_value>[^"'\s,}\]]+)
+    )
+    ''',
+    flags=re.IGNORECASE | re.VERBOSE,
 )
 
 
 def _replace_sensitive_key_value(match):
     """将匹配到的敏感键值对替换为脱敏形式，引号形式保留原有结构。"""
-    leading_quote, key, trailing_quote, separator, value = match.groups()
-    if value.startswith(('"', "'")):
-        return f'{leading_quote}{key}{trailing_quote}{separator}{value[0]}***{value[0]}'
-    return f'{leading_quote}{key}{trailing_quote}=***'
+    groups = match.groupdict()
+    prefix = (
+        f'{groups["leading_quote"]}{groups["key"]}'
+        f'{groups["trailing_quote"]}'
+    )
+    if groups['double_open']:
+        return f'{prefix}{groups["separator"]}"***{groups["double_close"]}'
+    if groups['single_open']:
+        return f"{prefix}{groups['separator']}'***{groups['single_close']}"
+    return f'{prefix}=***'
 
 
 def mask_sensitive_fields(fields, sensitive_fields):
@@ -56,8 +74,9 @@ def mask_sensitive_fields(fields, sensitive_fields):
     可选 +86/86 国家码前缀）保留前 3 位与后 4 位，access_token/token、
     sign、secret 键值对的值替换为 ***
     （支持 key=value、key: value、单双引号键值形式；值侧优先按
-    带转义处理的引号字符串整体匹配，否则取到空白、引号、逗号或
-    右括号为止，故值内含转义引号、逗号或 & 等连接符时均能完整脱敏；
+    带转义处理的引号字符串匹配到明确闭合引号或字符串末尾，否则取到
+    空白、引号、逗号或右括号为止，故值内含转义引号、逗号或 & 等连接符
+    时均能完整脱敏，未闭合的引号值不会凭空补充闭合引号；
     引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
     'access_token': '***'，裸值形式输出为 access_token=***）；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
