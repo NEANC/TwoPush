@@ -346,3 +346,51 @@ def test_truncated_consecutive_sensitive_text_ending_with_backslash_is_masked():
     assert result == "secret='***"
     assert 'abc' not in result
     assert 'xyz' not in result
+
+
+@pytest.mark.parametrize('key', ['access_token', 'token', 'sign', 'secret'])
+@pytest.mark.parametrize('quote', ['"', "'"])
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
+@pytest.mark.parametrize(
+    ('ending', 'expected_ending'),
+    [
+        ('closed', 'closed'),
+        ('unclosed', 'unclosed'),
+        ('truncated', 'truncated'),
+    ],
+)
+def test_backslash_line_break_in_sensitive_quoted_value_is_fully_masked(
+    key, quote, line_ending, ending, expected_ending
+):
+    """反斜杠换行后的敏感值在闭合、未闭合与末尾截断时均应完整脱敏"""
+    prefix = f'{key}={quote}'
+    if ending == 'closed':
+        original = f'{prefix}before\\{line_ending}after{quote} keep=visible'
+        expected = f'{prefix}***{quote} keep=visible'
+    elif ending == 'unclosed':
+        original = f'{prefix}before\\{line_ending}after'
+        expected = f'{prefix}***'
+    else:
+        original = f'{prefix}before\\{line_ending}'
+        expected = f'{prefix}***'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected, expected_ending
+    assert 'before' not in result
+    assert 'after' not in result
+
+
+@pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
+def test_backslash_line_break_does_not_mask_sensitive_name_substrings(line_ending):
+    """含敏感键名子串的普通键在反斜杠换行场景中不应被误伤"""
+    original = (
+        f'design="before\\{line_ending}after" '
+        f'assign=\'before\\{line_ending}after\' '
+        f'mytoken="before\\{line_ending}after" '
+        f'xaccess_token=\'before\\{line_ending}after\''
+    )
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
