@@ -443,3 +443,51 @@ def test_unknown_provider_runtime_error_still_retries(monkeypatch):
 
     assert result is False
     assert log.error.call_count == 3
+
+
+def test_other_provider_value_error_still_retries(monkeypatch):
+    """非钉钉渠道 notify 阶段抛 ValueError（如 SMTP 断连）时仍应按 max_count 重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        raise ValueError('SMTPServerDisconnected 临时断连')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'smtp', 'host': 'smtp.example.com'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3
+
+
+def test_enhanced_dingtalk_value_error_still_retries(monkeypatch):
+    """增强路径 _send_dingtalk_webhook 抛 ValueError（如响应解析失败）时仍应按 max_count 重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_webhook(*args, **kwargs):
+        raise ValueError('请求响应解析失败')
+
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', fail_webhook)
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'msgtype': 'markdown', 'token': 'abc'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3

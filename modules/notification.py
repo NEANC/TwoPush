@@ -513,10 +513,6 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             # 未知推送渠道属于配置性错误，重试无意义，立即返回 False
             log.error(f"通道 [{route_label}] 配置错误: 未知推送渠道 {provider}")
             return False
-        except ValueError as e:
-            # 兜底：其他配置性 ValueError 重试无意义，立即返回 False
-            log.error(f"通道 [{route_label}] 配置错误: {e}")
-            return False
         except Exception as e:
             if not _handle_attempt_failure(
                     route_label, attempt, max_count, str(e),
