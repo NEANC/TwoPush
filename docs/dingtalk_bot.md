@@ -98,6 +98,10 @@ def check_dingtalk_response(response):
     except requests.exceptions.RequestException:
         raise RuntimeError("钉钉 Webhook HTTP 请求失败") from None
 
+    content_encoding = response.headers.get("Content-Encoding", "")
+    if content_encoding.strip().lower() not in ("", "identity"):
+        raise RuntimeError("钉钉 Webhook 返回了不支持的压缩响应")
+
     content_length = response.headers.get("Content-Length")
     if (
         isinstance(content_length, str)
@@ -106,7 +110,7 @@ def check_dingtalk_response(response):
     ):
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
-    response.raw.decode_content = True
+    response.raw.decode_content = False
     try:
         body = response.raw.read(MAX_RESPONSE_BYTES + 1)
     except Exception:
@@ -146,13 +150,14 @@ body = {
 with requests.post(
     webhook_url,
     json=body,
+    headers={"Accept-Encoding": "identity"},
     timeout=10,
     stream=True,
 ) as response:
     check_dingtalk_response(response)
 ```
 
-`stream=True` 避免预先下载完整响应体；配合最多读取 1 MiB + 1 字节的限长读取，可同时限制下载量和解压后的 JSON 解析量。
+请求头仅接受 identity 编码，响应检查也只允许空 `Content-Encoding` 或单一 identity，并关闭 urllib3 自动解压，再对原始响应读取最多 1 MiB + 1 字节。该策略在 UTF-8 解码和 JSON 解析前拒绝 gzip、br、deflate 及多值编码，避免不同 urllib3 版本的解压 `read` 语义影响限长效果。
 
 ## @ 功能
 
@@ -373,6 +378,10 @@ def check_dingtalk_response(response):
     except requests.exceptions.RequestException:
         raise RuntimeError("钉钉 Webhook HTTP 请求失败") from None
 
+    content_encoding = response.headers.get("Content-Encoding", "")
+    if content_encoding.strip().lower() not in ("", "identity"):
+        raise RuntimeError("钉钉 Webhook 返回了不支持的压缩响应")
+
     content_length = response.headers.get("Content-Length")
     if (
         isinstance(content_length, str)
@@ -381,7 +390,7 @@ def check_dingtalk_response(response):
     ):
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
-    response.raw.decode_content = True
+    response.raw.decode_content = False
     try:
         body = response.raw.read(MAX_RESPONSE_BYTES + 1)
     except Exception:
@@ -454,7 +463,10 @@ body = {
 with requests.post(
     url,
     json=body,
-    headers={"Content-Type": "application/json"},
+    headers={
+        "Content-Type": "application/json",
+        "Accept-Encoding": "identity",
+    },
     timeout=10,
     stream=True,
 ) as response:
@@ -462,7 +474,7 @@ with requests.post(
     print(response.status_code)
 ```
 
-`stream=True` 与限长的 `raw.read` 共同确保代码不会预先下载完整响应，并将解压后进入 JSON 解析的数据限制在最多 1 MiB + 1 字节。
+请求头仅接受 identity 编码，响应检查也只允许空 `Content-Encoding` 或单一 identity，并关闭 urllib3 自动解压，再对原始响应读取最多 1 MiB + 1 字节。该策略在 UTF-8 解码和 JSON 解析前拒绝 gzip、br、deflate 及多值编码，避免不同 urllib3 版本的解压 `read` 语义影响限长效果。
 
 ### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
 
@@ -488,7 +500,10 @@ body = {
 with requests.post(
     url,
     json=body,
-    headers={"Content-Type": "application/json"},
+    headers={
+        "Content-Type": "application/json",
+        "Accept-Encoding": "identity",
+    },
     timeout=10,
     stream=True,
 ) as response:
