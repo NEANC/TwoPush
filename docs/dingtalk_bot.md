@@ -157,7 +157,7 @@ with requests.post(
     check_dingtalk_response(response)
 ```
 
-请求头仅接受 identity 编码，响应检查也只允许空 `Content-Encoding` 或单一 identity，并关闭 urllib3 自动解压，再对原始响应读取最多 1 MiB + 1 字节。该策略在 UTF-8 解码和 JSON 解析前拒绝 gzip、br、deflate 及多值编码，避免不同 urllib3 版本的解压 `read` 语义影响限长效果。
+`Accept-Encoding: identity` 配合 `raw.read`，限制的是进入 UTF-8/JSON 解析的响应实体字节数；不承诺限制 HTTP 传输开销、chunk 扩展或总下载成本。`timeout=10` 是连接和相邻读取活动超时，并非请求总时限；持续缓慢传输可能耗时更久。
 
 ## @ 功能
 
@@ -474,7 +474,7 @@ with requests.post(
     print(response.status_code)
 ```
 
-请求头仅接受 identity 编码，响应检查也只允许空 `Content-Encoding` 或单一 identity，并关闭 urllib3 自动解压，再对原始响应读取最多 1 MiB + 1 字节。该策略在 UTF-8 解码和 JSON 解析前拒绝 gzip、br、deflate 及多值编码，避免不同 urllib3 版本的解压 `read` 语义影响限长效果。
+`Accept-Encoding: identity` 配合 `raw.read`，限制的是进入 UTF-8/JSON 解析的响应实体字节数；不承诺限制 HTTP 传输开销、chunk 扩展或总下载成本。`timeout=10` 是连接和相邻读取活动超时，并非请求总时限；持续缓慢传输可能耗时更久。
 
 ### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
 
