@@ -535,9 +535,9 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 
 **未包含增强键：`dingtalk(onepush)`**
 
-未配置增强键时，TwoPush 将原始 `token`、`secret` 等参数交给已安装的 OnePush 钉钉 provider。
+未配置增强键时，TwoPush 仍调用已安装的 OnePush 钉钉 provider，但不会把原始钉钉凭据对象直接交给 OnePush。TwoPush 会创建发送参数副本，以统一构造并校验后的最终 HTTPS Webhook URL 替换副本中的 `token`，同时移除已被消费的 `secret`；原始通道参数对象保持不变。
 
-**当前 OnePush 1.9.0 的实现事实：** 裸 access token 会拼接到 OnePush 的基础 URL；完整 HTTPS URL 会原样复用；如果绕过 TwoPush 直接调用 OnePush，完整 HTTP URL 会被当作 token 再套入基础 URL，因此不要使用。配置非空 `secret` 时，OnePush 会直接在结果 URL 后追加新的 `timestamp` 与 `sign`，不会去重或覆盖原有同名参数。
+**当前 OnePush 1.9.0 的实现事实：** 小写 `https://` 开头的完整 URL 会原样复用；未提供 `secret` 时不会追加签名。因此 OnePush transport 使用的 URL 与 TwoPush 构造并校验的最终 URL 完全相同。如果绕过 TwoPush 直接调用 OnePush，裸 access token 会拼接到 OnePush 的基础 URL，完整 HTTP URL 会被当作 token 再套入基础 URL；配置非空 `secret` 时，OnePush 会直接追加新的 `timestamp` 与 `sign`，不会去重或覆盖原有同名参数。
 
 **推荐用法：** 此路径始终使用裸 access token：
 
@@ -549,11 +549,13 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 }
 ```
 
-完整 HTTPS URL 在当前 OnePush 1.9.0 中可以复用，但该行为由 OnePush 版本实现决定，TwoPush 不保证兼容性；完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 OnePush 负责加签，不承诺覆盖 URL 中已有的 `timestamp`、`sign`，因此不要预先附加这些参数。
+TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有测试与实现核对限定为 OnePush 1.9.0；`requirements.txt` 允许的旧版本 `>=1.2.0` 是否保持该行为未获保证。完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 TwoPush 消费并完成唯一一次加签，最终 URL 中已有的 `timestamp`、`sign` 会被替换且各保留一个，OnePush 不会收到 `secret`，因而不会二次签名。
 
 **统一发送前校验**
 
-无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并使用实际 `secret` 调用内置 URL 构造逻辑做统一配置预校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，加签后的最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 规范化或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并为每个通道使用实际 `secret` 调用一次内置 URL 构造逻辑，得到唯一的最终 `validated_url`。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，加签后的最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。query 参数数量在解析前按非空 query 的 `&` 数量加一确定，空 query 为零；超限错误不依赖解析器异常文本，其他 `ValueError` 统一报告为 query 解析错误，`UnicodeDecodeError` 单独报告为非法 UTF-8。
+
+`dingtalk(builtin)` 将同一个 `validated_url` 直接交给 HTTP 请求函数，不再构造或签名。`dingtalk(onepush)` 将它作为参数副本中的 `token` 交给 OnePush，并移除 `secret`；因此两条路由实际发送的 URL 都是 TwoPush 统一构造的同一最终对象，不会在发送边界发生二次变化。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 

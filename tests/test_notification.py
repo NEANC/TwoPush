@@ -5,6 +5,7 @@
 
 import os
 import sys
+from urllib.parse import parse_qsl, urlsplit
 
 import pytest
 
@@ -606,11 +607,15 @@ def test_signed_dingtalk_url_config_error_is_not_retried(
         channel['msgtype'] = 'markdown'
 
     send_calls = []
-    monkeypatch.setattr(
-        notification,
-        '_make_dingtalk_sign',
-        lambda secret: ('1', 's' * 44),
-    )
+    signatures = iter([('1', 's' * 44), ('2', 't' * 44)])
+    sign_calls = []
+
+    def make_sign(secret):
+        """记录签名次数并为重复调用返回不同结果。"""
+        sign_calls.append(secret)
+        return next(signatures)
+
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', make_sign)
     monkeypatch.setattr(
         notification,
         '_send_dingtalk_webhook',
@@ -636,8 +641,121 @@ def test_signed_dingtalk_url_config_error_is_not_retried(
 
     assert result is False
     assert send_calls == []
+    assert sign_calls == ['SECtest']
     assert log.error.call_count == 1
     assert sleep.call_count == 0
+
+
+def test_builtin_dingtalk_reuses_single_validated_url(monkeypatch):
+    """builtin 应将唯一构造的最终 URL 原样交给 HTTP transport。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    channel = {
+        'provider': 'dingtalk',
+        'token': (
+            'HTTPS://OAPI.DINGTALK.COM:443/robot/send?'
+            'access_token=abc&timestamp=old&sign=old'
+        ),
+        'secret': 'SECtest',
+        'msgtype': 'markdown',
+    }
+    original = dict(channel)
+    signatures = iter([('1001', 'first/sign'), ('1002', 'second/sign')])
+    sign_calls = []
+    request_urls = []
+
+    def make_sign(secret):
+        """记录签名次数并为重复调用返回不同结果。"""
+        sign_calls.append(secret)
+        return next(signatures)
+
+    def fake_request(method, url, **kwargs):
+        """记录 builtin 实际发送 URL。"""
+        request_urls.append(url)
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0}
+        return response
+
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', make_sign)
+    monkeypatch.setattr(notification, 'request', fake_request)
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert sign_calls == ['SECtest']
+    assert len(request_urls) == 1
+    assert request_urls[0].startswith(
+        'https://oapi.dingtalk.com/robot/send?'
+    )
+    query_pairs = parse_qsl(urlsplit(request_urls[0]).query)
+    assert query_pairs.count(('timestamp', '1001')) == 1
+    assert query_pairs.count(('sign', 'first/sign')) == 1
+    assert all(value != 'old' for key, value in query_pairs
+               if key in ('timestamp', 'sign'))
+    assert channel == original
+
+
+def test_onepush_dingtalk_receives_final_url_without_secret(monkeypatch):
+    """onepush 应接收规范化最终 URL 的参数副本且不再负责签名。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    channel = {
+        'provider': 'dingtalk',
+        'token': (
+            'HTTPS://OAPI.DINGTALK.COM:443/robot/send?'
+            'access_token=abc&timestamp=old&sign=old'
+        ),
+        'secret': 'SECtest',
+        'markdown': True,
+    }
+    original = dict(channel)
+    signatures = iter([('1001', 'first/sign'), ('1002', 'second/sign')])
+    sign_calls = []
+    notify_calls = []
+
+    def make_sign(secret):
+        """记录签名次数并为重复调用返回不同结果。"""
+        sign_calls.append(secret)
+        return next(signatures)
+
+    class FakeNotifier:
+        """记录 OnePush notify 参数的测试替身。"""
+
+        def notify(self, **kwargs):
+            """保存发送参数并返回成功响应。"""
+            notify_calls.append(kwargs)
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 0}
+            return response
+
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', make_sign)
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: FakeNotifier())
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert sign_calls == ['SECtest']
+    assert len(notify_calls) == 1
+    sent = notify_calls[0]
+    assert 'secret' not in sent
+    assert sent['token'].startswith(
+        'https://oapi.dingtalk.com/robot/send?'
+    )
+    query_pairs = parse_qsl(urlsplit(sent['token']).query)
+    assert query_pairs.count(('timestamp', '1001')) == 1
+    assert query_pairs.count(('sign', 'first/sign')) == 1
+    assert all(value != 'old' for key, value in query_pairs
+               if key in ('timestamp', 'sign'))
+    assert channel == original
 
 
 def test_config_error_value_error_reason_is_masked(monkeypatch):

@@ -771,7 +771,12 @@ class TestTwoPushDingTalkRouting:
             calls["onepush"] += 1
             raise AssertionError("增强钉钉通道不应调用 OnePush")
 
-        def fake_direct(channel, title, content):
+        def fake_direct(channel, title, content, validated_url=None):
+            """记录增强路由收到的预构造 URL。"""
+            assert validated_url == (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=token-only"
+            )
             calls["direct"] += 1
             response = unittest.mock.MagicMock()
             response.status_code = 200
@@ -1347,6 +1352,74 @@ class TestTwoPushDingTalkUrlBuilder:
             _build_dingtalk_webhook_url(full_url)
 
         assert "合法 UTF-8" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        ("suffix", "accepted"),
+        [
+            ("&" * 99, True),
+            ("&" * 100, False),
+            ("&x=" + "&" * 98, True),
+            ("&x=" + "&" * 99, False),
+        ],
+    )
+    def test_query_field_limit_counts_blank_and_consecutive_fields(
+        self, suffix, accepted
+    ):
+        """空字段与连续分隔符应按 max_num_fields 的字段语义计数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            f"{suffix}"
+        )
+
+        if accepted:
+            assert "access_token=abc123" in _build_dingtalk_webhook_url(
+                full_url
+            )
+            return
+
+        with pytest.raises(ValueError, match="参数不得超过 100"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_query_field_limit_is_checked_before_parse_qsl(self, monkeypatch):
+        """字段超限应在解析前确定，不依赖解析器异常文本。"""
+        import modules.notification as notification
+
+        parse_calls = []
+
+        def fail_parse(*args, **kwargs):
+            """记录不应发生的解析调用。"""
+            parse_calls.append((args, kwargs))
+            raise ValueError("本地化字段数量错误")
+
+        monkeypatch.setattr(notification, "parse_qsl", fail_parse)
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            + "&".join(["access_token=abc123"] + ["x="] * 100)
+        )
+
+        with pytest.raises(ValueError, match="参数不得超过 100"):
+            notification._build_dingtalk_webhook_url(full_url)
+
+        assert parse_calls == []
+
+    def test_empty_query_has_zero_fields_before_parse(self, monkeypatch):
+        """空 query 应按零字段处理并继续交给解析器。"""
+        import modules.notification as notification
+
+        parse_calls = []
+
+        def record_parse(query, **kwargs):
+            """记录空 query 解析并返回空字段列表。"""
+            parse_calls.append((query, kwargs))
+            return []
+
+        monkeypatch.setattr(notification, "parse_qsl", record_parse)
+
+        assert notification._parse_dingtalk_query("", "测试 URL") == []
+        assert len(parse_calls) == 1
+        assert parse_calls[0][0] == ""
 
     def test_other_query_value_error_uses_generic_parse_message(
         self, monkeypatch
@@ -2580,7 +2653,12 @@ class TestTwoPushDingTalkMultipleChannels:
             assert provider == "dingtalk"
             return FakeNotifier()
 
-        def fake_direct(channel, title, content):
+        def fake_direct(channel, title, content, validated_url=None):
+            """记录增强通道收到的预构造 URL。"""
+            assert validated_url == (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=enhanced-token"
+            )
             calls["direct"] += 1
             response = unittest.mock.MagicMock()
             response.status_code = 200

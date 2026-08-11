@@ -133,6 +133,12 @@ def _parse_dingtalk_query(query, error_prefix):
     Raises:
         ValueError: query 非合法 UTF-8、参数超过上限或发生其他解析错误
     """
+    field_count = query.count('&') + 1 if query else 0
+    if field_count > DINGTALK_WEBHOOK_MAX_QUERY_FIELDS:
+        raise ValueError(
+            f'{error_prefix} query 参数不得超过 '
+            f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
+        )
     try:
         return parse_qsl(
             query,
@@ -145,12 +151,7 @@ def _parse_dingtalk_query(query, error_prefix):
         raise ValueError(
             f'{error_prefix} query 解析失败：必须为合法 UTF-8'
         ) from None
-    except ValueError as error:
-        if str(error) == 'Max number of fields exceeded':
-            raise ValueError(
-                f'{error_prefix} query 参数不得超过 '
-                f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
-            ) from None
+    except ValueError:
         raise ValueError(f'{error_prefix} query 解析失败') from None
 
 
@@ -488,13 +489,14 @@ def _build_dingtalk_payload(params, title, content):
     return payload
 
 
-def _send_dingtalk_webhook(channel, title, content):
+def _send_dingtalk_webhook(channel, title, content, validated_url=None):
     """发送 TwoPush 钉钉增强 Webhook 请求。
 
     Args:
         channel: 钉钉通道参数字典，需包含 token，可包含 secret 与 msgtype/at
         title: 通知标题
         content: 通知内容
+        validated_url: 可选的预构造最终 Webhook URL
 
     Returns:
         requests.Response: 钉钉 Webhook 响应对象
@@ -505,7 +507,9 @@ def _send_dingtalk_webhook(channel, title, content):
     token = channel.get('token')
     if not token or not str(token).strip():
         raise ValueError("钉钉通道缺少 token")
-    url = _build_dingtalk_webhook_url(token, channel.get('secret'))
+    url = validated_url
+    if url is None:
+        url = _build_dingtalk_webhook_url(token, channel.get('secret'))
     payload = _build_dingtalk_payload(channel, title, content)
     headers = {'Content-Type': 'application/json'}
     return request('post', url, json=payload, headers=headers, timeout=DINGTALK_REQUEST_TIMEOUT)
@@ -651,6 +655,7 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
 
     enhanced = _is_enhanced_dingtalk_channel(provider, params)
     route_label = _describe_channel_route(provider, enhanced)
+    validated_url = None
 
     # 配置性校验：钉钉通道必须有 token，且完整 Webhook URL 必须含 access_token；
     # 增强直发/onepush 两种路径统一在此拦截，避免对配置错误做无意义重试
@@ -660,7 +665,8 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             log.error(f"通道 [{route_label}] 配置错误: 钉钉通道缺少 token")
             return False
         try:
-            _build_dingtalk_webhook_url(str(token), params.get('secret'))
+            validated_url = _build_dingtalk_webhook_url(
+                str(token), params.get('secret'))
         except ValueError as e:
             reason = mask_sensitive_fields(
                 {'reason': str(e)}, sensitive_fields={'reason'}
@@ -671,10 +677,17 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
     for attempt in range(1, max_count + 1):
         try:
             if enhanced:
-                response = _send_dingtalk_webhook(params, title, content)
+                response = _send_dingtalk_webhook(
+                    params, title, content, validated_url=validated_url)
             else:
                 notifier = get_notifier(provider)
-                response = notifier.notify(title=title, content=content, **params)
+                send_params = params
+                if validated_url is not None:
+                    send_params = dict(params)
+                    send_params['token'] = validated_url
+                    send_params.pop('secret', None)
+                response = notifier.notify(
+                    title=title, content=content, **send_params)
         except NoSuchNotifierError as e:
             # 未知推送渠道属于配置性错误，重试无意义，立即返回 False
             reason = mask_sensitive_fields(
