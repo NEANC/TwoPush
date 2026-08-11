@@ -90,8 +90,8 @@ def _make_dingtalk_sign(secret):
 def _build_dingtalk_webhook_url(token, secret=None):
     """根据 token 或完整 Webhook URL 构造钉钉请求 URL。
 
-    构造前会对 token 统一 strip 首尾空白，避免空白被 urlencode 编码为
-    加号（+）或保留在完整 URL 中导致请求无效。
+    构造前仅去除 token 首尾普通空格，并拒绝隐藏控制、格式字符及首尾
+    其他 Unicode 空白。完整 URL 会规范化 scheme、authority 与 query。
 
     Args:
         token: 裸 access token 或含 access_token 的完整 Webhook URL
@@ -101,16 +101,24 @@ def _build_dingtalk_webhook_url(token, secret=None):
         str: 钉钉 Webhook 请求 URL
 
     Raises:
-        ValueError: token strip 后为空或包含 ASCII 控制字符时抛出；token 疑似完整 Webhook URL
-            （含协议 :// 或 query = 特征）但非合法 http(s) URL 时抛出；或
-            完整 Webhook URL 未明确以 HTTPS 开头、包含用户信息、端口不是
-            443、缺少 access_token 参数、域名不是钉钉官方域名
-            DINGTALK_WEBHOOK_HOST，或路径不是钉钉标准路径 /robot/send 时抛出
+        ValueError: token 规范化后为空、包含 Unicode 控制或格式字符、首尾
+            包含非普通空格的空白时抛出；token 疑似完整 Webhook URL（含协议
+            :// 或 query = 特征）但非合法 http(s) URL 时抛出；或完整 Webhook
+            URL 未明确以 HTTPS 开头、authority 非法、包含 fragment、缺少
+            access_token 参数、域名或路径不符合钉钉规范时抛出
     """
     raw_token = str(token)
-    if any(ord(character) < 32 or ord(character) == 127 for character in raw_token):
-        raise ValueError('钉钉 token 不得包含 ASCII 控制字符')
-    token_str = raw_token.strip()
+    if any(
+        unicodedata.category(character) in ('Cc', 'Cf')
+        for character in raw_token
+    ):
+        raise ValueError('钉钉 token 不得包含 Unicode 控制字符或格式字符')
+    if raw_token and any(
+        character != ' ' and character.isspace()
+        for character in (raw_token[0], raw_token[-1])
+    ):
+        raise ValueError('钉钉 token 首尾仅允许普通空格，不得包含其他空白字符')
+    token_str = raw_token.strip(' ')
     if not token_str:
         raise ValueError('钉钉通道缺少 token')
 
@@ -124,24 +132,30 @@ def _build_dingtalk_webhook_url(token, secret=None):
             )
         if parsed.username is not None or parsed.password is not None:
             raise ValueError('完整 Webhook URL 不得包含用户信息')
-        try:
-            port = parsed.port
-        except ValueError:
-            raise ValueError('完整 Webhook URL 端口配置无效，仅允许 443') from None
-        if port not in (None, 443):
+        raw_port = parsed.netloc[len(DINGTALK_WEBHOOK_HOST):]
+        if raw_port not in ('', ':443'):
             raise ValueError('完整 Webhook URL 端口仅允许 443')
         if parsed.path != DINGTALK_WEBHOOK_PATH:
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉标准路径 {DINGTALK_WEBHOOK_PATH}'
             )
+        if parsed.fragment:
+            raise ValueError('完整 Webhook URL 不得包含 fragment 片段')
+        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
         access_tokens = [
             value
-            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            for key, value in query_pairs
             if key == 'access_token'
         ]
         if not any(value.strip() for value in access_tokens):
             raise ValueError('完整 Webhook URL 必须包含 access_token 参数')
-        url = token_str
+        url = urlunsplit((
+            'https',
+            DINGTALK_WEBHOOK_HOST,
+            parsed.path,
+            urlencode(query_pairs),
+            '',
+        ))
     else:
         # 裸 token 分支仅接受纯 access token；含协议（://）或 query（=）特征
         # 的字符串疑似完整 Webhook URL，提前报错避免生成错误 URL

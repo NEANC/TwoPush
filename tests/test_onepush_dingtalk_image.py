@@ -990,15 +990,17 @@ class TestTwoPushDingTalkUrlBuilder:
             _build_dingtalk_webhook_url(value)
 
     @pytest.mark.parametrize("scheme", ["https", "HTTPS", "HtTpS"])
-    def test_full_url_must_explicitly_start_with_https(self, scheme):
-        """完整 URL 应以大小写不敏感的 https:// 明确开头。"""
+    def test_full_url_normalizes_https_scheme(self, scheme):
+        """完整 URL 应接受大小写不敏感的 HTTPS 并输出小写 scheme。"""
         from modules.notification import _build_dingtalk_webhook_url
 
         full_url = (
             f"{scheme}://oapi.dingtalk.com/robot/send?access_token=abc123"
         )
 
-        assert _build_dingtalk_webhook_url(full_url) == full_url
+        assert _build_dingtalk_webhook_url(full_url) == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        )
 
     def test_full_url_without_access_token_raises_value_error(self):
         """完整 Webhook URL 缺少 access_token 参数时应抛出 ValueError。"""
@@ -1056,14 +1058,18 @@ class TestTwoPushDingTalkUrlBuilder:
         assert url == full_url
         assert url.count("access_token=") == 1
 
-    def test_dingtalk_domain_with_port_still_works(self):
-        """钉钉官方域名带端口（如 :443）的完整 Webhook URL 应放行。"""
+    @pytest.mark.parametrize("hostname", ["oapi.dingtalk.com", "OAPI.DINGTALK.COM"])
+    @pytest.mark.parametrize("port", ["", ":443"])
+    def test_full_url_normalizes_hostname_and_default_port(self, hostname, port):
+        """官方域名应输出小写并移除显式默认端口。"""
         from modules.notification import _build_dingtalk_webhook_url
 
-        full_url = "https://oapi.dingtalk.com:443/robot/send?access_token=abc123"
+        full_url = (
+            f"https://{hostname}{port}/robot/send?access_token=abc123"
+        )
         url = _build_dingtalk_webhook_url(full_url)
 
-        assert url == full_url
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
 
     @pytest.mark.parametrize(
         "userinfo",
@@ -1098,6 +1104,16 @@ class TestTwoPushDingTalkUrlBuilder:
     @pytest.mark.parametrize("port", ["bad", "99999"])
     def test_full_url_with_invalid_port_raises_configuration_value_error(self, port):
         """非法或越界端口应转换为明确的配置 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="端口"):
+            _build_dingtalk_webhook_url(
+                f"https://oapi.dingtalk.com:{port}/robot/send?access_token=abc123"
+            )
+
+    @pytest.mark.parametrize("port", ["", "00443", "+443"])
+    def test_full_url_rejects_noncanonical_raw_port(self, port):
+        """完整 URL 应拒绝空端口和非规范的 443 原始拼写。"""
         from modules.notification import _build_dingtalk_webhook_url
 
         with pytest.raises(ValueError, match="端口"):
@@ -1215,6 +1231,31 @@ class TestTwoPushDingTalkUrlBuilder:
 
         assert url == full_url
 
+    def test_full_url_normalizes_query_encoding_and_preserves_pairs(self):
+        """完整 URL query 应规范编码并保留重复键、空值与顺序。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "x=&access%5ftoken=abc&x=1&access_token="
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == (
+            "https://oapi.dingtalk.com/robot/send?"
+            "x=&access_token=abc&x=1&access_token="
+        )
+
+    @pytest.mark.parametrize("fragment", ["section", "access_token=shadow"])
+    def test_full_url_with_fragment_raises_value_error(self, fragment):
+        """完整 URL 不得包含 fragment。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="fragment|片段"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?"
+                f"access_token=abc123#{fragment}"
+            )
+
     def test_domain_error_prioritized_over_missing_access_token(self):
         """域名错误应优先于缺失 access_token 报错。"""
         from modules.notification import _build_dingtalk_webhook_url
@@ -1251,6 +1292,50 @@ class TestTwoPushDingTalkUrlBuilder:
         url = _build_dingtalk_webhook_url(f"  {full_url}  ")
 
         assert url == full_url
+
+    @pytest.mark.parametrize("edge_character", ["\u00a0", "\u3000", "\u2028"])
+    @pytest.mark.parametrize("position", ["prefix", "suffix"])
+    def test_non_ascii_edge_whitespace_raises_value_error(
+        self, edge_character, position
+    ):
+        """原始 token 首尾非普通空格的空白字符应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        token = "abc123"
+        value = (
+            f"{edge_character}{token}"
+            if position == "prefix"
+            else f"{token}{edge_character}"
+        )
+
+        with pytest.raises(ValueError, match="空白"):
+            _build_dingtalk_webhook_url(value)
+
+    @pytest.mark.parametrize("hidden_character", ["\u0085", "\u200b", "\u2060"])
+    @pytest.mark.parametrize("value_kind", ["token", "url"])
+    def test_unicode_control_or_format_character_raises_value_error(
+        self, hidden_character, value_kind
+    ):
+        """裸 token 与完整 URL 中的 Unicode Cc/Cf 字符均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        value = f"abc{hidden_character}123"
+        if value_kind == "url":
+            value = (
+                "https://oapi.dingtalk.com/robot/send?access_token="
+                f"abc{hidden_character}123"
+            )
+
+        with pytest.raises(ValueError, match="控制|格式"):
+            _build_dingtalk_webhook_url(value)
+
+    def test_plain_token_remains_url_encoded(self):
+        """裸 token 应继续通过 urlencode 编码。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        assert _build_dingtalk_webhook_url("abc+/?") == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc%2B%2F%3F"
+        )
 
     def test_blank_token_still_rejected(self):
         """strip 后为空的 token 应抛出 ValueError（守护守卫）。"""
