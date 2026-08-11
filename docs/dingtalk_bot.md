@@ -90,18 +90,40 @@ import requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
+    import re
+    import unicodedata
+
     def sanitize(value, default, limit):
         """生成适合错误消息的安全单行文本。"""
         try:
             text = str(value)
         except Exception:
             text = default
-        return text.replace("\r", " ").replace("\n", " ")[:limit]
+        text = "".join(
+            " " if character.isspace() else character
+            for character in text
+            if not unicodedata.category(character).startswith("C")
+            or character.isspace()
+        )
+        text = re.sub(r"https?://[^\s]+", "[链接已隐藏]", text, flags=re.I)
+        text = re.sub(
+            r"([\"']?(?:access_token|token|sign|secret)[\"']?\s*[:=]\s*)"
+            r"(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]&]+)",
+            r"\1[已脱敏]",
+            text,
+            flags=re.I,
+        )
+        text = re.sub(
+            r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8}(?!\d)",
+            "[手机号已脱敏]",
+            text,
+        )
+        return " ".join(text.split()).strip()[:limit].strip()
 
     try:
         data = response.json()
-    except ValueError as e:
-        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from e
+    except ValueError:
+        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from None
 
     if not isinstance(data, dict) or "errcode" not in data:
         raise RuntimeError("钉钉 Webhook 响应格式异常")
@@ -340,18 +362,40 @@ import hashlib, hmac, base64, time, urllib.parse, requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
+    import re
+    import unicodedata
+
     def sanitize(value, default, limit):
         """生成适合错误消息的安全单行文本。"""
         try:
             text = str(value)
         except Exception:
             text = default
-        return text.replace("\r", " ").replace("\n", " ")[:limit]
+        text = "".join(
+            " " if character.isspace() else character
+            for character in text
+            if not unicodedata.category(character).startswith("C")
+            or character.isspace()
+        )
+        text = re.sub(r"https?://[^\s]+", "[链接已隐藏]", text, flags=re.I)
+        text = re.sub(
+            r"([\"']?(?:access_token|token|sign|secret)[\"']?\s*[:=]\s*)"
+            r"(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]&]+)",
+            r"\1[已脱敏]",
+            text,
+            flags=re.I,
+        )
+        text = re.sub(
+            r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8}(?!\d)",
+            "[手机号已脱敏]",
+            text,
+        )
+        return " ".join(text.split()).strip()[:limit].strip()
 
     try:
         data = response.json()
-    except ValueError as e:
-        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from e
+    except ValueError:
+        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from None
 
     if not isinstance(data, dict) or "errcode" not in data:
         raise RuntimeError("钉钉 Webhook 响应格式异常")
