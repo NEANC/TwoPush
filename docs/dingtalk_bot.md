@@ -90,36 +90,6 @@ import requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    import re
-    import unicodedata
-
-    def sanitize(value, default, limit):
-        """生成适合错误消息的安全单行文本。"""
-        try:
-            text = str(value)
-        except Exception:
-            text = default
-        text = "".join(
-            " " if character.isspace() else character
-            for character in text
-            if not unicodedata.category(character).startswith("C")
-            or character.isspace()
-        )
-        text = re.sub(r"https?://[^\s]+", "[链接已隐藏]", text, flags=re.I)
-        text = re.sub(
-            r"([\"']?(?:access_token|token|sign|secret)[\"']?\s*[:=]\s*)"
-            r"(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]&]+)",
-            r"\1[已脱敏]",
-            text,
-            flags=re.I,
-        )
-        text = re.sub(
-            r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8}(?!\d)",
-            "[手机号已脱敏]",
-            text,
-        )
-        return " ".join(text.split()).strip()[:limit].strip()
-
     try:
         data = response.json()
     except ValueError:
@@ -137,11 +107,7 @@ def check_dingtalk_response(response):
     if success:
         return
 
-    safe_errcode = sanitize(errcode, "无法显示", 100)
-    safe_errmsg = sanitize(data.get("errmsg", "未知错误"), "未知错误", 200)
-    raise RuntimeError(
-        f"钉钉 Webhook 请求失败：errcode={safe_errcode}，errmsg={safe_errmsg}"
-    )
+    raise RuntimeError("钉钉 Webhook 请求失败")
 
 
 webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=xxx"
@@ -362,36 +328,6 @@ import hashlib, hmac, base64, time, urllib.parse, requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    import re
-    import unicodedata
-
-    def sanitize(value, default, limit):
-        """生成适合错误消息的安全单行文本。"""
-        try:
-            text = str(value)
-        except Exception:
-            text = default
-        text = "".join(
-            " " if character.isspace() else character
-            for character in text
-            if not unicodedata.category(character).startswith("C")
-            or character.isspace()
-        )
-        text = re.sub(r"https?://[^\s]+", "[链接已隐藏]", text, flags=re.I)
-        text = re.sub(
-            r"([\"']?(?:access_token|token|sign|secret)[\"']?\s*[:=]\s*)"
-            r"(?:\"[^\"]*\"|'[^']*'|[^\s,;}\]&]+)",
-            r"\1[已脱敏]",
-            text,
-            flags=re.I,
-        )
-        text = re.sub(
-            r"(?<!\d)(?:\+?86[\s-]?)?1[3-9]\d(?:[\s-]?\d){8}(?!\d)",
-            "[手机号已脱敏]",
-            text,
-        )
-        return " ".join(text.split()).strip()[:limit].strip()
-
     try:
         data = response.json()
     except ValueError:
@@ -409,11 +345,7 @@ def check_dingtalk_response(response):
     if success:
         return
 
-    safe_errcode = sanitize(errcode, "无法显示", 100)
-    safe_errmsg = sanitize(data.get("errmsg", "未知错误"), "未知错误", 200)
-    raise RuntimeError(
-        f"钉钉 Webhook 请求失败：errcode={safe_errcode}，errmsg={safe_errmsg}"
-    )
+    raise RuntimeError("钉钉 Webhook 请求失败")
 
 
 TOKEN = "你的 access_token"
@@ -465,7 +397,7 @@ r = requests.post(
 )
 r.raise_for_status()
 check_dingtalk_response(r)
-print(r.status_code, r.text)  # 200 {"errcode":0,"errmsg":"ok"}
+print(r.status_code)
 ```
 
 ### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
