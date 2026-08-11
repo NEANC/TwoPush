@@ -278,6 +278,38 @@ def _build_dingtalk_webhook_url(token, secret=None):
     return _validate_dingtalk_webhook_url(url)
 
 
+def _validate_dingtalk_signed_url_capacity(base_url):
+    """按钉钉签名最坏编码长度校验基础 URL 容量。
+
+    Args:
+        base_url: 不带本次动态签名的规范 Webhook URL
+
+    Returns:
+        str: 通过最坏情况长度校验的基础 URL
+
+    Raises:
+        ValueError: 替换旧签名并追加最坏编码签名后超过 URL 上限时抛出
+    """
+    parsed = urlsplit(base_url)
+    parsed_query_pairs = _parse_dingtalk_query(
+        parsed.query, '钉钉 Webhook URL')
+    query_pairs = [
+        (key, value)
+        for key, value in parsed_query_pairs
+        if key not in ('timestamp', 'sign')
+    ]
+    query_pairs.extend([('timestamp', '9' * 13), ('sign', '/' * 44)])
+    worst_url = urlunsplit((
+        parsed.scheme,
+        parsed.netloc,
+        parsed.path,
+        urlencode(query_pairs),
+        parsed.fragment,
+    ))
+    _validate_dingtalk_webhook_url(worst_url)
+    return base_url
+
+
 def _is_enhanced_dingtalk_channel(provider, params):
     """判断钉钉通道是否需要使用 TwoPush 直发增强路径
 
@@ -655,7 +687,8 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
 
     enhanced = _is_enhanced_dingtalk_channel(provider, params)
     route_label = _describe_channel_route(provider, enhanced)
-    validated_url = None
+    base_url = None
+    secret = None
 
     # 配置性校验：钉钉通道必须有 token，且完整 Webhook URL 必须含 access_token；
     # 增强直发/onepush 两种路径统一在此拦截，避免对配置错误做无意义重试
@@ -665,8 +698,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
             log.error(f"通道 [{route_label}] 配置错误: 钉钉通道缺少 token")
             return False
         try:
-            validated_url = _build_dingtalk_webhook_url(
-                str(token), params.get('secret'))
+            base_url = _build_dingtalk_webhook_url(str(token))
+            secret = params.get('secret')
+            if secret:
+                _validate_dingtalk_signed_url_capacity(base_url)
         except ValueError as e:
             reason = mask_sensitive_fields(
                 {'reason': str(e)}, sensitive_fields={'reason'}
@@ -676,15 +711,18 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
 
     for attempt in range(1, max_count + 1):
         try:
+            final_url = base_url
+            if base_url is not None and secret:
+                final_url = _build_dingtalk_webhook_url(base_url, secret)
             if enhanced:
                 response = _send_dingtalk_webhook(
-                    params, title, content, validated_url=validated_url)
+                    params, title, content, validated_url=final_url)
             else:
                 notifier = get_notifier(provider)
                 send_params = params
-                if validated_url is not None:
+                if final_url is not None:
                     send_params = dict(params)
-                    send_params['token'] = validated_url
+                    send_params['token'] = final_url
                     send_params.pop('secret', None)
                 response = notifier.notify(
                     title=title, content=content, **send_params)

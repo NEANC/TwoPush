@@ -531,7 +531,7 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 
 完整 URL 长度上限为 8192 个字符，必须明确以大小写不敏感的 `https://` 开头，authority 仅接受官方域名 `oapi.dingtalk.com`，不得包含 userinfo；端口只能省略或使用原始十进制字符串 `443`，空端口、`00443`、`+443` 及其他端口均拒绝。路径必须严格为 `/robot/send`，只要存在 `#` fragment 分隔符即拒绝，包括空 fragment。query 最多包含 100 个用户提供 query 参数，所有百分号转义必须为合法 `%HH`，并以严格 UTF-8 解析；非法或截断的 UTF-8 字节序列会作为配置错误拒绝。解析后会再次检查每个键和值，拒绝其中的 Unicode `Cc`、`Cf` 或 `Cs` 字符，再重新编码；该过程仅按一次 URL 解析语义处理，双编码 `%2500` 解码一层所得的字面 `%00` 可以接受。输出会将 scheme 与官方 hostname 规范为小写并移除显式默认端口，同时保留 query 的重复键、空值和原始顺序，并要求至少一个解码后去除首尾空白仍非空的 `access_token`。HTTP URL、`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
 
-配置非空 `secret` 时，TwoPush 会按本次发送时间重新生成 `timestamp` 与 `sign`；完整 URL 中已有的同名参数会先被移除，再由新值覆盖，最终各保留一个。用户最多可提供 100 个 query 参数；内置加签替换或追加 `timestamp` 与 `sign` 后，最终最多包含 102 个参数，但最终 URL 仍受 8192 字节 ASCII 长度限制。
+配置非空 `secret` 时，TwoPush 会在每次发送尝试中按当次时间重新生成 `timestamp` 与 `sign`；完整 URL 中已有的同名参数会先被移除，再由新值覆盖，最终各保留一个。用户最多可提供 100 个 query 参数；内置加签替换或追加 `timestamp` 与 `sign` 后，最终最多包含 102 个参数，但最终 URL 仍受 8192 字节 ASCII 长度限制。
 
 **未包含增强键：`dingtalk(onepush)`**
 
@@ -553,9 +553,11 @@ TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有
 
 **统一发送前校验**
 
-无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并为每个通道使用实际 `secret` 调用一次内置 URL 构造逻辑，得到唯一的最终 `validated_url`。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，加签后的最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。query 参数数量在解析前按非空 query 的 `&` 数量加一确定，空 query 为零；超限错误不依赖解析器异常文本，其他 `ValueError` 统一报告为 query 解析错误，`UnicodeDecodeError` 单独报告为非法 UTF-8。
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并在重试循环外构造一次不带 `secret` 的规范基础 URL，完成静态配置校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。query 参数数量在解析前按非空 query 的 `&` 数量加一确定，空 query 为零；超限错误不依赖解析器异常文本，其他 `ValueError` 统一报告为 query 解析错误，`UnicodeDecodeError` 单独报告为非法 UTF-8。
 
-`dingtalk(builtin)` 将同一个 `validated_url` 直接交给 HTTP 请求函数，不再构造或签名。`dingtalk(onepush)` 将它作为参数副本中的 `token` 交给 OnePush，并移除 `secret`；因此两条路由实际发送的 URL 都是 TwoPush 统一构造的同一最终对象，不会在发送边界发生二次变化。
+配置非空 `secret` 时，TwoPush 还会在循环外按 13 位 `timestamp`、44 字符 Base64 HMAC-SHA256 `sign` 及其最坏 URL 编码长度做确定性的容量预算；预算前会移除基础 URL 中旧的 `timestamp` 与 `sign`，再追加最坏情况值。最坏最终 URL 超过 8192 字节时按静态配置错误拒绝，不发送也不休眠，且容量判断不调用随机动态签名。
+
+进入重试循环后，带 `secret` 的通道会为每次尝试从同一规范基础 URL 重新签名并只构造一次当次最终 URL；`dingtalk(builtin)` 将该对象直接交给 HTTP 请求函数，`dingtalk(onepush)` 将同一对象作为参数副本中的 `token` 交给 OnePush 并移除 `secret`。因此每次尝试的校验对象就是发送对象，不会在发送边界二次构造；下一次重试则使用新的 `timestamp` 与 `sign`。未配置 `secret` 时直接复用循环外的规范基础 URL，无需逐次构造。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 
