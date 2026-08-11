@@ -604,21 +604,23 @@ TwoPush 日志会脱敏手机号、`token`（含 `access_token`）、`secret` �
 
 ## 能力总结
 
-| 能力              |  支持  | 方式                                                           |
-| ----------------- | :----: | -------------------------------------------------------------- |
-| 文本推送          |   ✅   | `dingtalk(onepush)` / `dingtalk(builtin)` / 手工 Webhook       |
-| Markdown 推送     |   ✅   | `dingtalk(onepush)` / `dingtalk(builtin)` / 手工 Webhook       |
-| Markdown 内嵌图片 |   ✅   | 上述 Markdown 路由，正文使用 `![alt](url)`                     |
-| image 消息类型    |   ❌   | Webhook 不支持                                                  |
-| @所有人           |   ✅   | `dingtalk(builtin)`（`isAtAll`）或手工 Webhook                 |
-| @指定人（手机号） |   ✅   | `dingtalk(builtin)`（`atMobiles`）或手工 Webhook               |
-| @指定人（userId） | 待实测 | 手工 Webhook 待实测，TwoPush 内置当前不支持                    |
-| 链接消息          |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
-| FeedCard          |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
-| ActionCard        |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
-| DING              |   ❌   | 需企业内部应用 + 专业版                                        |
-| 表格              |   ❌   | Markdown 不支持                                                |
-| 代码块            |   ❌   | Markdown 不支持                                                |
+下表中“钉钉 Webhook 支持”指“直接调用钉钉 Webhook（手工请求）”；“TwoPush 内置支持”指 `dingtalk(builtin)` 路由。
+
+| 能力              | 钉钉 Webhook 支持 | TwoPush 内置支持 | 方式或说明                                                               |
+| ----------------- | :---------------: | :----------------: | ------------------------------------------------------------------------ |
+| 文本推送          |        ✅         |         ✅         | OnePush 可通过 `dingtalk(onepush)` 发送                                  |
+| Markdown 推送     |        ✅         |         ✅         | OnePush 可通过 `dingtalk(onepush)` 发送                                  |
+| Markdown 内嵌图片 |        ✅         |         ✅         | 本质为 Markdown 语法，正文使用 `![alt](url)`；OnePush 亦可用             |
+| image 消息类型    |        ❌         |         ❌         | 自定义机器人 Webhook 不支持                                              |
+| @所有人           |        ✅         |         ✅         | 内置路由使用 `isAtAll`；OnePush 不支持                                   |
+| @指定人（手机号） |        ✅         |         ✅         | 内置路由使用 `atMobiles`；OnePush 不支持                                 |
+| @指定人（userId） |      待实测       |         ❌         | 直接调用钉钉 Webhook（手工请求）待实测；OnePush 不支持                   |
+| 链接消息          |        ✅         |         ❌         | 直接调用钉钉 Webhook（手工请求）；OnePush 不支持                         |
+| FeedCard          |        ✅         |         ❌         | 直接调用钉钉 Webhook（手工请求）；OnePush 不支持                         |
+| ActionCard        |        ✅         |         ❌         | 直接调用钉钉 Webhook（手工请求）；OnePush 不支持                         |
+| DING              |        ❌         |         ❌         | 非自定义机器人 Webhook 能力，需企业内部应用及钉钉专业版或专属版         |
+| 表格              |        ❌         |         ❌         | 钉钉 Markdown 不支持                                                     |
+| 代码块            |        ❌         |         ❌         | 钉钉 Markdown 不支持                                                     |
 
 ## 参考链接
 
