@@ -6,6 +6,8 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.notification import send_notification
@@ -345,8 +347,21 @@ def test_missing_access_token_in_full_url_not_retried(monkeypatch):
     assert 'access_token' in log.error.call_args[0][0]
 
 
-def test_http_full_url_is_rejected_before_both_dingtalk_routes(monkeypatch):
-    """HTTP 完整 URL 应在两条钉钉路由发送前被拒绝且不重试"""
+@pytest.mark.parametrize("enhanced", [False, True])
+@pytest.mark.parametrize(
+    ("token", "error_text"),
+    [
+        ("http://oapi.dingtalk.com/robot/send?access_token=abc", "HTTPS"),
+        ("ht\ntps://oapi.dingtalk.com/robot/send?access_token=abc", "控制字符"),
+        ("https://user@oapi.dingtalk.com/robot/send?access_token=abc", "用户信息"),
+        ("https://oapi.dingtalk.com:444/robot/send?access_token=abc", "443"),
+        ("https://oapi.dingtalk.com:bad/robot/send?access_token=abc", "端口"),
+    ],
+)
+def test_invalid_full_url_is_rejected_before_both_dingtalk_routes(
+    monkeypatch, enhanced, token, error_text
+):
+    """完整 URL 配置错误应在两条钉钉路由发送前记录一次且不重试。"""
     import modules.notification as notification
     from unittest import mock
 
@@ -363,31 +378,22 @@ def test_http_full_url_is_rejected_before_both_dingtalk_routes(monkeypatch):
     monkeypatch.setattr(notification, 'get_notifier', record_notifier)
     monkeypatch.setattr(notification, '_send_dingtalk_webhook', record_webhook)
 
-    for channel in (
-        {
-            'provider': 'dingtalk',
-            'token': 'http://oapi.dingtalk.com/robot/send?access_token=abc',
-        },
-        {
-            'provider': 'dingtalk',
-            'msgtype': 'markdown',
-            'token': 'HTTP://oapi.dingtalk.com:80/robot/send?access_token=abc',
-        },
-    ):
-        log = mock.MagicMock()
-        result = notification._notify_single_channel(
-            channel,
-            '标题',
-            '内容',
-            retry_interval=0,
-            max_count=3,
-            log=log,
-        )
+    channel = {'provider': 'dingtalk', 'token': token}
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        channel,
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
 
-        assert result is False
-        assert log.error.call_count == 1
-        assert 'HTTPS' in log.error.call_args[0][0]
-
+    assert result is False
+    assert log.error.call_count == 1
+    assert error_text in log.error.call_args[0][0]
     assert send_calls == []
 
 

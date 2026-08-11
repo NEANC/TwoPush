@@ -101,24 +101,35 @@ def _build_dingtalk_webhook_url(token, secret=None):
         str: 钉钉 Webhook 请求 URL
 
     Raises:
-        ValueError: token strip 后为空时抛出；token 疑似完整 Webhook URL
+        ValueError: token strip 后为空或包含 ASCII 控制字符时抛出；token 疑似完整 Webhook URL
             （含协议 :// 或 query = 特征）但非合法 http(s) URL 时抛出；或
-            完整 Webhook URL 未使用 HTTPS、缺少 access_token 参数、域名不是
-            钉钉官方域名 DINGTALK_WEBHOOK_HOST，或路径不是钉钉标准路径
-            /robot/send 时抛出
+            完整 Webhook URL 未明确以 HTTPS 开头、包含用户信息、端口不是
+            443、缺少 access_token 参数、域名不是钉钉官方域名
+            DINGTALK_WEBHOOK_HOST，或路径不是钉钉标准路径 /robot/send 时抛出
     """
-    token_str = str(token).strip()
+    raw_token = str(token)
+    if any(ord(character) < 32 or ord(character) == 127 for character in raw_token):
+        raise ValueError('钉钉 token 不得包含 ASCII 控制字符')
+    token_str = raw_token.strip()
     if not token_str:
         raise ValueError('钉钉通道缺少 token')
 
     if _is_full_url(token_str):
         parsed = urlsplit(token_str)
-        if parsed.scheme.lower() != 'https':
+        if not token_str.lower().startswith('https://'):
             raise ValueError('完整 Webhook URL 必须使用 HTTPS')
         if parsed.hostname != DINGTALK_WEBHOOK_HOST:
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉官方域名 {DINGTALK_WEBHOOK_HOST}'
             )
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError('完整 Webhook URL 不得包含用户信息')
+        try:
+            port = parsed.port
+        except ValueError:
+            raise ValueError('完整 Webhook URL 端口配置无效，仅允许 443') from None
+        if port not in (None, 443):
+            raise ValueError('完整 Webhook URL 端口仅允许 443')
         if parsed.path != DINGTALK_WEBHOOK_PATH:
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉标准路径 {DINGTALK_WEBHOOK_PATH}'

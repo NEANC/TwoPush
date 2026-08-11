@@ -527,7 +527,7 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 - 裸 access token：`xxx`。
 - 完整 HTTPS Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
 
-TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `https` 协议、官方域名 `oapi.dingtalk.com` 和严格路径 `/robot/send`，并且查询参数中至少有一个去除首尾空白后非空的 `access_token`。HTTP URL、`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
+TwoPush 兼容去除 `token` 首尾普通空白，但原始值中不得包含任何 ASCII C0 控制字符（U+0000–U+001F）或 DEL（U+007F）。完整 URL 必须明确以大小写不敏感的 `https://` 开头，使用官方域名 `oapi.dingtalk.com`、省略端口或仅显式使用 `443`，不得包含用户名、密码或百分号编码的 userinfo，并使用严格路径 `/robot/send`；查询参数中还必须至少有一个去除首尾空白后非空的 `access_token`。HTTP URL、`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
 
 配置非空 `secret` 时，TwoPush 会按本次发送时间重新生成 `timestamp` 与 `sign`；完整 URL 中已有的同名参数会先被移除，再由新值覆盖，最终各保留一个。
 
@@ -551,7 +551,7 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `https` 协�
 
 **统一发送前校验**
 
-无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做配置预校验。因此，完整 URL 仅接受 HTTPS，并会在发送前检查官方域名、严格路径和有效 `access_token`；HTTP 完整 URL 会被直接拒绝。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 构造或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做统一配置预校验。因此，原始值中的 ASCII 控制字符会被拒绝；完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、仅允许默认端口 443、严格路径和有效 `access_token`。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 构造或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 
