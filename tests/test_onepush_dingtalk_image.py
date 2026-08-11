@@ -1245,16 +1245,65 @@ class TestTwoPushDingTalkUrlBuilder:
             "x=&access_token=abc&x=1&access_token="
         )
 
-    @pytest.mark.parametrize("fragment", ["section", "access_token=shadow"])
-    def test_full_url_with_fragment_raises_value_error(self, fragment):
-        """完整 URL 不得包含 fragment。"""
+    @pytest.mark.parametrize("suffix", ["#", "?#", "#section"])
+    def test_full_url_with_fragment_delimiter_raises_value_error(self, suffix):
+        """完整 URL 只要存在 fragment 分隔符就应被拒绝。"""
         from modules.notification import _build_dingtalk_webhook_url
 
         with pytest.raises(ValueError, match="fragment|片段"):
             _build_dingtalk_webhook_url(
                 "https://oapi.dingtalk.com/robot/send?"
-                f"access_token=abc123#{fragment}"
+                f"access_token=abc123{suffix}"
             )
+
+    def test_plain_token_with_hash_remains_url_encoded(self):
+        """含井号的裸 token 不应被误判为完整 URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        assert _build_dingtalk_webhook_url("abc#section") == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc%23section"
+        )
+
+    @pytest.mark.parametrize(
+        "encoded_character",
+        [
+            "%00",
+            "%0A",
+            "%0a",
+            "%09",
+            "%C2%85",
+            "%c2%85",
+            "%E2%80%8B",
+            "%e2%80%8b",
+        ],
+    )
+    @pytest.mark.parametrize("position", ["key", "value"])
+    def test_decoded_query_control_or_format_character_raises_value_error(
+        self, encoded_character, position
+    ):
+        """query 键值解码后出现 Unicode Cc/Cf 字符均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        hidden_pair = (
+            f"x{encoded_character}=safe"
+            if position == "key"
+            else f"access_token=safe{encoded_character}"
+        )
+        suffix = "&access_token=abc123" if position == "key" else ""
+        full_url = "https://oapi.dingtalk.com/robot/send?" f"{hidden_pair}{suffix}"
+
+        with pytest.raises(ValueError, match="控制|格式"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_double_encoded_query_control_sequence_is_accepted(self):
+        """双编码控制字符按一次 URL 解码语义应保留为字面量。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=%2500&x=%250A"
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == full_url
 
     def test_domain_error_prioritized_over_missing_access_token(self):
         """域名错误应优先于缺失 access_token 报错。"""

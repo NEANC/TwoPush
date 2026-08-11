@@ -139,9 +139,17 @@ def _build_dingtalk_webhook_url(token, secret=None):
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉标准路径 {DINGTALK_WEBHOOK_PATH}'
             )
-        if parsed.fragment:
+        if '#' in token_str:
             raise ValueError('完整 Webhook URL 不得包含 fragment 片段')
         query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        if any(
+            unicodedata.category(character) in ('Cc', 'Cf')
+            for key, value in query_pairs
+            for character in key + value
+        ):
+            raise ValueError(
+                '完整 Webhook URL query 解码后不得包含 Unicode 控制字符或格式字符'
+            )
         access_tokens = [
             value
             for key, value in query_pairs
