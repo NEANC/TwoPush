@@ -586,12 +586,66 @@ def test_enhanced_dingtalk_value_error_still_retries(monkeypatch):
     assert log.error.call_count == 3
 
 
+@pytest.mark.parametrize("enhanced", [False, True])
+def test_signed_dingtalk_url_config_error_is_not_retried(
+        monkeypatch, enhanced):
+    """两条钉钉路由均应在发送前按实际 secret 校验最终 URL。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    prefix = 'https://oapi.dingtalk.com/robot/send?access_token='
+    token = prefix + 'a' * (
+        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix)
+    )
+    channel = {
+        'provider': 'dingtalk',
+        'token': token,
+        'secret': 'SECtest',
+    }
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+
+    send_calls = []
+    monkeypatch.setattr(
+        notification,
+        '_make_dingtalk_sign',
+        lambda secret: ('1', 's' * 44),
+    )
+    monkeypatch.setattr(
+        notification,
+        '_send_dingtalk_webhook',
+        lambda *args, **kwargs: send_calls.append('builtin'),
+    )
+    monkeypatch.setattr(
+        notification,
+        'get_notifier',
+        lambda provider: send_calls.append('onepush'),
+    )
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        channel,
+        '标题',
+        '内容',
+        retry_interval=1,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert send_calls == []
+    assert log.error.call_count == 1
+    assert sleep.call_count == 0
+
+
 def test_config_error_value_error_reason_is_masked(monkeypatch):
     """钉钉前置配置校验抛出的 ValueError 文本含敏感值时，配置错误日志应脱敏"""
     import modules.notification as notification
     from unittest import mock
 
-    def boom_url(token):
+    def boom_url(token, secret=None):
         raise ValueError('bad access_token=super-secret')
 
     monkeypatch.setattr(notification, '_build_dingtalk_webhook_url', boom_url)

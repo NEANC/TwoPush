@@ -1277,6 +1277,29 @@ class TestTwoPushDingTalkUrlBuilder:
         with pytest.raises(ValueError, match="编码后.*长度|8192"):
             _build_dingtalk_webhook_url(full_url)
 
+    def test_secret_signing_can_push_final_url_over_length_limit(
+        self, monkeypatch
+    ):
+        """未加签可用的边界 URL 在追加固定签名后超限应拒绝。"""
+        import modules.notification as notification
+
+        prefix = "https://oapi.dingtalk.com/robot/send?access_token="
+        full_url = prefix + "a" * (
+            notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix)
+        )
+        monkeypatch.setattr(
+            notification,
+            "_make_dingtalk_sign",
+            lambda secret: ("1", "s" * 44),
+        )
+
+        assert notification._build_dingtalk_webhook_url(full_url) == full_url
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            notification._build_dingtalk_webhook_url(
+                full_url,
+                secret="SECtest",
+            )
+
     @pytest.mark.parametrize("parameter_count", [100, 101])
     def test_full_url_query_parameter_limit(self, parameter_count):
         """完整 URL query 接受 100 个参数并拒绝 101 个参数。"""
@@ -1305,8 +1328,45 @@ class TestTwoPushDingTalkUrlBuilder:
             f"{invalid_utf8}"
         )
 
-        with pytest.raises(ValueError, match="UTF-8|query"):
+        with pytest.raises(ValueError, match="合法 UTF-8") as exc_info:
             _build_dingtalk_webhook_url(full_url)
+
+        assert "参数不得超过" not in str(exc_info.value)
+
+    def test_full_url_query_field_limit_has_dedicated_message(self):
+        """超过 100 个用户 query 参数时应返回独立数量错误。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        pairs = ["access_token=abc123"]
+        pairs.extend(f"x={index}" for index in range(100))
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+        )
+
+        with pytest.raises(ValueError, match="参数不得超过 100") as exc_info:
+            _build_dingtalk_webhook_url(full_url)
+
+        assert "合法 UTF-8" not in str(exc_info.value)
+
+    def test_other_query_value_error_uses_generic_parse_message(
+        self, monkeypatch
+    ):
+        """非字段数量类 ValueError 应归入通用 query 解析错误。"""
+        import modules.notification as notification
+
+        def fail_parse(*args, **kwargs):
+            raise ValueError("conversion failed")
+
+        monkeypatch.setattr(notification, "parse_qsl", fail_parse)
+
+        with pytest.raises(ValueError, match="query 解析失败") as exc_info:
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+        message = str(exc_info.value)
+        assert "合法 UTF-8" not in message
+        assert "参数不得超过" not in message
 
     def test_full_url_query_accepts_valid_encoded_chinese(self):
         """query 中合法 UTF-8 中文百分号编码应正常解码并规范化。"""
