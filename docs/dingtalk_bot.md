@@ -90,6 +90,26 @@ import requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
+    import requests
+
+    MAX_RESPONSE_BYTES = 1 * 1024 * 1024
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
+        raise RuntimeError("钉钉 Webhook HTTP 请求失败") from None
+
+    content_length = response.headers.get("Content-Length")
+    if (
+        isinstance(content_length, str)
+        and content_length.isdigit()
+        and int(content_length) > MAX_RESPONSE_BYTES
+    ):
+        raise RuntimeError("钉钉 Webhook 响应体过大")
+
+    if len(response.content) > MAX_RESPONSE_BYTES:
+        raise RuntimeError("钉钉 Webhook 响应体过大")
+
     try:
         data = response.json()
     except ValueError:
@@ -119,7 +139,6 @@ body = {
     }
 }
 response = requests.post(webhook_url, json=body, timeout=10)
-response.raise_for_status()
 check_dingtalk_response(response)
 ```
 
@@ -328,6 +347,26 @@ import hashlib, hmac, base64, time, urllib.parse, requests
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
+    import requests
+
+    MAX_RESPONSE_BYTES = 1 * 1024 * 1024
+
+    try:
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
+        raise RuntimeError("钉钉 Webhook HTTP 请求失败") from None
+
+    content_length = response.headers.get("Content-Length")
+    if (
+        isinstance(content_length, str)
+        and content_length.isdigit()
+        and int(content_length) > MAX_RESPONSE_BYTES
+    ):
+        raise RuntimeError("钉钉 Webhook 响应体过大")
+
+    if len(response.content) > MAX_RESPONSE_BYTES:
+        raise RuntimeError("钉钉 Webhook 响应体过大")
+
     try:
         data = response.json()
     except ValueError:
@@ -395,7 +434,6 @@ r = requests.post(
     headers={"Content-Type": "application/json"},
     timeout=10,
 )
-r.raise_for_status()
 check_dingtalk_response(r)
 print(r.status_code)
 ```
@@ -427,7 +465,6 @@ r = requests.post(
     headers={"Content-Type": "application/json"},
     timeout=10,
 )
-r.raise_for_status()
 check_dingtalk_response(r)
 ```
 
