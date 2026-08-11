@@ -85,13 +85,12 @@ notify(
 以下代码展示请求体结构，并使用未加签 Webhook URL 占位。使用加签安全设置时，`webhook_url` 必须替换为已附加 `timestamp` 和 `sign` 查询参数的完整 Webhook URL；完整加签实现请参考「请求完整示例」。
 
 ```python
+import json
 import requests
 
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    import requests
-
     MAX_RESPONSE_BYTES = 1 * 1024 * 1024
 
     try:
@@ -107,12 +106,18 @@ def check_dingtalk_response(response):
     ):
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
-    if len(response.content) > MAX_RESPONSE_BYTES:
+    response.raw.decode_content = True
+    try:
+        body = response.raw.read(MAX_RESPONSE_BYTES + 1)
+    except Exception:
+        raise RuntimeError("钉钉 Webhook 响应读取失败") from None
+
+    if len(body) > MAX_RESPONSE_BYTES:
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
     try:
-        data = response.json()
-    except ValueError:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from None
 
     if not isinstance(data, dict) or "errcode" not in data:
@@ -138,9 +143,16 @@ body = {
         "text": "![示例图片](https://example.com/pic.png)"
     }
 }
-response = requests.post(webhook_url, json=body, timeout=10)
-check_dingtalk_response(response)
+with requests.post(
+    webhook_url,
+    json=body,
+    timeout=10,
+    stream=True,
+) as response:
+    check_dingtalk_response(response)
 ```
+
+`stream=True` 避免预先下载完整响应体；配合最多读取 1 MiB + 1 字节的限长读取，可同时限制下载量和解压后的 JSON 解析量。
 
 ## @ 功能
 
@@ -342,13 +354,18 @@ response.raise_for_status()
 ### Markdown 全语法 + 图片 + @所有人
 
 ```python
-import hashlib, hmac, base64, time, urllib.parse, requests
+import base64
+import hashlib
+import hmac
+import json
+import time
+import urllib.parse
+
+import requests
 
 
 def check_dingtalk_response(response):
     """检查钉钉 Webhook 的业务响应。"""
-    import requests
-
     MAX_RESPONSE_BYTES = 1 * 1024 * 1024
 
     try:
@@ -364,12 +381,18 @@ def check_dingtalk_response(response):
     ):
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
-    if len(response.content) > MAX_RESPONSE_BYTES:
+    response.raw.decode_content = True
+    try:
+        body = response.raw.read(MAX_RESPONSE_BYTES + 1)
+    except Exception:
+        raise RuntimeError("钉钉 Webhook 响应读取失败") from None
+
+    if len(body) > MAX_RESPONSE_BYTES:
         raise RuntimeError("钉钉 Webhook 响应体过大")
 
     try:
-        data = response.json()
-    except ValueError:
+        data = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
         raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from None
 
     if not isinstance(data, dict) or "errcode" not in data:
@@ -428,15 +451,18 @@ body = {
     }
 }
 
-r = requests.post(
+with requests.post(
     url,
     json=body,
     headers={"Content-Type": "application/json"},
     timeout=10,
-)
-check_dingtalk_response(r)
-print(r.status_code)
+    stream=True,
+) as response:
+    check_dingtalk_response(response)
+    print(response.status_code)
 ```
+
+`stream=True` 与限长的 `raw.read` 共同确保代码不会预先下载完整响应，并将解压后进入 JSON 解析的数据限制在最多 1 MiB + 1 字节。
 
 ### Markdown 图片 + @指定人（基于上一完整示例的追加请求体片段）
 
@@ -459,13 +485,14 @@ body = {
         "isAtAll": False
     }
 }
-r = requests.post(
+with requests.post(
     url,
     json=body,
     headers={"Content-Type": "application/json"},
     timeout=10,
-)
-check_dingtalk_response(r)
+    stream=True,
+) as response:
+    check_dingtalk_response(response)
 ```
 
 ## TwoPush 钉钉增强配置
