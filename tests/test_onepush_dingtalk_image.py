@@ -1447,99 +1447,69 @@ class TestTwoPushDingTalkUrlBuilder:
         with pytest.raises(ValueError, match="空白"):
             _build_dingtalk_webhook_url(value)
 
-    @pytest.mark.parametrize("hidden_character", ["\u0085", "\u200b", "\u2060"])
-    @pytest.mark.parametrize("value_kind", ["token", "url_key", "url_value"])
+    @pytest.mark.parametrize(
+        "value_template",
+        [
+            "abc{character}123",
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "x{character}=safe&access_token=abc123"
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=abc{character}123"
+            ),
+        ],
+        ids=["token", "url-key", "url-value"],
+    )
+    @pytest.mark.parametrize(
+        "hidden_character",
+        ["\u0085", "\u200b", "\u2060"],
+        ids=["U+0085", "U+200B", "U+2060"],
+    )
     def test_unicode_control_or_format_character_raises_value_error(
-        self, monkeypatch, hidden_character, value_kind
+        self, value_template, hidden_character
     ):
         """裸 token 与完整 URL 中的 Unicode Cc/Cf 字符均应被拒绝。"""
-        import modules.notification as notification
+        from modules.notification import _build_dingtalk_webhook_url
 
-        value = f"abc{hidden_character}123"
-        if value_kind == "url_key":
-            value = (
-                "https://oapi.dingtalk.com/robot/send?"
-                f"x{hidden_character}=safe&access_token=abc123"
-            )
-        elif value_kind == "url_value":
-            value = (
-                "https://oapi.dingtalk.com/robot/send?access_token="
-                f"abc{hidden_character}123"
-            )
-
-        captured_values = []
-        original_builder = notification._build_dingtalk_webhook_url
-
-        def capture_builder(token, secret=None):
-            """捕获传入构造器的值并调用真实实现。"""
-            captured_values.append(token)
-            return original_builder(token, secret)
-
-        monkeypatch.setattr(
-            notification,
-            "_build_dingtalk_webhook_url",
-            capture_builder,
-        )
+        value = value_template.format(character=hidden_character)
 
         with pytest.raises(ValueError, match="控制|格式"):
-            notification._build_dingtalk_webhook_url(value)
+            _build_dingtalk_webhook_url(value)
 
-        assert captured_values == [value]
-        if value_kind == "token":
-            assert value == f"abc{hidden_character}123"
-        elif value_kind == "url_key":
-            assert f"?x{hidden_character}=safe&access_token=abc123" in value
-        else:
-            assert value.endswith(f"access_token=abc{hidden_character}123")
-
+    @pytest.mark.parametrize(
+        "value_template",
+        [
+            "abc{character}123",
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "x{character}=safe&access_token=abc123"
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=abc{character}123"
+            ),
+        ],
+        ids=["token", "url-key", "url-value"],
+    )
     @pytest.mark.parametrize(
         "surrogate",
         ["\ud800", "\udbff", "\udc00", "\udfff"],
+        ids=["U+D800", "U+DBFF", "U+DC00", "U+DFFF"],
     )
-    @pytest.mark.parametrize("value_kind", ["token", "url_key", "url_value"])
     def test_literal_unicode_surrogate_raises_plain_value_error(
-        self, monkeypatch, surrogate, value_kind
+        self, value_template, surrogate
     ):
         """裸 token 与完整 URL 原文中的 Unicode Cs 字符应明确拒绝。"""
-        import modules.notification as notification
+        from modules.notification import _build_dingtalk_webhook_url
 
-        value = f"abc{surrogate}123"
-        if value_kind == "url_key":
-            value = (
-                "https://oapi.dingtalk.com/robot/send?"
-                f"x{surrogate}=safe&access_token=abc123"
-            )
-        elif value_kind == "url_value":
-            value = (
-                "https://oapi.dingtalk.com/robot/send?access_token="
-                f"abc{surrogate}123"
-            )
-
-        captured_values = []
-        original_builder = notification._build_dingtalk_webhook_url
-
-        def capture_builder(token, secret=None):
-            """捕获传入构造器的值并调用真实实现。"""
-            captured_values.append(token)
-            return original_builder(token, secret)
-
-        monkeypatch.setattr(
-            notification,
-            "_build_dingtalk_webhook_url",
-            capture_builder,
-        )
+        value = value_template.format(character=surrogate)
 
         with pytest.raises(ValueError, match="代理字符") as exc_info:
-            notification._build_dingtalk_webhook_url(value)
+            _build_dingtalk_webhook_url(value)
 
         assert type(exc_info.value) is ValueError
-        assert captured_values == [value]
-        if value_kind == "token":
-            assert value == f"abc{surrogate}123"
-        elif value_kind == "url_key":
-            assert f"?x{surrogate}=safe&access_token=abc123" in value
-        else:
-            assert value.endswith(f"access_token=abc{surrogate}123")
 
     @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
     @pytest.mark.parametrize("position", ["key", "value"])
