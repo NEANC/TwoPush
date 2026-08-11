@@ -123,7 +123,7 @@ def _validate_dingtalk_webhook_url(url):
 def _build_dingtalk_webhook_url(token, secret=None):
     """根据 token 或完整 Webhook URL 构造钉钉请求 URL。
 
-    构造前仅去除 token 首尾普通空格，并拒绝隐藏控制、格式字符及首尾
+    构造前仅去除 token 首尾普通空格，并拒绝隐藏控制、格式、代理字符及首尾
     其他 Unicode 空白。完整 URL 会规范化 scheme、authority 与 query。
 
     Args:
@@ -134,7 +134,7 @@ def _build_dingtalk_webhook_url(token, secret=None):
         str: 钉钉 Webhook 请求 URL
 
     Raises:
-        ValueError: token 规范化后为空、包含 Unicode 控制或格式字符、首尾
+        ValueError: token 规范化后为空、包含 Unicode 控制、格式或代理字符、首尾
             包含非普通空格的空白时抛出；token 疑似完整 Webhook URL（含协议
             :// 或 query = 特征）但非合法 http(s) URL 时抛出；或完整 Webhook
             URL 未明确以 HTTPS 开头、authority 非法、包含 fragment、缺少
@@ -142,10 +142,12 @@ def _build_dingtalk_webhook_url(token, secret=None):
     """
     raw_token = str(token)
     if any(
-        unicodedata.category(character) in ('Cc', 'Cf')
+        unicodedata.category(character) in ('Cc', 'Cf', 'Cs')
         for character in raw_token
     ):
-        raise ValueError('钉钉 token 不得包含 Unicode 控制字符或格式字符')
+        raise ValueError(
+            '钉钉 token 不得包含 Unicode 控制字符、格式字符或代理字符'
+        )
     if raw_token and any(
         character != ' ' and character.isspace()
         for character in (raw_token[0], raw_token[-1])
@@ -195,12 +197,13 @@ def _build_dingtalk_webhook_url(token, secret=None):
                 f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
             ) from None
         if any(
-            unicodedata.category(character) in ('Cc', 'Cf')
+            unicodedata.category(character) in ('Cc', 'Cf', 'Cs')
             for key, value in query_pairs
             for character in key + value
         ):
             raise ValueError(
-                '完整 Webhook URL query 解码后不得包含 Unicode 控制字符或格式字符'
+                '完整 Webhook URL query 解码后不得包含 '
+                'Unicode 控制字符、格式字符或代理字符'
             )
         access_tokens = [
             value

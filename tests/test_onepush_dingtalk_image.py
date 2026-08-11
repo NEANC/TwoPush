@@ -1448,7 +1448,7 @@ class TestTwoPushDingTalkUrlBuilder:
             _build_dingtalk_webhook_url(value)
 
     @pytest.mark.parametrize("hidden_character", ["\u0085", "\u200b", "\u2060"])
-    @pytest.mark.parametrize("value_kind", ["token", "url"])
+    @pytest.mark.parametrize("value_kind", ["token", "url_key", "url_value"])
     def test_unicode_control_or_format_character_raises_value_error(
         self, hidden_character, value_kind
     ):
@@ -1464,6 +1464,57 @@ class TestTwoPushDingTalkUrlBuilder:
 
         with pytest.raises(ValueError, match="控制|格式"):
             _build_dingtalk_webhook_url(value)
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+    @pytest.mark.parametrize("value_kind", ["token", "url"])
+    def test_literal_unicode_surrogate_raises_plain_value_error(
+        self, surrogate, value_kind
+    ):
+        """裸 token 与完整 URL 原文中的 Unicode Cs 字符应明确拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        value = f"abc{surrogate}123"
+        if value_kind == "url_key":
+            value = (
+                "https://oapi.dingtalk.com/robot/send?"
+                f"x{surrogate}=safe&access_token=abc123"
+            )
+        elif value_kind == "url_value":
+            value = (
+                "https://oapi.dingtalk.com/robot/send?access_token="
+                f"abc{surrogate}123"
+            )
+
+        with pytest.raises(ValueError, match="代理字符") as exc_info:
+            _build_dingtalk_webhook_url(value)
+
+        assert type(exc_info.value) is ValueError
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+    @pytest.mark.parametrize("position", ["key", "value"])
+    def test_parsed_query_unicode_surrogate_raises_plain_value_error(
+        self, monkeypatch, surrogate, position
+    ):
+        """parse_qsl 后 query 键值中的 Unicode Cs 字符应明确拒绝。"""
+        import modules.notification as notification
+
+        query_pairs = (
+            [(f"x{surrogate}", "safe"), ("access_token", "abc123")]
+            if position == "key"
+            else [("access_token", f"abc{surrogate}123")]
+        )
+        monkeypatch.setattr(
+            notification,
+            "parse_qsl",
+            lambda *args, **kwargs: query_pairs,
+        )
+
+        with pytest.raises(ValueError, match="代理字符") as exc_info:
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+        assert type(exc_info.value) is ValueError
 
     def test_plain_token_remains_url_encoded(self):
         """裸 token 应继续通过 urlencode 编码。"""
