@@ -604,21 +604,21 @@ TwoPush 日志会脱敏手机号、`token`（含 `access_token`）、`secret` �
 
 ## 能力总结
 
-| 能力              | 支持 | 方式                                |
-| ----------------- | :--: | ----------------------------------- |
-| 文本推送          |  ✅  | OnePush `markdown=False` / 直接请求 |
-| Markdown 推送     |  ✅  | OnePush `markdown=True` / 直接请求  |
-| Markdown 内嵌图片 |  ✅  | `![alt](url)`                       |
-| image 消息类型    |  ❌  | Webhook 不支持                      |
-| @所有人           |  ✅  | `at.isAtAll=True`（需直接构造请求） |
-| @指定人（手机号） |  ✅  | `at.atMobiles`（需直接构造请求）    |
-| @指定人（userId） | 待实测 | `at.atUserIds`（需真实企业 userId） |
-| 链接消息          |  ✅  | 仅直接请求，OnePush 不支持          |
-| FeedCard          |  ✅  | 仅直接请求，OnePush 不支持          |
-| ActionCard        |  ✅  | 仅直接请求，OnePush 不支持          |
-| DING              |  ❌  | 需企业内部应用 + 专业版             |
-| 表格              |  ❌  | Markdown 不支持                     |
-| 代码块            |  ❌  | Markdown 不支持                     |
+| 能力              |  支持  | 方式                                                           |
+| ----------------- | :----: | -------------------------------------------------------------- |
+| 文本推送          |   ✅   | `dingtalk(onepush)` / `dingtalk(builtin)` / 手工 Webhook       |
+| Markdown 推送     |   ✅   | `dingtalk(onepush)` / `dingtalk(builtin)` / 手工 Webhook       |
+| Markdown 内嵌图片 |   ✅   | 上述 Markdown 路由，正文使用 `![alt](url)`                     |
+| image 消息类型    |   ❌   | Webhook 不支持                                                  |
+| @所有人           |   ✅   | `dingtalk(builtin)`（`isAtAll`）或手工 Webhook                 |
+| @指定人（手机号） |   ✅   | `dingtalk(builtin)`（`atMobiles`）或手工 Webhook               |
+| @指定人（userId） | 待实测 | 手工 Webhook 待实测，TwoPush 内置当前不支持                    |
+| 链接消息          |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
+| FeedCard          |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
+| ActionCard        |   ✅   | 手工 Webhook 请求，当前 TwoPush 内置路径未实现                 |
+| DING              |   ❌   | 需企业内部应用 + 专业版                                        |
+| 表格              |   ❌   | Markdown 不支持                                                |
+| 代码块            |   ❌   | Markdown 不支持                                                |
 
 ## 参考链接
 
