@@ -1245,6 +1245,81 @@ class TestTwoPushDingTalkUrlBuilder:
             "x=&access_token=abc&x=1&access_token="
         )
 
+    @pytest.mark.parametrize("extra_length", [0, 1])
+    def test_full_url_length_limit(self, extra_length):
+        """完整 Webhook URL 正好达到上限时接受，超过一个字符时拒绝。"""
+        from modules.notification import (
+            DINGTALK_WEBHOOK_MAX_URL_LENGTH,
+            _build_dingtalk_webhook_url,
+        )
+
+        prefix = "https://oapi.dingtalk.com/robot/send?access_token="
+        full_url = prefix + "a" * (
+            DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix) + extra_length
+        )
+
+        if extra_length == 0:
+            assert _build_dingtalk_webhook_url(full_url) == full_url
+            return
+
+        with pytest.raises(ValueError, match="长度|8192"):
+            _build_dingtalk_webhook_url(full_url)
+
+    @pytest.mark.parametrize("parameter_count", [100, 101])
+    def test_full_url_query_parameter_limit(self, parameter_count):
+        """完整 URL query 接受 100 个参数并拒绝 101 个参数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        pairs = ["access_token=abc123"]
+        pairs.extend(f"x={index}" for index in range(parameter_count - 1))
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+        )
+
+        if parameter_count == 100:
+            assert _build_dingtalk_webhook_url(full_url) == full_url
+            return
+
+        with pytest.raises(ValueError, match="参数|100"):
+            _build_dingtalk_webhook_url(full_url)
+
+    @pytest.mark.parametrize("invalid_utf8", ["%FF", "%E4%B8"])
+    def test_full_url_query_rejects_invalid_utf8(self, invalid_utf8):
+        """query 中非法或截断的 UTF-8 百分号字节序列应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123&x="
+            f"{invalid_utf8}"
+        )
+
+        with pytest.raises(ValueError, match="UTF-8|query"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_full_url_query_accepts_valid_encoded_chinese(self):
+        """query 中合法 UTF-8 中文百分号编码应正常解码并规范化。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "access_token=abc123&name=%E4%B8%AD%E6%96%87"
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == full_url
+
+    @pytest.mark.parametrize("invalid_percent", ["%", "%2", "%ZZ", "%2Z"])
+    def test_full_url_query_rejects_invalid_percent_escape(self, invalid_percent):
+        """query 中所有非合法 %HH 转义均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123&x="
+            f"{invalid_percent}"
+        )
+
+        with pytest.raises(ValueError, match="百分号|percent|%HH"):
+            _build_dingtalk_webhook_url(full_url)
+
     @pytest.mark.parametrize("suffix", ["#", "?#", "#section"])
     def test_full_url_with_fragment_delimiter_raises_value_error(self, suffix):
         """完整 URL 只要存在 fragment 分隔符就应被拒绝。"""
@@ -1385,6 +1460,23 @@ class TestTwoPushDingTalkUrlBuilder:
         assert _build_dingtalk_webhook_url("abc+/?") == (
             "https://oapi.dingtalk.com/robot/send?access_token=abc%2B%2F%3F"
         )
+
+    @pytest.mark.parametrize("extra_length", [0, 1])
+    def test_plain_token_length_limit(self, extra_length):
+        """裸 token 正好达到上限时接受，超过一个字符时拒绝。"""
+        from modules.notification import (
+            DINGTALK_TOKEN_MAX_LENGTH,
+            _build_dingtalk_webhook_url,
+        )
+
+        token = "a" * (DINGTALK_TOKEN_MAX_LENGTH + extra_length)
+
+        if extra_length == 0:
+            assert _build_dingtalk_webhook_url(token).endswith(token)
+            return
+
+        with pytest.raises(ValueError, match="token.*长度|4096"):
+            _build_dingtalk_webhook_url(token)
 
     def test_blank_token_still_rejected(self):
         """strip 后为空的 token 应抛出 ValueError（守护守卫）。"""

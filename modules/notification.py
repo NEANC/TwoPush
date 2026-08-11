@@ -45,6 +45,15 @@ DINGTALK_WEBHOOK_HOST = urlsplit(DINGTALK_WEBHOOK_BASE_URL).hostname
 # 钉钉 Webhook 标准路径（从 base URL 提取，保持单一数据源）
 DINGTALK_WEBHOOK_PATH = urlsplit(DINGTALK_WEBHOOK_BASE_URL).path
 
+# 钉钉完整 Webhook URL 最大长度
+DINGTALK_WEBHOOK_MAX_URL_LENGTH = 8192
+
+# 钉钉 Webhook query 最大参数数量
+DINGTALK_WEBHOOK_MAX_QUERY_FIELDS = 100
+
+# 钉钉裸 token 最大长度
+DINGTALK_TOKEN_MAX_LENGTH = 4096
+
 # 钉钉 Webhook 请求超时时间（秒）
 DINGTALK_REQUEST_TIMEOUT = 10
 
@@ -123,6 +132,11 @@ def _build_dingtalk_webhook_url(token, secret=None):
         raise ValueError('钉钉通道缺少 token')
 
     if _is_full_url(token_str):
+        if len(token_str) > DINGTALK_WEBHOOK_MAX_URL_LENGTH:
+            raise ValueError(
+                '完整 Webhook URL 长度不得超过 '
+                f'{DINGTALK_WEBHOOK_MAX_URL_LENGTH} 个字符'
+            )
         parsed = urlsplit(token_str)
         if not token_str.lower().startswith('https://'):
             raise ValueError('完整 Webhook URL 必须使用 HTTPS')
@@ -141,7 +155,21 @@ def _build_dingtalk_webhook_url(token, secret=None):
             )
         if '#' in token_str:
             raise ValueError('完整 Webhook URL 不得包含 fragment 片段')
-        query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+        if re.search(r'%(?![0-9A-Fa-f]{2})', parsed.query):
+            raise ValueError('完整 Webhook URL query 包含非法百分号转义，必须使用 %HH')
+        try:
+            query_pairs = parse_qsl(
+                parsed.query,
+                keep_blank_values=True,
+                encoding='utf-8',
+                errors='strict',
+                max_num_fields=DINGTALK_WEBHOOK_MAX_QUERY_FIELDS,
+            )
+        except (UnicodeDecodeError, ValueError):
+            raise ValueError(
+                '完整 Webhook URL query 解析失败：必须为合法 UTF-8，且参数不得超过 '
+                f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
+            ) from None
         if any(
             unicodedata.category(character) in ('Cc', 'Cf')
             for key, value in query_pairs
@@ -171,6 +199,10 @@ def _build_dingtalk_webhook_url(token, secret=None):
             raise ValueError(
                 '疑似完整 Webhook URL，请使用裸 access token 或完整 HTTPS URL'
             )
+        if len(token_str) > DINGTALK_TOKEN_MAX_LENGTH:
+            raise ValueError(
+                f'钉钉 token 长度不得超过 {DINGTALK_TOKEN_MAX_LENGTH} 个字符'
+            )
         query = urlencode({'access_token': token_str})
         url = f'{DINGTALK_WEBHOOK_BASE_URL}?{query}'
 
@@ -179,9 +211,22 @@ def _build_dingtalk_webhook_url(token, secret=None):
 
     timestamp, sign = _make_dingtalk_sign(str(secret))
     parsed = urlsplit(url)
+    try:
+        parsed_query_pairs = parse_qsl(
+            parsed.query,
+            keep_blank_values=True,
+            encoding='utf-8',
+            errors='strict',
+            max_num_fields=DINGTALK_WEBHOOK_MAX_QUERY_FIELDS,
+        )
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError(
+            '钉钉 Webhook URL query 解析失败：必须为合法 UTF-8，且参数不得超过 '
+            f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
+        ) from None
     query_pairs = [
         (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        for key, value in parsed_query_pairs
         if key not in ('timestamp', 'sign')
     ]
     query_pairs.extend([('timestamp', timestamp), ('sign', sign)])
