@@ -527,7 +527,7 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 - 裸 access token：`xxx`。
 - 完整 HTTPS Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
 
-TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `strip()` 清理其他空白。原始值中不得包含 Unicode `Cc`（包括 ASCII C0、C1 与 DEL）或 `Cf` 类别字符，首尾也不得包含 NBSP、全角空格、行分隔符等非 U+0020 空白；裸 token 遵循相同限制，长度上限为 4096 个字符，合法值仍会进行 URL 编码。
+TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `strip()` 清理其他空白。原始值中不得包含 Unicode `Cc`（包括 ASCII C0、C1 与 DEL）或 `Cf` 类别字符，首尾也不得包含 NBSP、全角空格、行分隔符等非 U+0020 空白；裸 token 遵循相同限制，长度上限为 4096 个字符，合法值仍会进行 URL 编码。最终 URL 必须可编码为 ASCII，且 `urlencode`、`urlunsplit` 规范输出后的 ASCII 长度不得超过 8192 个字符；不满足时作为配置错误拒绝。
 
 完整 URL 长度上限为 8192 个字符，必须明确以大小写不敏感的 `https://` 开头，authority 仅接受官方域名 `oapi.dingtalk.com`，不得包含 userinfo；端口只能省略或使用原始十进制字符串 `443`，空端口、`00443`、`+443` 及其他端口均拒绝。路径必须严格为 `/robot/send`，只要存在 `#` fragment 分隔符即拒绝，包括空 fragment。query 最多包含 100 个参数，所有百分号转义必须为合法 `%HH`，并以严格 UTF-8 解析；非法或截断的 UTF-8 字节序列会作为配置错误拒绝。解析后会再次检查每个键和值，拒绝其中的 Unicode `Cc` 或 `Cf` 字符，再重新编码；该过程仅按一次 URL 解析语义处理，双编码 `%2500` 解码一层所得的字面 `%00` 可以接受。输出会将 scheme 与官方 hostname 规范为小写并移除显式默认端口，同时保留 query 的重复键、空值和原始顺序，并要求至少一个解码后去除首尾空白仍非空的 `access_token`。HTTP URL、`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
 
@@ -553,7 +553,7 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 
 **统一发送前校验**
 
-无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做统一配置预校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode 控制或格式字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个 query 参数和解码后有效的 `access_token`。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 规范化或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做统一配置预校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode 控制或格式字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，规范编码后的最终 ASCII URL 另受 8192 个字符的长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个 query 参数和解码后有效的 `access_token`。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 规范化或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 

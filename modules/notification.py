@@ -96,6 +96,30 @@ def _make_dingtalk_sign(secret):
     return timestamp, sign
 
 
+def _validate_dingtalk_webhook_url(url):
+    """校验钉钉 Webhook 最终 URL 的编码与长度。
+
+    Args:
+        url: 经 urlencode 与 urlunsplit 规范化后的 URL
+
+    Returns:
+        str: 通过校验的 ASCII URL
+
+    Raises:
+        ValueError: URL 无法编码为 ASCII 或长度超过上限时抛出
+    """
+    try:
+        encoded_url = url.encode('ascii')
+    except UnicodeEncodeError:
+        raise ValueError('钉钉 Webhook 最终 URL 必须为 ASCII 编码') from None
+    if len(encoded_url) > DINGTALK_WEBHOOK_MAX_URL_LENGTH:
+        raise ValueError(
+            '钉钉 Webhook 编码后 URL 长度不得超过 '
+            f'{DINGTALK_WEBHOOK_MAX_URL_LENGTH} 个字符'
+        )
+    return url
+
+
 def _build_dingtalk_webhook_url(token, secret=None):
     """根据 token 或完整 Webhook URL 构造钉钉请求 URL。
 
@@ -207,7 +231,7 @@ def _build_dingtalk_webhook_url(token, secret=None):
         url = f'{DINGTALK_WEBHOOK_BASE_URL}?{query}'
 
     if not secret:
-        return url
+        return _validate_dingtalk_webhook_url(url)
 
     timestamp, sign = _make_dingtalk_sign(str(secret))
     parsed = urlsplit(url)
@@ -230,13 +254,14 @@ def _build_dingtalk_webhook_url(token, secret=None):
         if key not in ('timestamp', 'sign')
     ]
     query_pairs.extend([('timestamp', timestamp), ('sign', sign)])
-    return urlunsplit((
+    url = urlunsplit((
         parsed.scheme,
         parsed.netloc,
         parsed.path,
         urlencode(query_pairs),
         parsed.fragment,
     ))
+    return _validate_dingtalk_webhook_url(url)
 
 
 def _is_enhanced_dingtalk_channel(provider, params):

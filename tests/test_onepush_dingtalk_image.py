@@ -1265,6 +1265,18 @@ class TestTwoPushDingTalkUrlBuilder:
         with pytest.raises(ValueError, match="长度|8192"):
             _build_dingtalk_webhook_url(full_url)
 
+    def test_full_url_rejects_normalized_url_over_length_limit(self):
+        """完整 URL 规范编码后超过长度上限时应拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token="
+            + "中" * 1000
+        )
+
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            _build_dingtalk_webhook_url(full_url)
+
     @pytest.mark.parametrize("parameter_count", [100, 101])
     def test_full_url_query_parameter_limit(self, parameter_count):
         """完整 URL query 接受 100 个参数并拒绝 101 个参数。"""
@@ -1460,6 +1472,28 @@ class TestTwoPushDingTalkUrlBuilder:
         assert _build_dingtalk_webhook_url("abc+/?") == (
             "https://oapi.dingtalk.com/robot/send?access_token=abc%2B%2F%3F"
         )
+
+    def test_plain_token_rejects_encoded_url_over_length_limit(self):
+        """裸 token 编码后的完整 URL 超过长度上限时应拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            _build_dingtalk_webhook_url("中" * 1000)
+
+    def test_non_ascii_final_url_raises_value_error(self, monkeypatch):
+        """最终 URL 意外包含 Unicode 时应安全转换为 ValueError。"""
+        import modules.notification as notification
+
+        monkeypatch.setattr(
+            notification,
+            "urlunsplit",
+            lambda parts: "https://oapi.dingtalk.com/robot/send?access_token=中文",
+        )
+
+        with pytest.raises(ValueError, match="ASCII"):
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
 
     @pytest.mark.parametrize("extra_length", [0, 1])
     def test_plain_token_length_limit(self, extra_length):
