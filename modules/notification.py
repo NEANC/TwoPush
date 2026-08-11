@@ -713,7 +713,14 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
         try:
             final_url = base_url
             if base_url is not None and secret:
-                final_url = _build_dingtalk_webhook_url(base_url, secret)
+                try:
+                    final_url = _build_dingtalk_webhook_url(base_url, secret)
+                except ValueError as e:
+                    reason = mask_sensitive_fields(
+                        {'reason': str(e)}, sensitive_fields={'reason'}
+                    )['reason']
+                    log.error(f"通道 [{route_label}] 配置错误: {reason}")
+                    return False
             if enhanced:
                 response = _send_dingtalk_webhook(
                     params, title, content, validated_url=final_url)

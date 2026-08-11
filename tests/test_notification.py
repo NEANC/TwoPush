@@ -646,6 +646,90 @@ def test_signed_dingtalk_url_capacity_error_is_not_retried(
 
 
 @pytest.mark.parametrize("enhanced", [False, True])
+def test_signed_dingtalk_sign_value_error_is_not_retried(
+        monkeypatch, enhanced):
+    """动态签名器的配置性 ValueError 应立即终止两条钉钉路由。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    channel = {
+        'provider': 'dingtalk',
+        'token': 'abc',
+        'secret': 'SECtest',
+    }
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+
+    def fail_sign(secret):
+        """模拟签名密钥编码失败。"""
+        raise ValueError('钉钉 secret 编码失败')
+
+    send = mock.MagicMock()
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', fail_sign)
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', send)
+    monkeypatch.setattr(notification, 'get_notifier', send)
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
+    )
+
+    assert result is False
+    assert send.call_count == 0
+    assert log.error.call_count == 1
+    assert '配置错误' in log.error.call_args[0][0]
+    assert sleep.call_count == 0
+
+
+@pytest.mark.parametrize("enhanced", [False, True])
+@pytest.mark.parametrize("reason", [
+    '钉钉 Webhook 最终 URL 必须为 ASCII 编码',
+    '钉钉 Webhook 编码后 URL 长度不得超过 8192 个字符',
+])
+def test_signed_dingtalk_dynamic_builder_value_error_is_not_retried(
+        monkeypatch, enhanced, reason):
+    """动态构造的编码或最终容量错误应立即终止两条钉钉路由。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    channel = {
+        'provider': 'dingtalk',
+        'token': 'abc',
+        'secret': 'SECtest',
+    }
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+    real_builder = notification._build_dingtalk_webhook_url
+
+    def fail_dynamic_build(token, secret=None):
+        """仅在循环内动态加签构造时模拟确定性错误。"""
+        if secret:
+            raise ValueError(reason)
+        return real_builder(token)
+
+    send = mock.MagicMock()
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(
+        notification, '_build_dingtalk_webhook_url', fail_dynamic_build)
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', send)
+    monkeypatch.setattr(notification, 'get_notifier', send)
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
+    )
+
+    assert result is False
+    assert send.call_count == 0
+    assert log.error.call_count == 1
+    assert '配置错误' in log.error.call_args[0][0]
+    assert sleep.call_count == 0
+
+
+@pytest.mark.parametrize("enhanced", [False, True])
 def test_signed_dingtalk_retries_with_fresh_matching_url(
         monkeypatch, enhanced):
     """每次重试应重签一次并把当次构造对象原样交给对应 transport。"""
