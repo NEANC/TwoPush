@@ -18,8 +18,8 @@
 .\.venv\Scripts\python.exe -m pytest -q tests\test_onepush_dingtalk_image.py tests\test_notification.py
 ```
 
-上述测试核对了裸 token URL 构造、HTTPS 完整 URL 复用、secret 加签，以及仅含 token 时选择 `dingtalk(onepush)`、含 `msgtype` 等增强参数时选择 `dingtalk(builtin)` 并在汇总与失败日志中使用对应路由标识。
-仅在 `dingtalk(onepush)` 路由中，未完整测试的 HTTP 完整 URL、已有签名参数行为归因于 OnePush 1.9.0 的 `onepush.providers.dingtalk.DingTalk._prepare_url` 实现。
+上述测试核对了裸 token URL 构造、HTTPS 完整 URL 复用、HTTP 完整 URL 拒绝、secret 加签，以及仅含 token 时选择 `dingtalk(onepush)`、含 `msgtype` 等增强参数时选择 `dingtalk(builtin)` 并在汇总与失败日志中使用对应路由标识。
+OnePush 1.9.0 自身对完整 HTTP URL 的处理事实仍可由 `onepush.providers.dingtalk.DingTalk._prepare_url` 实现确认，但 TwoPush 的统一发送前校验会直接拒绝该输入，不会交给 OnePush 发送。
 
 ## 消息类型支持
 
@@ -525,9 +525,9 @@ TwoPush 在 `provider: "dingtalk"` 中支持增强参数。当配置包含 `msgt
 配置中存在任一增强键时，由 TwoPush 内置实现发送。此路径支持：
 
 - 裸 access token：`xxx`。
-- 完整 HTTP(S) Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
+- 完整 HTTPS Webhook URL：`https://oapi.dingtalk.com/robot/send?access_token=xxx`。
 
-TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `https` 协议、官方域名 `oapi.dingtalk.com` 和严格路径 `/robot/send`，并且查询参数中至少有一个去除首尾空白后非空的 `access_token`。`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
+TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `https` 协议、官方域名 `oapi.dingtalk.com` 和严格路径 `/robot/send`，并且查询参数中至少有一个去除首尾空白后非空的 `access_token`。HTTP URL、`/robot/send/`、其他域名、缺少有效 `access_token`，以及含 `://` 或 `=` 但不是合法完整 URL 的值均不接受。
 
 配置非空 `secret` 时，TwoPush 会按本次发送时间重新生成 `timestamp` 与 `sign`；完整 URL 中已有的同名参数会先被移除，再由新值覆盖，最终各保留一个。
 
@@ -535,7 +535,7 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
 
 未配置增强键时，TwoPush 将原始 `token`、`secret` 等参数交给已安装的 OnePush 钉钉 provider。
 
-**当前 OnePush 1.9.0 的实现事实：** 裸 access token 会拼接到 OnePush 的基础 URL；完整 HTTPS URL 会原样复用；完整 HTTP URL 会被当作 token 再套入基础 URL。配置非空 `secret` 时，OnePush 会直接在结果 URL 后追加新的 `timestamp` 与 `sign`，不会去重或覆盖原有同名参数。
+**当前 OnePush 1.9.0 的实现事实：** 裸 access token 会拼接到 OnePush 的基础 URL；完整 HTTPS URL 会原样复用；如果绕过 TwoPush 直接调用 OnePush，完整 HTTP URL 会被当作 token 再套入基础 URL，因此不要使用。配置非空 `secret` 时，OnePush 会直接在结果 URL 后追加新的 `timestamp` 与 `sign`，不会去重或覆盖原有同名参数。
 
 **推荐用法：** 此路径始终使用裸 access token：
 
@@ -547,11 +547,11 @@ TwoPush 会先去除 `token` 首尾空白。完整 URL 必须使用 `http` 或 `
 }
 ```
 
-完整 HTTPS URL 在当前 OnePush 1.9.0 中可以复用，但该行为由 OnePush 版本实现决定，TwoPush 不保证兼容性；不要使用完整 HTTP URL。`secret` 由 OnePush 负责加签，不承诺覆盖 URL 中已有的 `timestamp`、`sign`，因此不要预先附加这些参数。
+完整 HTTPS URL 在当前 OnePush 1.9.0 中可以复用，但该行为由 OnePush 版本实现决定，TwoPush 不保证兼容性；完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 OnePush 负责加签，不承诺覆盖 URL 中已有的 `timestamp`、`sign`，因此不要预先附加这些参数。
 
 **统一发送前校验**
 
-无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做配置预校验。因此，看似完整 URL 的值会在发送前检查协议、官方域名、严格路径和有效 `access_token`；该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 构造或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
+无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并调用内置 URL 构造逻辑做配置预校验。因此，完整 URL 仅接受 HTTPS，并会在发送前检查官方域名、严格路径和有效 `access_token`；HTTP 完整 URL 会被直接拒绝。该检查不表示 `dingtalk(onepush)` 会采用 TwoPush 的 URL 构造或重签行为，预校验通过后仍由 OnePush 按原始参数发送。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 

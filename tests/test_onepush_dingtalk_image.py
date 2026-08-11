@@ -894,15 +894,20 @@ class TestTwoPushDingTalkUrlBuilder:
         assert "timestamp=old" not in url
         assert "sign=old" not in url
 
-    def test_http_full_webhook_url_is_reused(self):
-        """http 完整 Webhook URL 应原样复用且不重复追加 access_token。"""
+    @pytest.mark.parametrize(
+        "full_url",
+        [
+            "http://oapi.dingtalk.com/robot/send?access_token=abc123",
+            "HTTP://oapi.dingtalk.com/robot/send?access_token=abc123",
+            "http://oapi.dingtalk.com:80/robot/send?access_token=abc123",
+        ],
+    )
+    def test_http_full_webhook_url_raises_value_error(self, full_url):
+        """HTTP 完整 Webhook URL 应因未使用 HTTPS 而被拒绝。"""
         from modules.notification import _build_dingtalk_webhook_url
 
-        full_url = "http://oapi.dingtalk.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(full_url)
-
-        assert url == full_url
-        assert url.count("access_token=") == 1
+        with pytest.raises(ValueError, match="HTTPS"):
+            _build_dingtalk_webhook_url(full_url)
 
     def test_non_http_scheme_is_treated_as_token(self):
         """非 http(s) scheme 的地址不应被静默当作裸 token，应抛出 ValueError。"""
@@ -993,7 +998,7 @@ class TestTwoPushDingTalkUrlBuilder:
 
         with pytest.raises(ValueError, match="oapi.dingtalk.com"):
             _build_dingtalk_webhook_url(
-                "http://internal.local/robot/send?access_token=abc123",
+                "https://internal.local/robot/send?access_token=abc123",
                 secret="SECtest",
             )
 

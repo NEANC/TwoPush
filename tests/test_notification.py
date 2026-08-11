@@ -345,6 +345,52 @@ def test_missing_access_token_in_full_url_not_retried(monkeypatch):
     assert 'access_token' in log.error.call_args[0][0]
 
 
+def test_http_full_url_is_rejected_before_both_dingtalk_routes(monkeypatch):
+    """HTTP 完整 URL 应在两条钉钉路由发送前被拒绝且不重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    send_calls = []
+
+    def record_notifier(provider):
+        send_calls.append(('onepush', provider))
+        raise AssertionError("HTTP URL 不应调用 get_notifier")
+
+    def record_webhook(*args, **kwargs):
+        send_calls.append(('builtin', args, kwargs))
+        raise AssertionError("HTTP URL 不应调用内置 Webhook")
+
+    monkeypatch.setattr(notification, 'get_notifier', record_notifier)
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', record_webhook)
+
+    for channel in (
+        {
+            'provider': 'dingtalk',
+            'token': 'http://oapi.dingtalk.com/robot/send?access_token=abc',
+        },
+        {
+            'provider': 'dingtalk',
+            'msgtype': 'markdown',
+            'token': 'HTTP://oapi.dingtalk.com:80/robot/send?access_token=abc',
+        },
+    ):
+        log = mock.MagicMock()
+        result = notification._notify_single_channel(
+            channel,
+            '标题',
+            '内容',
+            retry_interval=0,
+            max_count=3,
+            log=log,
+        )
+
+        assert result is False
+        assert log.error.call_count == 1
+        assert 'HTTPS' in log.error.call_args[0][0]
+
+    assert send_calls == []
+
+
 def test_blank_token_not_retried(monkeypatch):
     """纯空白 token 应作为配置错误前置拦截，不调用 onepush 也不重试"""
     import modules.notification as notification

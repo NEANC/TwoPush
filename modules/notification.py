@@ -103,9 +103,9 @@ def _build_dingtalk_webhook_url(token, secret=None):
     Raises:
         ValueError: token strip 后为空时抛出；token 疑似完整 Webhook URL
             （含协议 :// 或 query = 特征）但非合法 http(s) URL 时抛出；或
-            token 为完整 Webhook URL 但缺少 access_token 参数时抛出；或完整
-            Webhook URL 的域名不是钉钉官方域名 DINGTALK_WEBHOOK_HOST 时抛出；
-            或完整 Webhook URL 的路径不是钉钉标准路径 /robot/send 时抛出
+            完整 Webhook URL 未使用 HTTPS、缺少 access_token 参数、域名不是
+            钉钉官方域名 DINGTALK_WEBHOOK_HOST，或路径不是钉钉标准路径
+            /robot/send 时抛出
     """
     token_str = str(token).strip()
     if not token_str:
@@ -113,6 +113,8 @@ def _build_dingtalk_webhook_url(token, secret=None):
 
     if _is_full_url(token_str):
         parsed = urlsplit(token_str)
+        if parsed.scheme.lower() != 'https':
+            raise ValueError('完整 Webhook URL 必须使用 HTTPS')
         if parsed.hostname != DINGTALK_WEBHOOK_HOST:
             raise ValueError(
                 f'完整 Webhook URL 必须使用钉钉官方域名 {DINGTALK_WEBHOOK_HOST}'
@@ -134,7 +136,7 @@ def _build_dingtalk_webhook_url(token, secret=None):
         # 的字符串疑似完整 Webhook URL，提前报错避免生成错误 URL
         if '://' in token_str or '=' in token_str:
             raise ValueError(
-                '疑似完整 Webhook URL，请使用裸 access token 或完整 http(s) URL'
+                '疑似完整 Webhook URL，请使用裸 access token 或完整 HTTPS URL'
             )
         query = urlencode({'access_token': token_str})
         url = f'{DINGTALK_WEBHOOK_BASE_URL}?{query}'
