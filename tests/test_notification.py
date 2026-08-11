@@ -645,28 +645,49 @@ def test_signed_dingtalk_url_capacity_error_is_not_retried(
     assert sleep.call_count == 0
 
 
-@pytest.mark.parametrize("enhanced", [False, True])
-def test_signed_dingtalk_sign_value_error_is_not_retried(
-        monkeypatch, enhanced):
-    """动态签名器的配置性 ValueError 应立即终止两条钉钉路由。"""
+@pytest.mark.parametrize('enhanced', [False, True])
+@pytest.mark.parametrize('failure_case', ['secret_encoding', 'final_length'])
+def test_signed_dingtalk_real_dynamic_builder_error_is_not_retried(
+        monkeypatch, enhanced, failure_case):
+    """真实动态 builder 的签名编码与最终长度错误均不应重试。"""
     import modules.notification as notification
     from unittest import mock
 
+    secret = 'SEC-real-private-\ud800-\x01'
+    token = 'abc'
+    builder_reason = 'surrogates not allowed'
+    if failure_case == 'final_length':
+        prefix = 'https://oapi.dingtalk.com/robot/send?access_token='
+        signed_suffix_length = len('&timestamp=' + '9' * 13) + len(
+            '&sign=' + '%2F' * 44)
+        base_length = (
+            notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH
+            - signed_suffix_length
+        )
+        token = prefix + 'a' * (base_length - len(prefix))
+        secret = 'SEC-real-private-length'
+        builder_reason = '长度不得超过 8192 个字符'
+        monkeypatch.setattr(
+            notification,
+            '_make_dingtalk_sign',
+            lambda value: ('9' * 13, 's' * 133),
+        )
+
     channel = {
         'provider': 'dingtalk',
-        'token': 'abc',
-        'secret': 'SECtest',
+        'token': token,
+        'secret': secret,
     }
     if enhanced:
         channel['msgtype'] = 'markdown'
 
-    def fail_sign(secret):
-        """模拟签名密钥编码失败。"""
-        raise ValueError('钉钉 secret 编码失败')
+    base_url = notification._build_dingtalk_webhook_url(token)
+    assert notification._validate_dingtalk_signed_url_capacity(base_url) == base_url
+    with pytest.raises(ValueError, match=builder_reason):
+        notification._build_dingtalk_webhook_url(base_url, secret)
 
     send = mock.MagicMock()
     sleep = mock.MagicMock()
-    monkeypatch.setattr(notification, '_make_dingtalk_sign', fail_sign)
     monkeypatch.setattr(notification, '_send_dingtalk_webhook', send)
     monkeypatch.setattr(notification, 'get_notifier', send)
     monkeypatch.setattr(notification.time, 'sleep', sleep)
@@ -678,55 +699,11 @@ def test_signed_dingtalk_sign_value_error_is_not_retried(
 
     assert result is False
     assert send.call_count == 0
-    assert log.error.call_count == 1
-    assert '配置错误' in log.error.call_args[0][0]
     assert sleep.call_count == 0
-
-
-@pytest.mark.parametrize("enhanced", [False, True])
-@pytest.mark.parametrize("reason", [
-    '钉钉 Webhook 最终 URL 必须为 ASCII 编码',
-    '钉钉 Webhook 编码后 URL 长度不得超过 8192 个字符',
-])
-def test_signed_dingtalk_dynamic_builder_value_error_is_not_retried(
-        monkeypatch, enhanced, reason):
-    """动态构造的编码或最终容量错误应立即终止两条钉钉路由。"""
-    import modules.notification as notification
-    from unittest import mock
-
-    channel = {
-        'provider': 'dingtalk',
-        'token': 'abc',
-        'secret': 'SECtest',
-    }
-    if enhanced:
-        channel['msgtype'] = 'markdown'
-    real_builder = notification._build_dingtalk_webhook_url
-
-    def fail_dynamic_build(token, secret=None):
-        """仅在循环内动态加签构造时模拟确定性错误。"""
-        if secret:
-            raise ValueError(reason)
-        return real_builder(token)
-
-    send = mock.MagicMock()
-    sleep = mock.MagicMock()
-    monkeypatch.setattr(
-        notification, '_build_dingtalk_webhook_url', fail_dynamic_build)
-    monkeypatch.setattr(notification, '_send_dingtalk_webhook', send)
-    monkeypatch.setattr(notification, 'get_notifier', send)
-    monkeypatch.setattr(notification.time, 'sleep', sleep)
-    log = mock.MagicMock()
-
-    result = notification._notify_single_channel(
-        channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
-    )
-
-    assert result is False
-    assert send.call_count == 0
     assert log.error.call_count == 1
-    assert '配置错误' in log.error.call_args[0][0]
-    assert sleep.call_count == 0
+    log_message = log.error.call_args.args[0]
+    assert '配置错误' in log_message
+    assert secret not in log_message
 
 
 @pytest.mark.parametrize("enhanced", [False, True])
