@@ -1147,6 +1147,56 @@ def test_onepush_dingtalk_rejects_notifier_without_callable_request(monkeypatch)
     assert 'token-only' not in log.error.call_args[0][0]
 
 
+def test_real_dingtalk_notifier_no_redirect_contract(monkeypatch):
+    """真实 OnePush 钉钉实例注入后最终请求应禁用重定向且只签名一次。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    captured = []
+    nested = {'value': 'same-object'}
+    channel = {
+        'provider': 'dingtalk',
+        'token': 'token-only',
+        'secret': 'SECtest',
+        'metadata': nested,
+    }
+    original = dict(channel)
+
+    notifier = notification.get_notifier('dingtalk')
+
+    def capture_request(method, url, **kwargs):
+        """无网络捕获最终传输参数并返回成功响应。"""
+        captured.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
+    notifier.request = capture_request
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert len(captured) == 1
+    method, url, kwargs = captured[0]
+    assert method == 'post'
+    assert kwargs['allow_redirects'] is False
+    parsed = urlsplit(url)
+    assert parsed.scheme == 'https'
+    assert parsed.hostname == 'oapi.dingtalk.com'
+    assert parsed.path == '/robot/send'
+    query_pairs = parse_qsl(parsed.query)
+    assert [value for key, value in query_pairs if key == 'access_token'] == ['token-only']
+    assert len([value for key, value in query_pairs if key == 'timestamp']) == 1
+    assert len([value for key, value in query_pairs if key == 'sign']) == 1
+    assert channel == original
+    assert channel['metadata'] is nested
+
+
 def test_onepush_other_provider_keeps_default_request(monkeypatch):
     """非钉钉 OnePush 实例不应覆盖默认请求行为。"""
     import modules.notification as notification
