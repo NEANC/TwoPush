@@ -3,6 +3,7 @@
 
 """notification 模块单元测试"""
 
+import base64
 import os
 import sys
 from urllib.parse import parse_qsl, urlsplit
@@ -645,51 +646,47 @@ def test_signed_dingtalk_url_capacity_error_is_not_retried(
     assert sleep.call_count == 0
 
 
+def _largest_signed_dingtalk_base_url(notification):
+    """返回签名容量校验允许的最长基础 URL。"""
+    prefix = (
+        f'{notification.DINGTALK_WEBHOOK_BASE_URL}'
+        '?access_token=abc&padding='
+    )
+    max_padding_length = (
+        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix)
+    )
+    for padding_length in range(max_padding_length, -1, -1):
+        base_url = prefix + 'a' * padding_length
+        try:
+            return notification._validate_dingtalk_signed_url_capacity(base_url)
+        except ValueError:
+            continue
+    raise AssertionError('未找到可通过签名容量校验的基础 URL')
+
+
 @pytest.mark.parametrize('enhanced', [False, True])
-@pytest.mark.parametrize('failure_case', ['secret_encoding', 'final_length'])
-def test_signed_dingtalk_real_dynamic_builder_error_is_not_retried(
-        monkeypatch, enhanced, failure_case):
-    """真实动态 builder 的签名编码与最终长度错误均不应重试。"""
+def test_signed_dingtalk_secret_surrogate_encoding_failure_is_not_retried(
+        monkeypatch, enhanced):
+    """真实 secret 代理字符编码失败应分类为配置错误且不重试。"""
     import modules.notification as notification
     from unittest import mock
 
     secret = 'SEC-real-private-\ud800-\x01'
-    token = 'abc'
-    builder_reason = 'surrogates not allowed'
-    if failure_case == 'final_length':
-        prefix = 'https://oapi.dingtalk.com/robot/send?access_token='
-        signed_suffix_length = len('&timestamp=' + '9' * 13) + len(
-            '&sign=' + '%2F' * 44)
-        base_length = (
-            notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH
-            - signed_suffix_length
-        )
-        token = prefix + 'a' * (base_length - len(prefix))
-        secret = 'SEC-real-private-length'
-        builder_reason = '长度不得超过 8192 个字符'
-        monkeypatch.setattr(
-            notification,
-            '_make_dingtalk_sign',
-            lambda value: ('9' * 13, 's' * 133),
-        )
-
     channel = {
         'provider': 'dingtalk',
-        'token': token,
+        'token': 'abc',
         'secret': secret,
     }
     if enhanced:
         channel['msgtype'] = 'markdown'
 
-    base_url = notification._build_dingtalk_webhook_url(token)
-    assert notification._validate_dingtalk_signed_url_capacity(base_url) == base_url
-    with pytest.raises(ValueError, match=builder_reason):
-        notification._build_dingtalk_webhook_url(base_url, secret)
-
-    send = mock.MagicMock()
+    sign = mock.MagicMock(wraps=notification._make_dingtalk_sign)
+    builtin_send = mock.MagicMock()
+    get_notifier = mock.MagicMock()
     sleep = mock.MagicMock()
-    monkeypatch.setattr(notification, '_send_dingtalk_webhook', send)
-    monkeypatch.setattr(notification, 'get_notifier', send)
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', sign)
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', builtin_send)
+    monkeypatch.setattr(notification, 'get_notifier', get_notifier)
     monkeypatch.setattr(notification.time, 'sleep', sleep)
     log = mock.MagicMock()
 
@@ -698,12 +695,80 @@ def test_signed_dingtalk_real_dynamic_builder_error_is_not_retried(
     )
 
     assert result is False
-    assert send.call_count == 0
+    sign.assert_called_once_with(secret)
+    builtin_send.assert_not_called()
+    get_notifier.assert_not_called()
     assert sleep.call_count == 0
     assert log.error.call_count == 1
     log_message = log.error.call_args.args[0]
     assert '配置错误' in log_message
     assert secret not in log_message
+
+
+@pytest.mark.parametrize('enhanced', [False, True])
+def test_signed_dingtalk_signer_output_over_44_character_contract_final_length_validation_is_not_retried(
+        monkeypatch, enhanced):
+    """签名器返回超出 44 字符契约时最终长度校验不应重试。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    secret = 'SEC-private-anomalous-signer'
+    channel = {
+        'provider': 'dingtalk',
+        'token': _largest_signed_dingtalk_base_url(notification),
+        'secret': secret,
+    }
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+
+    sign = mock.MagicMock(return_value=('9' * 13, 's' * 133))
+    builtin_send = mock.MagicMock()
+    get_notifier = mock.MagicMock()
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', sign)
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', builtin_send)
+    monkeypatch.setattr(notification, 'get_notifier', get_notifier)
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
+    )
+
+    assert result is False
+    sign.assert_called_once_with(secret)
+    builtin_send.assert_not_called()
+    get_notifier.assert_not_called()
+    sleep.assert_not_called()
+    log.error.assert_called_once()
+    log_message = log.error.call_args.args[0]
+    assert '配置错误' in log_message
+    assert '长度不得超过 8192 个字符' in log_message
+    assert secret not in log_message
+
+
+def test_signed_dingtalk_capacity_accepts_theoretical_worst_valid_base64_sign(
+        monkeypatch):
+    """合法 44 字符 Base64 理论最坏输出通过预算后不应超限。"""
+    import modules.notification as notification
+
+    sign = '/' * 42 + '8' + '='
+    assert len(sign) == 44
+    assert len(base64.b64decode(sign, validate=True)) == 32
+    assert base64.b64encode(base64.b64decode(sign)).decode('ascii') == sign
+
+    base_url = _largest_signed_dingtalk_base_url(notification)
+    monkeypatch.setattr(
+        notification,
+        '_make_dingtalk_sign',
+        lambda secret: ('9' * 13, sign),
+    )
+
+    signed_url = notification._build_dingtalk_webhook_url(base_url, 'SECtest')
+
+    assert len(signed_url.encode('ascii')) <= (
+        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH
+    )
 
 
 @pytest.mark.parametrize("enhanced", [False, True])
