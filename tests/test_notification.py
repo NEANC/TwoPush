@@ -4,6 +4,8 @@
 """notification 模块单元测试"""
 
 import base64
+import hashlib
+import hmac
 import os
 import sys
 from urllib.parse import parse_qsl, urlencode, urlsplit
@@ -819,18 +821,29 @@ def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
     import modules.notification as notification
     from unittest import mock
 
-    secret = 'SEC-cross-stage-boundary'
+    secret = 'SEC-cross-stage-boundary-7'
     timestamp_13 = '1000000000000'
-    worst_sign = base64.b64encode(b'\xff' * 32).decode('ascii')
+    timestamp_14 = '10000000000000'
+    sign_13 = base64.b64encode(hmac.new(
+        secret.encode(),
+        f'{timestamp_13}\n{secret}'.encode(),
+        digestmod=hashlib.sha256,
+    ).digest()).decode('ascii')
+    sign_14 = base64.b64encode(hmac.new(
+        secret.encode(),
+        f'{timestamp_14}\n{secret}'.encode(),
+        digestmod=hashlib.sha256,
+    ).digest()).decode('ascii')
+    limit = notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH
     prefix = (
         f'{notification.DINGTALK_WEBHOOK_BASE_URL}'
         '?access_token=abc&padding='
     )
     signed_suffix = '&' + urlencode([
         ('timestamp', timestamp_13),
-        ('sign', worst_sign),
+        ('sign', sign_13),
     ])
-    padding_length = 8192 - len(prefix) - len(signed_suffix)
+    padding_length = limit - len(prefix) - len(signed_suffix)
     base_url = prefix + 'a' * padding_length
     channel = {
         'provider': 'dingtalk',
@@ -849,25 +862,24 @@ def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
         return value
 
     time_call = mock.MagicMock(side_effect=advancing_time)
-    digest = mock.MagicMock()
-    digest.digest.return_value = b'\xff' * 32
-    hmac_new = mock.MagicMock(return_value=digest)
+    hmac_new = mock.MagicMock(wraps=notification.hmac.new)
     builtin_send = mock.MagicMock()
     get_notifier = mock.MagicMock()
     sleep = mock.MagicMock()
     monkeypatch.setattr(notification.time, 'time', time_call)
+    monkeypatch.setattr(notification, 'DINGTALK_SIGN_WORST_BASE64', sign_13)
     monkeypatch.setattr(notification.hmac, 'new', hmac_new)
     monkeypatch.setattr(notification, '_send_dingtalk_webhook', builtin_send)
     monkeypatch.setattr(notification, 'get_notifier', get_notifier)
     monkeypatch.setattr(notification.time, 'sleep', sleep)
     log = mock.MagicMock()
 
-    assert len((base_url + signed_suffix).encode('ascii')) == 8192
+    assert len((base_url + signed_suffix).encode('ascii')) == limit
     actual_signed_suffix = '&' + urlencode([
-        ('timestamp', '10000000000000'),
-        ('sign', worst_sign),
+        ('timestamp', timestamp_14),
+        ('sign', sign_14),
     ])
-    assert len((base_url + actual_signed_suffix).encode('ascii')) == 8193
+    assert len((base_url + actual_signed_suffix).encode('ascii')) == limit + 1
 
     result = notification._notify_single_channel(
         channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
@@ -878,14 +890,18 @@ def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
     assert len(timestamps) >= 2
     assert len(timestamps[0]) == 13
     assert any(len(timestamp) == 14 for timestamp in timestamps[1:])
-    assert hmac_new.call_args.args[1].startswith(b'10000000000000\n')
+    hmac_new.assert_called_once_with(
+        secret.encode(),
+        f'{timestamp_14}\n{secret}'.encode(),
+        digestmod=hashlib.sha256,
+    )
     builtin_send.assert_not_called()
     get_notifier.assert_not_called()
     log.error.assert_called_once()
     log_message = log.error.call_args.args[0]
     assert '配置错误' in log_message
     assert '长度不得超过' in log_message
-    assert '8192' in log_message
+    assert str(limit) in log_message
     sleep.assert_not_called()
 
 
