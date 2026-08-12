@@ -1024,7 +1024,7 @@ def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
             self.request = self.default_request
 
         @staticmethod
-        def default_request(method, url, **kwargs):
+        def default_request(method, url, proxies=None, **kwargs):
             """记录最终传输参数并返回成功响应。"""
             request_calls.append((method, url, kwargs))
             response = mock.MagicMock(status_code=200)
@@ -1080,7 +1080,7 @@ def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
             self.request = self.default_request
 
         @staticmethod
-        def default_request(method, url, **kwargs):
+        def default_request(method, url, proxies=None, **kwargs):
             """记录最终传输参数并返回成功响应。"""
             request_calls.append((method, url, kwargs))
             response = mock.MagicMock(status_code=200)
@@ -1110,6 +1110,43 @@ def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
     assert request_calls[0][2]['allow_redirects'] is False
     assert channel == original
     assert channel['metadata'] is nested
+
+
+def test_disable_dingtalk_redirects_forwards_positional_proxies():
+    """基类以位置参数透传 proxies 时包装函数应原样转发并禁用重定向。"""
+    import modules.notification as notification
+
+    captured = []
+
+    class FakeNotifier:
+        """模拟以位置参数传 proxies 的 OnePush 基类调用方式。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, proxies=None, **kwargs):
+            """记录最终传输参数。"""
+            captured.append((method, url, proxies, kwargs))
+            return None
+
+        def notify(self, **kwargs):
+            """以位置参数传 proxies 触发实例请求。"""
+            proxies_dict = {'https': 'https://proxy.example:8080'}
+            return self.request('post', kwargs['token'], proxies_dict, json={})
+
+    notifier = FakeNotifier()
+
+    assert notification._disable_dingtalk_redirects(notifier) is True
+    notifier.notify(
+        token='https://oapi.dingtalk.com/robot/send?access_token=abc')
+
+    method, url, proxies, kwargs = captured[0]
+    assert method == 'post'
+    assert url == 'https://oapi.dingtalk.com/robot/send?access_token=abc'
+    assert proxies == {'https': 'https://proxy.example:8080'}
+    assert kwargs['allow_redirects'] is False
 
 
 def test_onepush_dingtalk_rejects_notifier_without_callable_request(monkeypatch):
@@ -1164,7 +1201,7 @@ def test_real_dingtalk_notifier_no_redirect_contract(monkeypatch):
 
     notifier = notification.get_notifier('dingtalk')
 
-    def capture_request(method, url, **kwargs):
+    def capture_request(method, url, proxies=None, **kwargs):
         """无网络捕获最终传输参数并返回成功响应。"""
         captured.append((method, url, kwargs))
         response = mock.MagicMock(status_code=200)
