@@ -104,7 +104,10 @@ def test_send_notification_success_does_not_log_title(monkeypatch, caplog):
             return {'errcode': 0, 'errmsg': 'ok'}
 
     monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
-        'Notifier', (), {'notify': lambda self=None, **kwargs: DummyResponse()}
+        'Notifier', (), {
+            'notify': lambda self=None, **kwargs: DummyResponse(),
+            'request': lambda self=None, *args, **kwargs: DummyResponse(),
+        }
     )())
 
     with caplog.at_level('INFO'):
@@ -179,7 +182,10 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
         raise RuntimeError('手机号 13800138000 access_token=abc sign=xyz secret=SECa')
 
     monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
-        'Notifier', (), {'notify': fail_notify}
+        'Notifier', (), {
+            'notify': fail_notify,
+            'request': lambda self=None, *args, **kwargs: None,
+        }
     )())
 
     with caplog.at_level('ERROR'):
@@ -959,6 +965,10 @@ def test_signed_dingtalk_retries_with_fresh_matching_url(
     class FakeNotifier:
         """记录 OnePush 实际发送参数的测试替身。"""
 
+        def request(self, *args, **kwargs):
+            """占位请求函数，满足安全注入契约。"""
+            return failed_response()
+
         def notify(self, **kwargs):
             """保存 token 对象并确认 secret 已移除。"""
             assert 'secret' not in kwargs
@@ -1045,6 +1055,96 @@ def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
     assert request_calls[0][2]['allow_redirects'] is False
     assert channel == original
     assert channel['metadata'] is nested
+
+
+def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
+    """钉钉实例 notify 显式传 allow_redirects=True 时最终请求仍须禁用重定向。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    request_calls = []
+    nested = {'value': 'same-object'}
+    channel = {
+        'provider': 'dingtalk',
+        'token': 'token-only',
+        'secret': 'SECtest',
+        'metadata': nested,
+    }
+    original = dict(channel)
+
+    class FakeNotifier:
+        """模拟 notify 显式要求允许重定向的 OnePush 通知器。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, **kwargs):
+            """记录最终传输参数并返回成功响应。"""
+            request_calls.append((method, url, kwargs))
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+            return response
+
+        def notify(self, **kwargs):
+            """显式传入 allow_redirects=True 触发实例请求。"""
+            assert kwargs['token'].startswith(
+                'https://oapi.dingtalk.com/robot/send?access_token=token-only'
+            )
+            assert 'secret' not in kwargs
+            assert kwargs['metadata'] is nested
+            return self.request(
+                'post', kwargs['token'], json={}, allow_redirects=True)
+
+    notifier = FakeNotifier()
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert request_calls[0][2]['allow_redirects'] is False
+    assert channel == original
+    assert channel['metadata'] is nested
+
+
+def test_onepush_dingtalk_rejects_notifier_without_callable_request(monkeypatch):
+    """钉钉实例无 request 属性时应在发送前拒绝，不调用 notify 也不重试。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    notify_calls = []
+
+    class FakeNotifier:
+        """模拟缺少 request 属性的 OnePush 通知器。"""
+
+        def notify(self, **kwargs):
+            """记录 notify 调用并返回成功响应。"""
+            notify_calls.append(kwargs)
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+            return response
+
+    notifier = FakeNotifier()
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'token-only'},
+        '标题', '内容', retry_interval=0, max_count=3, log=log,
+    )
+
+    assert result is False
+    assert notify_calls == []
+    assert log.error.call_count == 1
+    assert '配置错误' in log.error.call_args[0][0]
+    assert '自动重定向' in log.error.call_args[0][0]
+    assert 'token-only' not in log.error.call_args[0][0]
 
 
 def test_onepush_other_provider_keeps_default_request(monkeypatch):
@@ -1158,6 +1258,12 @@ def test_unsigned_dingtalk_reuses_short_base_url_for_retries(monkeypatch):
 
     class FakeNotifier:
         """记录 OnePush 重试 URL 的测试替身。"""
+
+        def request(self, *args, **kwargs):
+            """占位请求函数，满足安全注入契约。"""
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 1, 'errmsg': 'retry'}
+            return response
 
         def notify(self, **kwargs):
             """保存 token 并返回可重试失败响应。"""

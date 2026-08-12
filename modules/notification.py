@@ -14,7 +14,6 @@ import socket
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
@@ -687,6 +686,32 @@ def _handle_attempt_failure(route_label, attempt, max_count, reason, retry_inter
     return False
 
 
+def _disable_dingtalk_redirects(notifier):
+    """为钉钉 OnePush 实例注入强制禁用重定向的请求包装。
+
+    OnePush 的 Provider.request 是 @staticmethod，经实例访问得到不绑定
+    self 的底层函数，实例可安全覆盖。包装函数在转发前强制覆盖
+    allow_redirects，避免上游调用时重新开启重定向。
+
+    Args:
+        notifier: OnePush 通知器实例
+
+    Returns:
+        bool: 成功注入返回 True；实例缺少可调用 request 时返回 False
+    """
+    original_request = getattr(notifier, 'request', None)
+    if not callable(original_request):
+        return False
+
+    def wrapped(method, url, **kwargs):
+        """转发请求并强制将 allow_redirects 置为 False。"""
+        kwargs['allow_redirects'] = False
+        return original_request(method, url, **kwargs)
+
+    notifier.request = wrapped
+    return True
+
+
 def _notify_single_channel(channel, title, content, retry_interval, max_count, log):
     """向单个推送通道发送通知，失败时按配置重试
 
@@ -749,10 +774,14 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                     params, title, content, validated_url=final_url)
             else:
                 notifier = get_notifier(provider)
-                if (str(provider).strip().lower() == 'dingtalk'
-                        and hasattr(notifier, 'request')):
-                    notifier.request = partial(
-                        notifier.request, allow_redirects=False)
+                if str(provider).strip().lower() == 'dingtalk':
+                    if not _disable_dingtalk_redirects(notifier):
+                        reason = mask_sensitive_fields(
+                            {'reason': '无法为钉钉 OnePush 实例安全禁用自动重定向'},
+                            sensitive_fields={'reason'},
+                        )['reason']
+                        log.error(f"通道 [{route_label}] 配置错误: {reason}")
+                        return False
                 send_params = params
                 if final_url is not None:
                     send_params = dict(params)

@@ -730,6 +730,14 @@ class TestTwoPushDingTalkRouting:
         calls = {"onepush": 0, "direct": 0}
 
         class FakeNotifier:
+            def request(self, *args, **kwargs):
+                """占位请求函数，满足安全注入契约。"""
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
             def notify(self, **kwargs):
                 calls["onepush"] += 1
                 response = unittest.mock.MagicMock()
@@ -2641,6 +2649,14 @@ class TestTwoPushDingTalkMultipleChannels:
         calls = {"onepush": 0, "direct": 0}
 
         class FakeNotifier:
+            def request(self, *args, **kwargs):
+                """占位请求函数，满足安全注入契约。"""
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
             def notify(self, **kwargs):
                 calls["onepush"] += 1
                 response = unittest.mock.MagicMock()
