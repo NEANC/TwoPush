@@ -1149,6 +1149,46 @@ def test_disable_dingtalk_redirects_forwards_positional_proxies():
     assert kwargs['allow_redirects'] is False
 
 
+def test_disable_dingtalk_redirects_supports_legacy_request_signature(monkeypatch):
+    """旧版 OnePush request 仅接受 2 个位置参数时包装函数应正常转发。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    request_calls = []
+
+    class FakeNotifier:
+        """模拟旧版 OnePush（1.2.0~1.5.0）仅 2 个位置参数的 request。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, **kwargs):
+            """旧签名只接受 2 个位置参数，记录最终传输参数。"""
+            request_calls.append((method, url, kwargs))
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+            return response
+
+        def notify(self, **kwargs):
+            """以 2 个位置参数调用实例请求函数。"""
+            return self.request('post', kwargs['token'], json={})
+
+    notifier = FakeNotifier()
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'token-only'},
+        '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert request_calls[0][2]['allow_redirects'] is False
+
+
 def test_onepush_dingtalk_rejects_notifier_without_callable_request(monkeypatch):
     """钉钉实例无 request 属性时应在发送前拒绝，不调用 notify 也不重试。"""
     import modules.notification as notification

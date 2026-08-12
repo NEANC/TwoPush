@@ -703,10 +703,10 @@ def _disable_dingtalk_redirects(notifier):
     if not callable(original_request):
         return False
 
-    def wrapped(method, url, proxies=None, **kwargs):
+    def wrapped(method, url, *args, **kwargs):
         """转发请求并强制将 allow_redirects 置为 False。"""
         kwargs['allow_redirects'] = False
-        return original_request(method, url, proxies, **kwargs)
+        return original_request(method, url, *args, **kwargs)
 
     notifier.request = wrapped
     return True
