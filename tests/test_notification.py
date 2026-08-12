@@ -991,6 +991,105 @@ def test_signed_dingtalk_retries_with_fresh_matching_url(
     assert channel == original
 
 
+def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
+    """OnePush 钉钉实例应禁用重定向并保留发送参数复制契约。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    request_calls = []
+    nested = {'value': 'same-object'}
+    channel = {
+        'provider': 'dingtalk',
+        'token': 'token-only',
+        'secret': 'SECtest',
+        'metadata': nested,
+    }
+    original = dict(channel)
+
+    class FakeNotifier:
+        """模拟 OnePush 通知器并记录实例请求行为。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, **kwargs):
+            """记录最终传输参数并返回成功响应。"""
+            request_calls.append((method, url, kwargs))
+            response = mock.MagicMock(status_code=200)
+            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+            return response
+
+        def notify(self, **kwargs):
+            """验证 OnePush 参数后触发实例请求函数。"""
+            assert kwargs['token'].startswith(
+                'https://oapi.dingtalk.com/robot/send?access_token=token-only'
+            )
+            assert 'secret' not in kwargs
+            assert kwargs['metadata'] is nested
+            return self.request('post', kwargs['token'], json={})
+
+    notifier = FakeNotifier()
+    original_request = notifier.request
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert notifier.request is not original_request
+    assert request_calls[0][2]['allow_redirects'] is False
+    assert channel == original
+    assert channel['metadata'] is nested
+
+
+def test_onepush_other_provider_keeps_default_request(monkeypatch):
+    """非钉钉 OnePush 实例不应覆盖默认请求行为。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    request_calls = []
+
+    class FakeNotifier:
+        """模拟非钉钉 OnePush 通知器。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, **kwargs):
+            """记录最终传输参数并返回成功响应。"""
+            request_calls.append((method, url, kwargs))
+            return mock.MagicMock(status_code=200, text='success')
+
+        def notify(self, **kwargs):
+            """触发实例请求函数。"""
+            return self.request('post', 'https://example.com', json=kwargs)
+
+    notifier = FakeNotifier()
+    original_request = notifier.request
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: notifier)
+
+    result = notification._notify_single_channel(
+        {'provider': 'serverchan', 'sckey': 'SCTtest'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert notifier.request is original_request
+    assert 'allow_redirects' not in request_calls[0][2]
+
+
 def test_dingtalk_transport_revalidates_url_without_resigning(monkeypatch):
     """HTTP 请求前应复用 URL 校验链，且不得重新生成签名。"""
     import modules.notification as notification

@@ -14,6 +14,7 @@ import socket
 import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from onepush import get_notifier
@@ -748,6 +749,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                     params, title, content, validated_url=final_url)
             else:
                 notifier = get_notifier(provider)
+                if (str(provider).strip().lower() == 'dingtalk'
+                        and hasattr(notifier, 'request')):
+                    notifier.request = partial(
+                        notifier.request, allow_redirects=False)
                 send_params = params
                 if final_url is not None:
                     send_params = dict(params)
