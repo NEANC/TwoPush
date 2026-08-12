@@ -547,7 +547,7 @@ def _send_dingtalk_webhook(channel, title, content, validated_url=None):
         requests.Response: 钉钉 Webhook 响应对象
 
     Raises:
-        ValueError: 通道缺少 token 时抛出
+        ValueError: 通道缺少 token 或最终 URL 未通过校验时抛出
     """
     token = channel.get('token')
     if not token or not str(token).strip():
@@ -555,6 +555,8 @@ def _send_dingtalk_webhook(channel, title, content, validated_url=None):
     url = validated_url
     if url is None:
         url = _build_dingtalk_webhook_url(token, channel.get('secret'))
+    else:
+        url = _build_dingtalk_webhook_url(url)
     payload = _build_dingtalk_payload(channel, title, content)
     headers = {'Content-Type': 'application/json'}
     return request('post', url, json=payload, headers=headers, timeout=DINGTALK_REQUEST_TIMEOUT)

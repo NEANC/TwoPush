@@ -991,6 +991,52 @@ def test_signed_dingtalk_retries_with_fresh_matching_url(
     assert channel == original
 
 
+def test_dingtalk_transport_revalidates_url_without_resigning(monkeypatch):
+    """HTTP 请求前应复用 URL 校验链，且不得重新生成签名。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    channel = {
+        'token': 'abc',
+        'secret': 'SECtest',
+        'msgtype': 'markdown',
+    }
+    signed_url = notification._build_dingtalk_webhook_url(
+        channel['token'], channel['secret'])
+    request = mock.MagicMock(return_value=mock.MagicMock(status_code=200))
+    signer = mock.MagicMock(side_effect=AssertionError('请求前不得重新签名'))
+    monkeypatch.setattr(notification, 'request', request)
+    monkeypatch.setattr(notification, '_make_dingtalk_sign', signer)
+
+    notification._send_dingtalk_webhook(
+        channel, '标题', '内容', validated_url=signed_url)
+
+    signer.assert_not_called()
+    request.assert_called_once()
+    assert request.call_args.args[:2] == ('post', signed_url)
+
+
+def test_dingtalk_transport_rejects_invalid_prevalidated_url(monkeypatch):
+    """传输层收到被篡改的预构造 URL 时应在 HTTP 请求前拒绝。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    request = mock.MagicMock()
+    monkeypatch.setattr(notification, 'request', request)
+
+    with pytest.raises(ValueError, match='HTTPS'):
+        notification._send_dingtalk_webhook(
+            {'token': 'abc', 'msgtype': 'markdown'},
+            '标题',
+            '内容',
+            validated_url=(
+                'http://oapi.dingtalk.com/robot/send?access_token=abc'
+            ),
+        )
+
+    request.assert_not_called()
+
+
 def test_unsigned_dingtalk_reuses_short_base_url_for_retries(monkeypatch):
     """无 secret 的正常短 URL 应只构造一次并在重试时复用。"""
     import modules.notification as notification
