@@ -6,7 +6,7 @@
 import base64
 import os
 import sys
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import pytest
 
@@ -646,22 +646,22 @@ def test_signed_dingtalk_url_capacity_error_is_not_retried(
     assert sleep.call_count == 0
 
 
-def _largest_signed_dingtalk_base_url(notification):
-    """返回签名容量校验允许的最长基础 URL。"""
+def _signed_dingtalk_boundary_base_url(notification, final_length):
+    """按独立编码结果构造指定最终长度的签名基础 URL。"""
+    timestamp = '9' * 13
+    sign = '/' * 42 + '8' + '='
     prefix = (
         f'{notification.DINGTALK_WEBHOOK_BASE_URL}'
         '?access_token=abc&padding='
     )
-    max_padding_length = (
-        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix)
+    signed_suffix = '&' + urlencode([
+        ('timestamp', timestamp),
+        ('sign', sign),
+    ])
+    padding_length = (
+        final_length - len(prefix) - len(signed_suffix)
     )
-    for padding_length in range(max_padding_length, -1, -1):
-        base_url = prefix + 'a' * padding_length
-        try:
-            return notification._validate_dingtalk_signed_url_capacity(base_url)
-        except ValueError:
-            continue
-    raise AssertionError('未找到可通过签名容量校验的基础 URL')
+    return prefix + 'a' * padding_length
 
 
 @pytest.mark.parametrize('enhanced', [False, True])
@@ -715,7 +715,10 @@ def test_signed_dingtalk_signer_output_over_44_character_contract_final_length_v
     secret = 'SEC-private-anomalous-signer'
     channel = {
         'provider': 'dingtalk',
-        'token': _largest_signed_dingtalk_base_url(notification),
+        'token': _signed_dingtalk_boundary_base_url(
+            notification,
+            notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH,
+        ),
         'secret': secret,
     }
     if enhanced:
@@ -743,13 +746,15 @@ def test_signed_dingtalk_signer_output_over_44_character_contract_final_length_v
     log.error.assert_called_once()
     log_message = log.error.call_args.args[0]
     assert '配置错误' in log_message
-    assert '长度不得超过 8192 个字符' in log_message
+    assert '长度不得超过' in log_message
+    assert str(notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH) in log_message
     assert secret not in log_message
 
 
-def test_signed_dingtalk_capacity_accepts_theoretical_worst_valid_base64_sign(
-        monkeypatch):
-    """合法 44 字符 Base64 理论最坏输出通过预算后不应超限。"""
+@pytest.mark.parametrize('final_length', [8191, 8192])
+def test_signed_dingtalk_capacity_accepts_valid_worst_base64_boundary(
+        monkeypatch, final_length):
+    """合法最坏 Base64 签名的 8191/8192 字节边界应通过容量预算。"""
     import modules.notification as notification
 
     sign = '/' * 42 + '8' + '='
@@ -757,7 +762,11 @@ def test_signed_dingtalk_capacity_accepts_theoretical_worst_valid_base64_sign(
     assert len(base64.b64decode(sign, validate=True)) == 32
     assert base64.b64encode(base64.b64decode(sign)).decode('ascii') == sign
 
-    base_url = _largest_signed_dingtalk_base_url(notification)
+    base_url = _signed_dingtalk_boundary_base_url(
+        notification,
+        final_length,
+    )
+    assert notification._validate_dingtalk_signed_url_capacity(base_url) == base_url
     monkeypatch.setattr(
         notification,
         '_make_dingtalk_sign',
@@ -766,9 +775,34 @@ def test_signed_dingtalk_capacity_accepts_theoretical_worst_valid_base64_sign(
 
     signed_url = notification._build_dingtalk_webhook_url(base_url, 'SECtest')
 
-    assert len(signed_url.encode('ascii')) <= (
-        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH
+    assert len(signed_url.encode('ascii')) == final_length
+
+
+def test_signed_dingtalk_capacity_rejects_valid_worst_base64_over_limit():
+    """合法最坏 Base64 签名超过容量一个字节时应拒绝。"""
+    import modules.notification as notification
+
+    base_url = _signed_dingtalk_boundary_base_url(
+        notification,
+        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH + 1,
     )
+
+    with pytest.raises(ValueError, match='长度不得超过'):
+        notification._validate_dingtalk_signed_url_capacity(base_url)
+
+
+def test_signed_dingtalk_capacity_uses_current_timestamp_length(monkeypatch):
+    """时间戳超过 13 位后容量预算不得低估实际长度。"""
+    import modules.notification as notification
+
+    base_url = _signed_dingtalk_boundary_base_url(
+        notification,
+        notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH,
+    )
+    monkeypatch.setattr(notification.time, 'time', lambda: 10_000_000_000)
+
+    with pytest.raises(ValueError, match='长度不得超过'):
+        notification._validate_dingtalk_signed_url_capacity(base_url)
 
 
 @pytest.mark.parametrize("enhanced", [False, True])

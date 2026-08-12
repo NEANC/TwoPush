@@ -57,6 +57,12 @@ DINGTALK_TOKEN_MAX_LENGTH = 4096
 # 钉钉 Webhook 请求超时时间（秒）
 DINGTALK_REQUEST_TIMEOUT = 10
 
+# HMAC-SHA256 的 32 字节摘要所能产生的最坏规范 Base64 签名
+DINGTALK_SIGN_WORST_BASE64 = '/' * 42 + '8' + '='
+
+# 钉钉 timestamp 当前最少预算位数
+DINGTALK_TIMESTAMP_MIN_LENGTH = 13
+
 
 def _is_full_url(value):
     """判断字符串是否为完整的 http(s) Webhook URL。
@@ -298,7 +304,14 @@ def _validate_dingtalk_signed_url_capacity(base_url):
         for key, value in parsed_query_pairs
         if key not in ('timestamp', 'sign')
     ]
-    query_pairs.extend([('timestamp', '9' * 13), ('sign', '/' * 44)])
+    timestamp_length = max(
+        DINGTALK_TIMESTAMP_MIN_LENGTH,
+        len(str(round(time.time() * 1000))),
+    )
+    query_pairs.extend([
+        ('timestamp', '9' * timestamp_length),
+        ('sign', DINGTALK_SIGN_WORST_BASE64),
+    ])
     worst_url = urlunsplit((
         parsed.scheme,
         parsed.netloc,

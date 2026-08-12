@@ -555,7 +555,7 @@ TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有
 
 无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并在重试循环外构造一次不带 `secret` 的规范基础 URL，完成静态配置校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。query 参数数量在解析前按非空 query 的 `&` 数量加一确定，空 query 为零；超限错误不依赖解析器异常文本，其他 `ValueError` 统一报告为 query 解析错误，`UnicodeDecodeError` 单独报告为非法 UTF-8。
 
-配置非空 `secret` 时，TwoPush 还会在循环外按 13 位 `timestamp`、44 字符 Base64 HMAC-SHA256 `sign` 及其最坏 URL 编码长度做确定性的容量预算；预算前会移除基础 URL 中旧的 `timestamp` 与 `sign`，再追加最坏情况值。最坏最终 URL 超过 8192 字节时按静态配置错误拒绝，不发送也不休眠，且容量判断不调用随机动态签名。
+配置非空 `secret` 时，TwoPush 还会在循环外按当前时间戳位数且至少 13 位的 `timestamp`，以及 32 字节 HMAC-SHA256 摘要对应的合法最坏规范 Base64 结构（42 个 `/`、`8` 与结尾 `=`）做确定性的 URL 编码容量预算；预算前会移除基础 URL 中旧的 `timestamp` 与 `sign`，再追加最坏情况值。最坏最终 URL 超过 8192 字节时按静态配置错误拒绝，不发送也不休眠，且容量判断不调用随机动态签名。
 
 进入重试循环后，带 `secret` 的通道会为每次尝试从同一规范基础 URL 重新签名并只构造一次当次最终 URL；`dingtalk(builtin)` 将该对象直接交给 HTTP 请求函数，`dingtalk(onepush)` 将同一对象作为参数副本中的 `token` 交给 OnePush 并移除 `secret`。因此每次尝试的校验对象就是发送对象，不会在发送边界二次构造；下一次重试则使用新的 `timestamp` 与 `sign`。未配置 `secret` 时直接复用循环外的规范基础 URL，无需逐次构造。
 
