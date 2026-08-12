@@ -840,15 +840,23 @@ def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
     if enhanced:
         channel['msgtype'] = 'markdown'
 
-    times = iter([1_000_000_000, 10_000_000_000])
-    time_call = mock.MagicMock(side_effect=lambda: next(times))
+    returned_times = []
+
+    def advancing_time():
+        """首次返回 13 位毫秒时间戳，后续稳定返回 14 位。"""
+        value = 1_000_000_000 if not returned_times else 10_000_000_000
+        returned_times.append(value)
+        return value
+
+    time_call = mock.MagicMock(side_effect=advancing_time)
     digest = mock.MagicMock()
     digest.digest.return_value = b'\xff' * 32
+    hmac_new = mock.MagicMock(return_value=digest)
     builtin_send = mock.MagicMock()
     get_notifier = mock.MagicMock()
     sleep = mock.MagicMock()
     monkeypatch.setattr(notification.time, 'time', time_call)
-    monkeypatch.setattr(notification.hmac, 'new', mock.MagicMock(return_value=digest))
+    monkeypatch.setattr(notification.hmac, 'new', hmac_new)
     monkeypatch.setattr(notification, '_send_dingtalk_webhook', builtin_send)
     monkeypatch.setattr(notification, 'get_notifier', get_notifier)
     monkeypatch.setattr(notification.time, 'sleep', sleep)
@@ -866,11 +874,18 @@ def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
     )
 
     assert result is False
-    assert time_call.call_count == 2
+    timestamps = [str(round(value * 1000)) for value in returned_times]
+    assert len(timestamps) >= 2
+    assert len(timestamps[0]) == 13
+    assert any(len(timestamp) == 14 for timestamp in timestamps[1:])
+    assert hmac_new.call_args.args[1].startswith(b'10000000000000\n')
     builtin_send.assert_not_called()
     get_notifier.assert_not_called()
     log.error.assert_called_once()
-    assert '配置错误' in log.error.call_args.args[0]
+    log_message = log.error.call_args.args[0]
+    assert '配置错误' in log_message
+    assert '长度不得超过' in log_message
+    assert '8192' in log_message
     sleep.assert_not_called()
 
 
