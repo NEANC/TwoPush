@@ -559,7 +559,14 @@ def _send_dingtalk_webhook(channel, title, content, validated_url=None):
         url = _build_dingtalk_webhook_url(url)
     payload = _build_dingtalk_payload(channel, title, content)
     headers = {'Content-Type': 'application/json'}
-    return request('post', url, json=payload, headers=headers, timeout=DINGTALK_REQUEST_TIMEOUT)
+    return request(
+        'post',
+        url,
+        json=payload,
+        headers=headers,
+        timeout=DINGTALK_REQUEST_TIMEOUT,
+        allow_redirects=False,
+    )
 
 
 def _parse_response_body(response):

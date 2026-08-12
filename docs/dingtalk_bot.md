@@ -557,7 +557,7 @@ TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有
 
 配置非空 `secret` 时，TwoPush 还会在循环外按当前时间戳位数且至少 13 位的 `timestamp`，以及 32 字节 HMAC-SHA256 摘要对应的合法最坏规范 Base64 结构（42 个 `/`、`8` 与结尾 `=`）做确定性的 URL 编码容量预算；预算前会移除基础 URL 中旧的 `timestamp` 与 `sign`，再追加最坏情况值。最坏最终 URL 超过 8192 字节时按静态配置错误拒绝，不发送也不休眠，且容量判断不调用随机动态签名。
 
-进入重试循环后，带 `secret` 的通道会为每次尝试从同一规范基础 URL 重新签名并只构造一次当次最终 URL；`dingtalk(builtin)` 将该对象直接交给 HTTP 请求函数，`dingtalk(onepush)` 将同一对象作为参数副本中的 `token` 交给 OnePush 并移除 `secret`。因此每次尝试的校验对象就是发送对象，不会在发送边界二次构造；下一次重试则使用新的 `timestamp` 与 `sign`。未配置 `secret` 时直接复用循环外的规范基础 URL，无需逐次构造。
+进入重试循环后，带 `secret` 的通道会为每次尝试从同一规范基础 URL 重新签名并只构造一次当次最终 URL；`dingtalk(builtin)` 会在 HTTP 请求边界再次复用同一 URL 校验链，但不会重新签名，并明确禁止自动跟随重定向，避免请求离开已校验的官方 Webhook 目标；`dingtalk(onepush)` 将同一对象作为参数副本中的 `token` 交给 OnePush 并移除 `secret`。下一次重试使用新的 `timestamp` 与 `sign`。未配置 `secret` 时直接复用循环外的规范基础 URL，无需逐次构造。
 
 空值、纯空白 token 或未通过上述预校验的疑似/完整 URL 属于配置错误：TwoPush 会跳过该通道且不重试。
 

@@ -1014,6 +1014,7 @@ def test_dingtalk_transport_revalidates_url_without_resigning(monkeypatch):
     signer.assert_not_called()
     request.assert_called_once()
     assert request.call_args.args[:2] == ('post', signed_url)
+    assert request.call_args.kwargs['allow_redirects'] is False
 
 
 def test_dingtalk_transport_rejects_invalid_prevalidated_url(monkeypatch):
