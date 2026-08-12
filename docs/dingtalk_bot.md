@@ -551,7 +551,7 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 
 TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有测试与实现核对限定为 OnePush 1.9.0；`requirements.txt` 允许的旧版本 `>=1.2.0` 是否保持该行为未获保证。完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 TwoPush 消费并完成唯一一次加签，最终 URL 中已有的 `timestamp`、`sign` 会被替换且各保留一个，OnePush 不会收到 `secret`，因而不会二次签名。
 
-**禁止自动重定向：** `dingtalk(onepush)` 路由同样禁止自动跟随重定向。TwoPush 会在发送前于 OnePush 钉钉实例上覆盖底层 `request`，在转发时强制将 `allow_redirects` 置为 `False`，即使上游未来显式传入 `allow_redirects=True` 也不会重新开启。该保证依赖 OnePush 支持实例级覆盖 `request`：`Provider.request` 为 `@staticmethod`，经实例访问得到不绑定 `self` 的底层函数，且 `Provider` 未声明 `__slots__`，故实例可安全覆盖；该结构在 OnePush 1.2.0~1.9.0 保持一致。跨版本的真正差异是 `Provider.request` 的签名：`proxies` 位置参数在 1.6.0 才加入，1.2.0~1.5.0 为 `def request(method, url, **kwargs)`，1.6.0 起为 `def request(method, url, proxies, **kwargs)`（1.9.0 中 `proxies` 默认值为 `None`）。TwoPush 的转发包装以 `*args` 透传位置参数，因此同时兼容 1.2.0~1.9.0 的两种 request 签名。若实例缺少可调用的 `request`，TwoPush 会按配置错误拒绝发送（fail-closed），而不是回退到可能自动跟随重定向的不安全发送。
+**禁止自动重定向：** `dingtalk(onepush)` 路由同样禁止自动跟随重定向。TwoPush 会在发送前于 OnePush 钉钉实例上覆盖底层 `request`，在转发时强制将 `allow_redirects` 置为 `False`，即使上游未来显式传入 `allow_redirects=True` 也不会重新开启。该保证依赖 OnePush 支持实例级覆盖 `request`：`Provider.request` 为 `@staticmethod`，经实例访问得到不绑定 `self` 的底层函数，且 `Provider` 未声明 `__slots__`，故实例可安全覆盖；该结构在 OnePush 1.2.0~1.9.0 保持一致。跨版本的真正差异是 `Provider.request` 的签名：`proxies` 位置参数在 1.6.0 才加入，1.2.0~1.5.0 为 `def request(method, url, **kwargs)`，1.6.0 起为 `def request(method, url, proxies, **kwargs)`（1.6.0 的 `proxies` 为必填位置参数，1.7.0 起 `proxies` 才带默认值 `None`）。TwoPush 的转发包装以 `*args` 透传位置参数，因此同时兼容 1.2.0~1.9.0 的两种 request 签名。若实例缺少可调用的 `request`，TwoPush 会按配置错误拒绝发送（fail-closed），而不是回退到可能自动跟随重定向的不安全发送。
 
 **统一发送前校验**
 

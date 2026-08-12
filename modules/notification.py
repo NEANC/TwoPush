@@ -691,7 +691,10 @@ def _disable_dingtalk_redirects(notifier):
 
     OnePush 的 Provider.request 是 @staticmethod，经实例访问得到不绑定
     self 的底层函数，实例可安全覆盖。包装函数在转发前强制覆盖
-    allow_redirects，避免上游调用时重新开启重定向。
+    allow_redirects，避免上游调用时重新开启重定向。wrapped 作为实例属性
+    赋值后，经 self.request(...) 访问同样不绑定 self，与 @staticmethod 的
+    original_request 语义一致，这是正确透传位置参数（method 不会错位）
+    的关键依赖。
 
     Args:
         notifier: OnePush 通知器实例
@@ -704,7 +707,12 @@ def _disable_dingtalk_redirects(notifier):
         return False
 
     def wrapped(method, url, *args, **kwargs):
-        """转发请求并强制将 allow_redirects 置为 False。"""
+        """转发请求并强制将 allow_redirects 置为 False。
+
+        使用 *args 跨版本透传位置参数，兼容 OnePush 1.2.0~1.5.0 的两位置
+        参数（method、url）签名与 1.6.0+ 的三位置参数（method、url、
+        proxies）签名，避免被误简化为具名参数 proxies。
+        """
         kwargs['allow_redirects'] = False
         return original_request(method, url, *args, **kwargs)
 
