@@ -664,6 +664,13 @@ def _signed_dingtalk_boundary_base_url(notification, final_length):
     return prefix + 'a' * padding_length
 
 
+def test_dingtalk_webhook_max_url_length_contract():
+    """钉钉 Webhook URL 长度上限应保持为稳定契约。"""
+    from modules.notification import DINGTALK_WEBHOOK_MAX_URL_LENGTH
+
+    assert DINGTALK_WEBHOOK_MAX_URL_LENGTH == 8192
+
+
 @pytest.mark.parametrize('enhanced', [False, True])
 def test_signed_dingtalk_secret_surrogate_encoding_failure_is_not_retried(
         monkeypatch, enhanced):
@@ -803,6 +810,68 @@ def test_signed_dingtalk_capacity_uses_current_timestamp_length(monkeypatch):
 
     with pytest.raises(ValueError, match='长度不得超过'):
         notification._validate_dingtalk_signed_url_capacity(base_url)
+
+
+@pytest.mark.parametrize('enhanced', [False, True])
+def test_signed_dingtalk_timestamp_grows_between_capacity_check_and_signing(
+        monkeypatch, enhanced):
+    """预检后时间戳跨位应由最终长度校验拒绝且不发送或重试。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    secret = 'SEC-cross-stage-boundary'
+    timestamp_13 = '1000000000000'
+    worst_sign = base64.b64encode(b'\xff' * 32).decode('ascii')
+    prefix = (
+        f'{notification.DINGTALK_WEBHOOK_BASE_URL}'
+        '?access_token=abc&padding='
+    )
+    signed_suffix = '&' + urlencode([
+        ('timestamp', timestamp_13),
+        ('sign', worst_sign),
+    ])
+    padding_length = 8192 - len(prefix) - len(signed_suffix)
+    base_url = prefix + 'a' * padding_length
+    channel = {
+        'provider': 'dingtalk',
+        'token': base_url,
+        'secret': secret,
+    }
+    if enhanced:
+        channel['msgtype'] = 'markdown'
+
+    times = iter([1_000_000_000, 10_000_000_000])
+    time_call = mock.MagicMock(side_effect=lambda: next(times))
+    digest = mock.MagicMock()
+    digest.digest.return_value = b'\xff' * 32
+    builtin_send = mock.MagicMock()
+    get_notifier = mock.MagicMock()
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'time', time_call)
+    monkeypatch.setattr(notification.hmac, 'new', mock.MagicMock(return_value=digest))
+    monkeypatch.setattr(notification, '_send_dingtalk_webhook', builtin_send)
+    monkeypatch.setattr(notification, 'get_notifier', get_notifier)
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    assert len((base_url + signed_suffix).encode('ascii')) == 8192
+    actual_signed_suffix = '&' + urlencode([
+        ('timestamp', '10000000000000'),
+        ('sign', worst_sign),
+    ])
+    assert len((base_url + actual_signed_suffix).encode('ascii')) == 8193
+
+    result = notification._notify_single_channel(
+        channel, '标题', '内容', retry_interval=1, max_count=3, log=log,
+    )
+
+    assert result is False
+    assert time_call.call_count == 2
+    builtin_send.assert_not_called()
+    get_notifier.assert_not_called()
+    log.error.assert_called_once()
+    assert '配置错误' in log.error.call_args.args[0]
+    sleep.assert_not_called()
 
 
 @pytest.mark.parametrize("enhanced", [False, True])
