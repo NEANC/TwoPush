@@ -551,6 +551,8 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 
 TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有测试与实现核对限定为 OnePush 1.9.0；`requirements.txt` 允许的旧版本 `>=1.2.0` 是否保持该行为未获保证。完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 TwoPush 消费并完成唯一一次加签，最终 URL 中已有的 `timestamp`、`sign` 会被替换且各保留一个，OnePush 不会收到 `secret`，因而不会二次签名。
 
+**禁止自动重定向：** `dingtalk(onepush)` 路由同样禁止自动跟随重定向。TwoPush 会在发送前于 OnePush 钉钉实例上覆盖底层 `request`，在转发时强制将 `allow_redirects` 置为 `False`，即使上游未来显式传入 `allow_redirects=True` 也不会重新开启。该保证依赖 OnePush 支持实例级覆盖 `request`：`Provider.request` 为 `@staticmethod`，经实例访问得到不绑定 `self` 的底层函数，且 `Provider` 未声明 `__slots__`，故实例可安全覆盖。当前核对版本为 OnePush 1.9.0；`requirements.txt` 允许的旧版本 `>=1.2.0` 是否保持该结构未获保证。若实例缺少可调用的 `request`，TwoPush 会按配置错误拒绝发送（fail-closed），而不是回退到可能自动跟随重定向的不安全发送。
+
 **统一发送前校验**
 
 无论最终走哪条路径，TwoPush 都会先确认 `token` 非空，并在重试循环外构造一次不带 `secret` 的规范基础 URL，完成静态配置校验。因此，原始值以及完整 URL query 解码后的键和值中，Unicode `Cc`、`Cf` 或 `Cs` 类别字符都会被拒绝，首尾非普通空格的空白也会被拒绝；裸 token 与完整 URL 分别受 4096 和 8192 个字符的输入长度限制，最终 ASCII URL 另受 8192 字节长度限制。完整 URL 仅接受明确的 HTTPS 前缀，并会在发送前检查官方域名、禁止 userinfo、严格校验默认端口原始语法、拒绝 fragment 分隔符、检查严格路径、合法 `%HH` 转义、严格 UTF-8、最多 100 个用户提供 query 参数和解码后有效的 `access_token`。query 参数数量在解析前按非空 query 的 `&` 数量加一确定，空 query 为零；超限错误不依赖解析器异常文本，其他 `ValueError` 统一报告为 query 解析错误，`UnicodeDecodeError` 单独报告为非法 UTF-8。
