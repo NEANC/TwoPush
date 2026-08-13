@@ -1671,3 +1671,158 @@ def test_dingtalk_transport_accepts_signed_url_with_102_fields(monkeypatch):
     method, url = request.call_args.args[:2]
     assert method == 'post'
     assert url == signed_url
+
+
+def test_is_push_successful_requires_json_object_when_enabled():
+    """require_json_body=True 时，2xx 但非 JSON 对象（HTML/空/数组）应判失败"""
+    import modules.notification as notification
+
+    class HtmlResponse:
+        """响应体为 HTML 错误页。"""
+
+        status_code = 200
+        text = '<html>Bad Gateway</html>'
+
+        def json(self):
+            raise ValueError('不是 JSON')
+
+    class EmptyResponse:
+        """响应体为空。"""
+
+        status_code = 200
+        text = ''
+
+        def json(self):
+            raise ValueError('空响应体')
+
+    class ArrayResponse:
+        """响应体为 JSON 数组。"""
+
+        status_code = 200
+        text = '[]'
+
+        def json(self):
+            return []
+
+    for response in (HtmlResponse(), EmptyResponse(), ArrayResponse()):
+        success, reason = notification._is_push_successful(
+            response, require_json_body=True)
+        assert success is False
+        assert '不是有效的 JSON 对象' in reason
+
+
+def test_is_push_successful_default_treats_non_json_as_success():
+    """未要求 JSON 对象时，2xx 非 JSON 响应仍按成功处理（其他 provider 兼容）"""
+    import modules.notification as notification
+
+    class HtmlResponse:
+        """响应体为 HTML 文本。"""
+
+        status_code = 200
+        text = '<html>ok</html>'
+
+        def json(self):
+            raise ValueError('不是 JSON')
+
+    success, reason = notification._is_push_successful(HtmlResponse())
+    assert success is True
+    assert reason == ''
+
+
+def test_builtin_dingtalk_non_json_200_response_fails(monkeypatch):
+    """builtin 钉钉收到 2xx 非 JSON 响应体时应判失败并按 max_count 重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    class HtmlResponse:
+        """响应体为 HTML 错误页。"""
+
+        status_code = 200
+        text = '<html>Bad Gateway</html>'
+
+        def json(self):
+            raise ValueError('不是 JSON')
+
+    monkeypatch.setattr(
+        notification, '_send_dingtalk_webhook', lambda *a, **k: HtmlResponse())
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'msgtype': 'markdown', 'token': 'abc'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3
+    assert '不是有效的 JSON 对象' in log.error.call_args[0][0]
+
+
+def test_onepush_dingtalk_non_json_200_response_fails(monkeypatch):
+    """onepush 钉钉收到 2xx 非 JSON 响应体时应判失败并按 max_count 重试"""
+    import modules.notification as notification
+    from unittest import mock
+
+    class HtmlResponse:
+        """响应体为 HTML 错误页。"""
+
+        status_code = 200
+        text = '<html>Bad Gateway</html>'
+
+        def json(self):
+            raise ValueError('不是 JSON')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {
+            'notify': lambda self=None, **kwargs: HtmlResponse(),
+            'request': lambda self=None, *args, **kwargs: HtmlResponse(),
+        }
+    )())
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'abc'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is False
+    assert log.error.call_count == 3
+    assert '不是有效的 JSON 对象' in log.error.call_args[0][0]
+
+
+def test_other_provider_non_json_200_response_still_succeeds(monkeypatch):
+    """其他 provider（serverchan）收到 2xx 非 JSON 响应体仍应判成功（防回归）"""
+    import modules.notification as notification
+    from unittest import mock
+
+    class HtmlResponse:
+        """响应体为 HTML 文本。"""
+
+        status_code = 200
+        text = '<html>ok</html>'
+
+        def json(self):
+            raise ValueError('不是 JSON')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {
+            'notify': lambda self=None, **kwargs: HtmlResponse(),
+        }
+    )())
+    log = mock.MagicMock()
+    result = notification._notify_single_channel(
+        {'provider': 'serverchan', 'sckey': 'SCTx'},
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=3,
+        log=log,
+    )
+
+    assert result is True
+    assert log.error.call_count == 0

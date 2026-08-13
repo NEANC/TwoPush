@@ -606,11 +606,12 @@ def _parse_response_body(response):
     return body
 
 
-def _is_push_successful(response):
+def _is_push_successful(response, require_json_body=False):
     """判定 onepush 返回的响应是否代表推送成功
 
     Args:
         response: onepush notify() 的返回值
+        require_json_body: 为 True 时要求响应体必须是 JSON 字典，否则判失败
 
     Returns:
         tuple[bool, str]: (是否成功, 失败原因描述)
@@ -625,6 +626,8 @@ def _is_push_successful(response):
 
     body = _parse_response_body(response)
     if body is None:
+        if require_json_body:
+            return False, "响应体不是有效的 JSON 对象"
         return True, ""
 
     errcode = body.get('errcode')
@@ -839,7 +842,10 @@ def _notify_single_channel(channel, title, content, retry_interval, max_count, l
                 return False
             continue
 
-        success, reason = _is_push_successful(response)
+        success, reason = _is_push_successful(
+            response,
+            require_json_body=str(provider).strip().lower() == 'dingtalk',
+        )
         if success:
             return True
 
