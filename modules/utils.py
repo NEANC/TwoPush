@@ -82,6 +82,8 @@ def mask_sensitive_fields(fields, sensitive_fields):
     时均能完整脱敏，未闭合的引号值不会凭空补充闭合引号；
     引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
     'access_token': '***'，裸值形式输出为 access_token=***）；
+    同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
+    脱敏时保留其编码形式只替换值，不对整个字符串做 URL 解码；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留

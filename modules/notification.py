@@ -607,10 +607,10 @@ def _parse_response_body(response):
 
 
 def _is_push_successful(response, require_json_body=False):
-    """判定 onepush 返回的响应是否代表推送成功
+    """判定推送响应是否代表发送成功
 
     Args:
-        response: onepush notify() 的返回值
+        response: 推送发送返回的响应对象（onepush notify() 或内置直发）
         require_json_body: 为 True 时要求响应体必须是 JSON 字典，否则判失败
 
     Returns:
