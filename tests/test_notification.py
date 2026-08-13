@@ -1017,7 +1017,7 @@ def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
     original = dict(channel)
 
     class FakeNotifier:
-        """模拟 OnePush 通知器并记录实例请求行为。"""
+        """模拟 OnePush 通知器，其原始 request 不应被 wrapper 调用。"""
 
         def __init__(self):
             """初始化默认请求函数。"""
@@ -1025,11 +1025,8 @@ def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
 
         @staticmethod
         def default_request(method, url, proxies=None, **kwargs):
-            """记录最终传输参数并返回成功响应。"""
-            request_calls.append((method, url, kwargs))
-            response = mock.MagicMock(status_code=200)
-            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
-            return response
+            """占位请求函数，满足安全注入契约。"""
+            raise AssertionError('wrapper 不应调用实例原始 request')
 
         def notify(self, **kwargs):
             """验证 OnePush 参数后触发实例请求函数。"""
@@ -1040,8 +1037,16 @@ def test_onepush_dingtalk_injects_no_redirect_request_on_instance(monkeypatch):
             assert kwargs['metadata'] is nested
             return self.request('post', kwargs['token'], json={})
 
+    def fake_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数并返回成功响应。"""
+        request_calls.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
     notifier = FakeNotifier()
     original_request = notifier.request
+    monkeypatch.setattr(notification, 'request', fake_request)
     monkeypatch.setattr(
         notification, 'get_notifier', lambda provider: notifier)
 
@@ -1081,11 +1086,8 @@ def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
 
         @staticmethod
         def default_request(method, url, proxies=None, **kwargs):
-            """记录最终传输参数并返回成功响应。"""
-            request_calls.append((method, url, kwargs))
-            response = mock.MagicMock(status_code=200)
-            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
-            return response
+            """占位请求函数，满足安全注入契约。"""
+            raise AssertionError('wrapper 不应调用实例原始 request')
 
         def notify(self, **kwargs):
             """显式传入 allow_redirects=True 触发实例请求。"""
@@ -1097,7 +1099,15 @@ def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
             return self.request(
                 'post', kwargs['token'], json={}, allow_redirects=True)
 
+    def fake_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数并返回成功响应。"""
+        request_calls.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
     notifier = FakeNotifier()
+    monkeypatch.setattr(notification, 'request', fake_request)
     monkeypatch.setattr(
         notification, 'get_notifier', lambda provider: notifier)
 
@@ -1112,8 +1122,102 @@ def test_onepush_dingtalk_forces_no_redirect_over_caller_override(monkeypatch):
     assert channel['metadata'] is nested
 
 
-def test_disable_dingtalk_redirects_forwards_positional_proxies():
-    """基类以位置参数透传 proxies 时包装函数应原样转发并禁用重定向。"""
+def test_disable_dingtalk_redirects_routes_to_module_request_with_verify(monkeypatch):
+    """包装函数应转发给可控模块级 request 并强制 verify=True，而非 OnePush 原始 request。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    original_calls = []
+    module_calls = []
+
+    class FakeNotifier:
+        """模拟 OnePush 通知器，区分原始 request 与模块级 request。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, proxies=None, **kwargs):
+            """记录原始 OnePush request 被调用。"""
+            original_calls.append((method, url, kwargs))
+            return mock.MagicMock(status_code=200)
+
+        def notify(self, **kwargs):
+            """触发实例请求函数。"""
+            return self.request('post', kwargs['token'], json={})
+
+    def fake_module_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数并返回成功响应。"""
+        module_calls.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
+    notifier = FakeNotifier()
+    monkeypatch.setattr(notification, 'request', fake_module_request)
+
+    assert notification._disable_dingtalk_redirects(notifier) is True
+    notifier.notify(
+        token='https://oapi.dingtalk.com/robot/send?access_token=abc')
+
+    assert original_calls == []
+    assert len(module_calls) == 1
+    assert module_calls[0][2]['verify'] is True
+    assert module_calls[0][2]['allow_redirects'] is False
+
+
+def test_onepush_dingtalk_sends_with_verify_true_and_no_redirect(monkeypatch):
+    """钉钉 OnePush 完整链路最终发送必须 verify=True 且 allow_redirects=False。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    sent = []
+    original_calls = []
+
+    class FakeNotifier:
+        """模拟 OnePush 通知器，其原始 request 不应被 wrapper 调用。"""
+
+        def __init__(self):
+            """初始化默认请求函数。"""
+            self.request = self.default_request
+
+        @staticmethod
+        def default_request(method, url, **kwargs):
+            """记录原始 request 调用（修复后不应发生）。"""
+            original_calls.append((method, url, kwargs))
+            raise AssertionError('wrapper 不应调用实例原始 request')
+
+        def notify(self, **kwargs):
+            """触发实例请求函数。"""
+            return self.request('post', kwargs['token'], json={})
+
+    def fake_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数并返回成功响应。"""
+        sent.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
+    monkeypatch.setattr(notification, 'request', fake_request)
+    monkeypatch.setattr(
+        notification, 'get_notifier', lambda provider: FakeNotifier())
+
+    result = notification._notify_single_channel(
+        {'provider': 'dingtalk', 'token': 'token-only'},
+        '标题', '内容', retry_interval=0, max_count=1,
+        log=mock.MagicMock(),
+    )
+
+    assert result is True
+    assert original_calls == []
+    assert len(sent) == 1
+    assert sent[0][2]['verify'] is True
+    assert sent[0][2]['allow_redirects'] is False
+
+
+def test_disable_dingtalk_redirects_forwards_positional_proxies(monkeypatch):
+    """基类以位置参数透传 proxies 时包装函数应转为具名参数并禁用重定向。"""
     import modules.notification as notification
 
     captured = []
@@ -1127,26 +1231,33 @@ def test_disable_dingtalk_redirects_forwards_positional_proxies():
 
         @staticmethod
         def default_request(method, url, proxies=None, **kwargs):
-            """记录最终传输参数。"""
-            captured.append((method, url, proxies, kwargs))
-            return None
+            """占位请求函数，满足安全注入契约。"""
+            raise AssertionError('wrapper 不应调用实例原始 request')
 
         def notify(self, **kwargs):
             """以位置参数传 proxies 触发实例请求。"""
             proxies_dict = {'https': 'https://proxy.example:8080'}
             return self.request('post', kwargs['token'], proxies_dict, json={})
 
+    def fake_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数。"""
+        captured.append((method, url, args, kwargs))
+        return None
+
     notifier = FakeNotifier()
+    monkeypatch.setattr(notification, 'request', fake_request)
 
     assert notification._disable_dingtalk_redirects(notifier) is True
     notifier.notify(
         token='https://oapi.dingtalk.com/robot/send?access_token=abc')
 
-    method, url, proxies, kwargs = captured[0]
+    method, url, args, kwargs = captured[0]
     assert method == 'post'
     assert url == 'https://oapi.dingtalk.com/robot/send?access_token=abc'
-    assert proxies == {'https': 'https://proxy.example:8080'}
+    assert args == ()
+    assert kwargs['proxies'] == {'https': 'https://proxy.example:8080'}
     assert kwargs['allow_redirects'] is False
+    assert kwargs['verify'] is True
 
 
 def test_disable_dingtalk_redirects_supports_legacy_request_signature(monkeypatch):
@@ -1165,17 +1276,22 @@ def test_disable_dingtalk_redirects_supports_legacy_request_signature(monkeypatc
 
         @staticmethod
         def default_request(method, url, **kwargs):
-            """旧签名只接受 2 个位置参数，记录最终传输参数。"""
-            request_calls.append((method, url, kwargs))
-            response = mock.MagicMock(status_code=200)
-            response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
-            return response
+            """占位请求函数，满足安全注入契约。"""
+            raise AssertionError('wrapper 不应调用实例原始 request')
 
         def notify(self, **kwargs):
             """以 2 个位置参数调用实例请求函数。"""
             return self.request('post', kwargs['token'], json={})
 
+    def fake_request(method, url, *args, **kwargs):
+        """记录模块级 request 的传输参数并返回成功响应。"""
+        request_calls.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
     notifier = FakeNotifier()
+    monkeypatch.setattr(notification, 'request', fake_request)
     monkeypatch.setattr(
         notification, 'get_notifier', lambda provider: notifier)
 
@@ -1248,7 +1364,7 @@ def test_real_dingtalk_notifier_no_redirect_contract(monkeypatch):
         response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
         return response
 
-    notifier.request = capture_request
+    monkeypatch.setattr(notification, 'request', capture_request)
     monkeypatch.setattr(
         notification, 'get_notifier', lambda provider: notifier)
 
@@ -1262,6 +1378,7 @@ def test_real_dingtalk_notifier_no_redirect_contract(monkeypatch):
     method, url, kwargs = captured[0]
     assert method == 'post'
     assert kwargs['allow_redirects'] is False
+    assert kwargs['verify'] is True
     parsed = urlsplit(url)
     assert parsed.scheme == 'https'
     assert parsed.hostname == 'oapi.dingtalk.com'

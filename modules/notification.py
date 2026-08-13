@@ -687,13 +687,16 @@ def _handle_attempt_failure(route_label, attempt, max_count, reason, retry_inter
 
 
 def _disable_dingtalk_redirects(notifier):
-    """为钉钉 OnePush 实例注入强制禁用重定向的请求包装。
+    """为钉钉 OnePush 实例注入强化传输安全的请求包装。
 
     OnePush 的 Provider.request 是 @staticmethod，经实例访问得到不绑定
-    self 的底层函数，实例可安全覆盖。包装函数在转发前强制覆盖
-    allow_redirects，避免上游调用时重新开启重定向。wrapped 作为实例属性
-    赋值后，经 self.request(...) 访问同样不绑定 self，与 @staticmethod 的
-    original_request 语义一致，这是正确透传位置参数（method 不会错位）
+    self 的底层函数，实例可安全覆盖。包装函数不再转发给 OnePush 原始
+    request（其内部会在 TLS 校验失败后降级为 verify=False 重发，存在泄露
+    access_token、timestamp、sign 及通知正文的风险），而是转发给 TwoPush
+    可控的模块级 request（requests.request），并强制 allow_redirects=False、
+    verify=True，避免上游重新开启重定向或关闭证书校验。wrapped 作为实例
+    属性赋值后，经 self.request(...) 访问同样不绑定 self，与 @staticmethod
+    的 original_request 语义一致，这是正确透传位置参数（method 不会错位）
     的关键依赖。
 
     Args:
@@ -707,14 +710,20 @@ def _disable_dingtalk_redirects(notifier):
         return False
 
     def wrapped(method, url, *args, **kwargs):
-        """转发请求并强制将 allow_redirects 置为 False。
+        """转发请求并强制 allow_redirects=False、verify=True。
 
         使用 *args 跨版本透传位置参数，兼容 OnePush 1.2.0~1.5.0 的两位置
         参数（method、url）签名与 1.6.0+ 的三位置参数（method、url、
-        proxies）签名，避免被误简化为具名参数 proxies。
+        proxies）签名，避免被误简化为具名参数 proxies。第三位置参数为
+        proxies 时转为具名参数后透传给模块级 request。
         """
         kwargs['allow_redirects'] = False
-        return original_request(method, url, *args, **kwargs)
+        kwargs['verify'] = True
+        if args:
+            proxies = args[0]
+            args = args[1:]
+            kwargs['proxies'] = proxies
+        return request(method, url, *args, **kwargs)
 
     notifier.request = wrapped
     return True
