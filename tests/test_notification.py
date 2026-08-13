@@ -1606,6 +1606,44 @@ def test_enhanced_dingtalk_100_user_fields_plus_sign_sends_once(monkeypatch):
     assert len([value for key, value in query_pairs if key == 'sign']) == 1
 
 
+def test_enhanced_dingtalk_103_raw_fields_rejected(monkeypatch):
+    """增强路径下原始字段总数超过 102 时应被拒绝且不发送。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    # 99 个用户字段（access_token + 98 个普通字段）加上 4 个已有
+    # timestamp/sign 字段，共 103 个原始字段，超过原始字段总数上界 102
+    pairs = ["access_token=abc123"]
+    pairs.extend(f"x{index}={index}" for index in range(98))
+    pairs.extend(["timestamp=1", "sign=old", "timestamp=2", "sign=old2"])
+    token = "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+
+    request = mock.MagicMock()
+    monkeypatch.setattr(notification, 'request', request)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        {
+            'provider': 'dingtalk',
+            'token': token,
+            'secret': 'SECtest',
+            'msgtype': 'markdown',
+        },
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=1,
+        log=log,
+    )
+
+    assert result is False
+    request.assert_not_called()
+    assert log.error.call_count == 1
+    message = log.error.call_args[0][0]
+    assert '总数（含签名字段）' in message
+    assert '102' in message
+
+
 def test_dingtalk_transport_accepts_signed_url_with_102_fields(monkeypatch):
     """传输层复核 100 用户字段加签后的 102 字段 URL 应通过并发送。"""
     import modules.notification as notification

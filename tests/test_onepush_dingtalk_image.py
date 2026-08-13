@@ -1387,7 +1387,7 @@ class TestTwoPushDingTalkUrlBuilder:
             )
             return
 
-        with pytest.raises(ValueError, match="参数不得超过 100"):
+        with pytest.raises(ValueError, match="参数总数（含签名字段）不得超过 102"):
             _build_dingtalk_webhook_url(full_url)
 
     def test_query_field_limit_is_checked_before_parse_qsl(self, monkeypatch):
@@ -1407,7 +1407,7 @@ class TestTwoPushDingTalkUrlBuilder:
             + "&".join(["access_token=abc123"] + ["x="] * 102)
         )
 
-        with pytest.raises(ValueError, match="参数不得超过 100"):
+        with pytest.raises(ValueError, match="参数总数（含签名字段）不得超过 102"):
             notification._build_dingtalk_webhook_url(full_url)
 
         assert parse_calls == []

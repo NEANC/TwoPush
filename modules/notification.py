@@ -151,8 +151,8 @@ def _parse_dingtalk_query(query, error_prefix):
     field_count = query.count('&') + 1 if query else 0
     if field_count > max_total_fields:
         raise ValueError(
-            f'{error_prefix} query 参数不得超过 '
-            f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
+            f'{error_prefix} query 参数总数（含签名字段）不得超过 '
+            f'{max_total_fields} 个'
         )
     try:
         query_pairs = parse_qsl(
