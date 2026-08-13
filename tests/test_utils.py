@@ -381,6 +381,31 @@ def test_backslash_line_break_in_sensitive_quoted_value_is_fully_masked(
     assert 'after' not in result
 
 
+@pytest.mark.parametrize(
+    ('original', 'secret', 'expected'),
+    [
+        # 分隔符百分号编码：= 编码为 %3D/%3d，: 编码为 %3A/%3a
+        ('access_token%3DLEAKED', 'LEAKED', 'access_token%3D***'),
+        ('sign%3DSIGNED', 'SIGNED', 'sign%3D***'),
+        ('secret%3Avalue', 'value', 'secret%3A***'),
+        ('access_token%3dLEAKED', 'LEAKED', 'access_token%3d***'),
+        ('secret%3avalue', 'value', 'secret%3a***'),
+        # 键名百分号编码：access_token 的下划线编码为 %5F/%5f
+        ('access%5Ftoken=LEAKED', 'LEAKED', 'access%5Ftoken=***'),
+        ('access%5ftoken=LEAKED', 'LEAKED', 'access%5ftoken=***'),
+        # 键名与分隔符同时百分号编码
+        ('access%5Ftoken%3DLEAKED', 'LEAKED', 'access%5Ftoken%3D***'),
+        ('access%5ftoken%3dLEAKED', 'LEAKED', 'access%5ftoken%3d***'),
+    ],
+)
+def test_percent_encoded_sensitive_key_value_is_masked(original, secret, expected):
+    """百分号编码的敏感键名与分隔符应脱敏，并保留原始编码形式"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected
+    assert secret not in result
+
+
 @pytest.mark.parametrize('line_ending', ['\n', '\r\n'], ids=['lf', 'crlf'])
 def test_backslash_line_break_does_not_mask_sensitive_name_substrings(line_ending):
     """含敏感键名子串的普通键在反斜杠换行场景中不应被误伤"""

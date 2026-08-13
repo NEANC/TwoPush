@@ -34,9 +34,9 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
     r'''
     (?<![A-Za-z0-9_])
     (?P<leading_quote>["']?)
-    (?P<key>(?:access_)?token|sign|secret)
+    (?P<key>(?:access_|access%5[Ff])?token|sign|secret)
     (?P<trailing_quote>["']?)
-    (?P<separator>\s*(?:=|:)\s*)
+    (?P<separator>\s*(?:=|:|%3[Dd]|%3[Aa])\s*)
     (?:
         (?P<double_open>")
         (?P<double_value>(?:[^"\\]|\\[\s\S])*\\?)
@@ -64,6 +64,9 @@ def _replace_sensitive_key_value(match):
         return f'{prefix}{groups["separator"]}"***{groups["double_close"]}'
     if groups['single_open']:
         return f"{prefix}{groups['separator']}'***{groups['single_close']}"
+    separator = groups['separator']
+    if separator.lstrip().startswith('%'):
+        return f'{prefix}{separator}***'
     return f'{prefix}=***'
 
 
