@@ -9,12 +9,13 @@ on:
 
 jobs:
   test:
-    name: Python Unit Tests (${{ matrix.os }})
+    name: Python Unit Tests (${{ matrix.os }}, onepush ${{ matrix.onepush-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        onepush-version: ['1.2.0', '1.6.0', 'latest']
     steps:
       - name: Check-out repository
         uses: actions/checkout@v6
@@ -51,6 +52,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+
+      - name: Pin OnePush Version
+        if: matrix.onepush-version != 'latest'
+        shell: bash
+        run: |
+          pip install "onepush==${{ matrix.onepush-version }}" --force-reinstall --no-deps
 
       - name: Run Unit Tests
         run: |
