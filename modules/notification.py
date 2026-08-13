@@ -51,6 +51,12 @@ DINGTALK_WEBHOOK_MAX_URL_LENGTH = 8192
 # 钉钉 Webhook query 最大参数数量
 DINGTALK_WEBHOOK_MAX_QUERY_FIELDS = 100
 
+# 钉钉加签在用户 query 之上追加的系统字段
+DINGTALK_SIGNATURE_FIELDS = ('timestamp', 'sign')
+
+# 钉钉加签追加的系统字段数量
+DINGTALK_SIGNATURE_FIELD_COUNT = len(DINGTALK_SIGNATURE_FIELDS)
+
 # 钉钉裸 token 最大长度
 DINGTALK_TOKEN_MAX_LENGTH = 4096
 
@@ -139,19 +145,22 @@ def _parse_dingtalk_query(query, error_prefix):
     Raises:
         ValueError: query 非合法 UTF-8、参数超过上限或发生其他解析错误
     """
+    max_total_fields = (
+        DINGTALK_WEBHOOK_MAX_QUERY_FIELDS + DINGTALK_SIGNATURE_FIELD_COUNT
+    )
     field_count = query.count('&') + 1 if query else 0
-    if field_count > DINGTALK_WEBHOOK_MAX_QUERY_FIELDS:
+    if field_count > max_total_fields:
         raise ValueError(
             f'{error_prefix} query 参数不得超过 '
             f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个'
         )
     try:
-        return parse_qsl(
+        query_pairs = parse_qsl(
             query,
             keep_blank_values=True,
             encoding='utf-8',
             errors='strict',
-            max_num_fields=DINGTALK_WEBHOOK_MAX_QUERY_FIELDS,
+            max_num_fields=max_total_fields,
         )
     except UnicodeDecodeError:
         raise ValueError(
@@ -159,6 +168,16 @@ def _parse_dingtalk_query(query, error_prefix):
         ) from None
     except ValueError:
         raise ValueError(f'{error_prefix} query 解析失败') from None
+    user_field_count = sum(
+        1 for key, value in query_pairs
+        if key not in DINGTALK_SIGNATURE_FIELDS
+    )
+    if user_field_count > DINGTALK_WEBHOOK_MAX_QUERY_FIELDS:
+        raise ValueError(
+            f'{error_prefix} query 参数不得超过 '
+            f'{DINGTALK_WEBHOOK_MAX_QUERY_FIELDS} 个（不含签名字段）'
+        )
+    return query_pairs
 
 
 def _build_dingtalk_webhook_url(token, secret=None):

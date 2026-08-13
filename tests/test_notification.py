@@ -1558,3 +1558,78 @@ def test_config_error_value_error_reason_is_masked(monkeypatch):
     assert log.error.call_count == 1
     assert 'super-secret' not in log.error.call_args[0][0]
     assert 'access_token=***' in log.error.call_args[0][0]
+
+
+def test_enhanced_dingtalk_100_user_fields_plus_sign_sends_once(monkeypatch):
+    """增强路径下 100 个用户字段加签为 102 字段后应成功发送一次。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    pairs = ["access_token=abc123"]
+    pairs.extend(f"x{index}={index}" for index in range(99))
+    token = "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+
+    sent = []
+
+    def fake_request(method, url, *args, **kwargs):
+        """捕获发送参数并返回成功响应。"""
+        sent.append((method, url, kwargs))
+        response = mock.MagicMock(status_code=200)
+        response.json.return_value = {'errcode': 0, 'errmsg': 'ok'}
+        return response
+
+    monkeypatch.setattr(notification, 'request', fake_request)
+    log = mock.MagicMock()
+
+    result = notification._notify_single_channel(
+        {
+            'provider': 'dingtalk',
+            'token': token,
+            'secret': 'SECtest',
+            'msgtype': 'markdown',
+        },
+        '标题',
+        '内容',
+        retry_interval=0,
+        max_count=1,
+        log=log,
+    )
+
+    assert result is True
+    assert len(sent) == 1
+    method, url, kwargs = sent[0]
+    assert method == 'post'
+    assert kwargs['allow_redirects'] is False
+    query_pairs = parse_qsl(urlsplit(url).query)
+    assert len(query_pairs) == 102
+    assert len([value for key, value in query_pairs if key == 'timestamp']) == 1
+    assert len([value for key, value in query_pairs if key == 'sign']) == 1
+
+
+def test_dingtalk_transport_accepts_signed_url_with_102_fields(monkeypatch):
+    """传输层复核 100 用户字段加签后的 102 字段 URL 应通过并发送。"""
+    import modules.notification as notification
+    from unittest import mock
+
+    pairs = ["access_token=abc123"]
+    pairs.extend(f"x{index}={index}" for index in range(99))
+    base_url = "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+    signed_url = notification._build_dingtalk_webhook_url(base_url, 'SECtest')
+
+    query_pairs = parse_qsl(urlsplit(signed_url).query)
+    assert len(query_pairs) == 102
+
+    request = mock.MagicMock(return_value=mock.MagicMock(status_code=200))
+    monkeypatch.setattr(notification, 'request', request)
+
+    notification._send_dingtalk_webhook(
+        {'token': base_url, 'secret': 'SECtest', 'msgtype': 'markdown'},
+        '标题',
+        '内容',
+        validated_url=signed_url,
+    )
+
+    request.assert_called_once()
+    method, url = request.call_args.args[:2]
+    assert method == 'post'
+    assert url == signed_url

@@ -1365,9 +1365,9 @@ class TestTwoPushDingTalkUrlBuilder:
         ("suffix", "accepted"),
         [
             ("&" * 99, True),
-            ("&" * 100, False),
+            ("&" * 102, False),
             ("&x=" + "&" * 98, True),
-            ("&x=" + "&" * 99, False),
+            ("&x=" + "&" * 101, False),
         ],
     )
     def test_query_field_limit_counts_blank_and_consecutive_fields(
@@ -1404,7 +1404,7 @@ class TestTwoPushDingTalkUrlBuilder:
         monkeypatch.setattr(notification, "parse_qsl", fail_parse)
         full_url = (
             "https://oapi.dingtalk.com/robot/send?"
-            + "&".join(["access_token=abc123"] + ["x="] * 100)
+            + "&".join(["access_token=abc123"] + ["x="] * 102)
         )
 
         with pytest.raises(ValueError, match="参数不得超过 100"):
