@@ -326,6 +326,29 @@ notify(
 ```python
 import requests
 
+
+def check_serverchan_response(response):
+    """检查 Server酱 的业务响应。"""
+    try:
+        response.raise_for_status()
+    except requests.exceptions.RequestException:
+        raise RuntimeError("Server酱 HTTP 请求失败") from None
+
+    try:
+        data = response.json()
+    except ValueError:
+        raise RuntimeError("Server酱 返回了非 JSON 响应") from None
+
+    if not isinstance(data, dict) or "code" not in data:
+        raise RuntimeError("Server酱 响应格式异常")
+
+    code = data["code"]
+    if type(code) is int and code == 0:
+        return
+
+    raise RuntimeError("Server酱 请求失败")
+
+
 response = requests.post(
     "https://sctapi.ftqq.com/你的SendKey.send",
     data={
@@ -335,7 +358,7 @@ response = requests.post(
     },
     timeout=10,
 )
-response.raise_for_status()
+check_serverchan_response(response)
 ```
 
 > **注意：** OnePush 的 ServerChan 提供者使用旧版 API 端点 (`sc.ftqq.com`)，不支持 `channel` 参数。如需指定通道，请直接调用 Server酱 新版 API（`sctapi.ftqq.com`）。
