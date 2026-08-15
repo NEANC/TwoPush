@@ -30,11 +30,49 @@ CHANNEL_KEY_ALIASES = {
     'pushdeer': {'key': 'pushkey'},
 }
 
+def _percent_encoded_variant(ch):
+    """单字符的可选百分号编码变体，返回正则片段
+
+    敏感键名中的任意单个字符允许以明文或大写十六进制百分号编码
+    （如 %74）形式出现，下划线另支持 %5F；配合 re.IGNORECASE，
+    hex 字母大小写（如 %6B 与 %6b）均可匹配
+
+    Args:
+        ch (str): 单个字符
+
+    Returns:
+        str: 匹配该字符明文或百分号编码形式的正则片段
+    """
+    if ch == '_':
+        return r'(?:_|%5F)'
+    return rf'(?:{re.escape(ch)}|%{ord(ch):02X})'
+
+
+def _sensitive_key_regex(name):
+    """将敏感键名字符串编译为支持任意单字符百分号编码的正则
+
+    Args:
+        name (str): 敏感键名，如 access_token
+
+    Returns:
+        str: 键名各字符明文或百分号编码变体拼接而成的正则片段
+    """
+    return ''.join(_percent_encoded_variant(ch) for ch in name)
+
+
+# 敏感键名（access_token/token、sign、secret）中任意单字符均允许以
+# 百分号编码形式出现，access_ 前缀可选，键名字母大小写由 IGNORECASE 折叠
+_SENSITIVE_KEY_PATTERN = (
+    f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
+    f'|{_sensitive_key_regex("sign")}'
+    f'|{_sensitive_key_regex("secret")}'
+)
+
 _SENSITIVE_KEY_VALUE_RE = re.compile(
-    r'''
+    rf'''
     (?<![A-Za-z0-9_])
     (?P<leading_quote>["']?)
-    (?P<key>(?:access_|access%5[Ff])?token|sign|secret)
+    (?P<key>{_SENSITIVE_KEY_PATTERN})
     (?P<trailing_quote>["']?)
     (?P<separator>\s*(?:=|:|%3[Dd]|%3[Aa])\s*)
     (?:
@@ -46,7 +84,7 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
         (?P<single_value>(?:[^'\\]|\\[\s\S])*\\?)
         (?P<single_close>'|$)
         |
-        (?P<bare_value>[^"'\s,}\]]+)
+        (?P<bare_value>[^"'\s,}}\]]+)
     )
     ''',
     flags=re.IGNORECASE | re.VERBOSE,
@@ -83,7 +121,11 @@ def mask_sensitive_fields(fields, sensitive_fields):
     引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
     'access_token': '***'，裸值形式输出为 access_token=***）；
     同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
-    脱敏时保留其编码形式只替换值，不对整个字符串做 URL 解码；
+    键名中任意单个字符均允许以百分号编码形式出现（如 access_%74oken、
+    %61ccess_token，hex 字母大小写均可匹配），脱敏时保留其编码形式
+    只替换值，不对整个字符串做 URL 解码；多层（双重及以上）百分号编码
+    （如 %253D、%255F）不做穷尽匹配，日志脱敏属纵深防御，对攻击者
+    完全可控的错误文本无法穷尽编码层级；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留

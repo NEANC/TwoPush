@@ -419,3 +419,38 @@ def test_backslash_line_break_does_not_mask_sensitive_name_substrings(line_endin
     result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
 
     assert result == original
+
+
+@pytest.mark.parametrize(
+    ('original', 'expected'),
+    [
+        # 键名中任意单字符的百分号编码：%74=t、%61=a、%65=e、%67=g
+        ('access_%74oken=LEAKED', 'access_%74oken=***'),
+        ('%61ccess_token=LEAKED', '%61ccess_token=***'),
+        ('secr%65t=LEAKED', 'secr%65t=***'),
+        ('si%67n=LEAKED', 'si%67n=***'),
+        # 键名字母大小写折叠（access_%74OKEN 的 OKEN 为大写）
+        ('access_%74OKEN=LEAKED', 'access_%74OKEN=***'),
+        # hex 字母大小写：%6F 与 %6f 均表示 o
+        ('t%6Fken=LEAKED', 't%6Fken=***'),
+        ('t%6fken=LEAKED', 't%6fken=***'),
+        # 下划线编码与字母编码混合
+        ('access%5Fto%6Ben=LEAKED', 'access%5Fto%6Ben=***'),
+        ('access%5fto%6ben=LEAKED', 'access%5fto%6ben=***'),
+    ],
+)
+def test_percent_encoded_any_char_in_sensitive_key_is_masked(original, expected):
+    """敏感键名中任意单字符的百分号编码应脱敏，并保留原始编码形式"""
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == expected
+    assert 'LEAKED' not in result
+
+
+def test_percent_encoded_sensitive_key_substrings_not_masked():
+    """百分号编码的敏感键名子串（xaccess_ 前缀）与 signature 等不应误伤"""
+    original = 'xaccess_%74oken=keep signature=keep secretary=keep design=keep'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
