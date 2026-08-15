@@ -620,9 +620,12 @@ def _is_push_successful(response, require_json_body=False):
         return False, "未收到响应，请求可能已失败"
 
     status_code = getattr(response, 'status_code', None)
-    if status_code is not None and not 200 <= status_code < 300:
-        text = (getattr(response, 'text', '') or '').strip()
-        return False, f"HTTP {status_code}: {text}"
+    if status_code is not None:
+        if isinstance(status_code, bool) or not isinstance(status_code, int):
+            return False, "HTTP 状态码类型无效"
+        if not 200 <= status_code < 300:
+            text = (getattr(response, 'text', '') or '').strip()
+            return False, f"HTTP {status_code}: {text}"
 
     body = _parse_response_body(response)
     if body is None:
@@ -630,14 +633,29 @@ def _is_push_successful(response, require_json_body=False):
             return False, "响应体不是有效的 JSON 对象"
         return True, ""
 
+    if require_json_body and 'errcode' not in body:
+        return False, "响应缺少 errcode 字段"
+
     errcode = body.get('errcode')
-    if errcode is not None and errcode != 0:
-        return False, f"errcode={errcode}: {body.get('errmsg', '')}"
+    if errcode is not None:
+        errcode_ok = (
+            type(errcode) is int and errcode == 0
+        ) or (
+            isinstance(errcode, str) and errcode.strip() == '0'
+        )
+        if not errcode_ok:
+            return False, f"errcode={errcode}: {body.get('errmsg', '')}"
 
     code = body.get('code')
-    if code is not None and code not in (0, 200):
-        reason = body.get('message') or body.get('reason') or body.get('info') or ''
-        return False, f"code={code}: {reason}"
+    if code is not None:
+        code_ok = (
+            type(code) is int and code in (0, 200)
+        ) or (
+            isinstance(code, str) and code.strip() in ('0', '200')
+        )
+        if not code_ok:
+            reason = body.get('message') or body.get('reason') or body.get('info') or ''
+            return False, f"code={code}: {reason}"
 
     if body.get('success') is False:
         reason = body.get('reason') or body.get('message') or ''

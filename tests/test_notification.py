@@ -1826,3 +1826,99 @@ def test_other_provider_non_json_200_response_still_succeeds(monkeypatch):
 
     assert result is True
     assert log.error.call_count == 0
+
+
+class JsonResponse:
+    """携带状态码与 JSON 响应体的测试响应。"""
+
+    def __init__(self, body, status_code=200):
+        self.status_code = status_code
+        self.text = ''
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def test_is_push_successful_rejects_empty_json_object_when_required():
+    """require_json_body=True 时，空 JSON 字典 {} 缺少 errcode 应判失败"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({}), require_json_body=True)
+
+    assert success is False
+    assert 'errcode' in reason
+
+
+def test_is_push_successful_accepts_string_errcode_zero():
+    """errcode 为去空白后等于 0 的字符串时应判成功"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': ' 0 ', 'errmsg': 'ok'}),
+        require_json_body=True)
+
+    assert success is True
+    assert reason == ''
+
+
+def test_is_push_successful_accepts_string_code_200_for_other_provider():
+    """非钉钉 provider 的 code 为字符串 200 时应判成功"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'code': '200', 'message': 'ok'}))
+
+    assert success is True
+    assert reason == ''
+
+
+def test_is_push_successful_keeps_int_errcode_and_code_contract():
+    """errcode 0 与 code 0/200 的整数成功契约应保持不变"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 0}), require_json_body=True)
+    assert success is True
+    assert reason == ''
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 1}))
+    assert success is False
+    assert 'errcode=1' in reason
+
+    for body in ({'code': 0}, {'code': 200}):
+        success, reason = notification._is_push_successful(JsonResponse(body))
+        assert success is True
+        assert reason == ''
+
+
+def test_is_push_successful_rejects_bool_errcode_and_code():
+    """布尔 errcode/code 不应被当作整数 0/200 误判成功"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': False}), require_json_body=True)
+    assert success is False
+    assert 'errcode' in reason
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'code': True}))
+    assert success is False
+    assert 'code' in reason
+
+
+def test_is_push_successful_rejects_non_int_status_code():
+    """字符串等非整数状态码应判失败且不抛 TypeError"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 0}, status_code='200'))
+    assert success is False
+    assert '状态码' in reason
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 0}, status_code=200))
+    assert success is True
+    assert reason == ''
