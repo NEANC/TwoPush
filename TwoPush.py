@@ -13,7 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -37,6 +37,12 @@ from modules.json_manager import (
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
+
+_PROXY_SENSITIVE_QUERY_KEYS = frozenset({
+    'password', 'passwd', 'token', 'access_token', 'accesskey',
+    'access_key', 'sign', 'secret', 'key', 'api_key', 'apikey',
+    'auth', 'credential', 'token_key', 'secret_key',
+})
 
 
 def parse_args():
@@ -191,8 +197,37 @@ def push_proxy_environment(proxy, logger):
             os.environ['ALL_PROXY'] = old_all_proxy
 
 
+def _quote_proxy_query(value, safe, encoding, errors):
+    """urlencode 的 quote_via 回调：额外保留星号，保证脱敏值输出为 ***。"""
+    return quote(value, safe=safe + '*', encoding=encoding, errors=errors)
+
+
+def _mask_proxy_query(query):
+    """脱敏 query 中敏感键的值；无敏感键时原样返回，不规范化。
+
+    Args:
+        query: URL 的 query 字符串。
+
+    Returns:
+        str: 脱敏后的 query 字符串。
+    """
+    if not query:
+        return query
+    try:
+        pairs = parse_qsl(query, keep_blank_values=True)
+    except Exception:
+        return query
+    masked = [
+        (key, '***' if key.strip().lower() in _PROXY_SENSITIVE_QUERY_KEYS else value)
+        for key, value in pairs
+    ]
+    if all(mask == orig for mask, orig in zip(masked, pairs)):
+        return query
+    return urlencode(masked, quote_via=_quote_proxy_query)
+
+
 def mask_proxy_authentication(proxy):
-    """脱敏代理 URL 中的认证信息。
+    """脱敏代理 URL 中的认证信息、敏感 query 参数并移除 fragment。
 
     Args:
         proxy: 代理地址。
@@ -204,21 +239,26 @@ def mask_proxy_authentication(proxy):
         return proxy
 
     parsed = urlsplit(proxy)
-    if not parsed.username and parsed.password is None:
+    has_auth = bool(parsed.username) or parsed.password is not None
+    masked_query = _mask_proxy_query(parsed.query)
+    if not has_auth and masked_query == parsed.query and not parsed.fragment:
         return proxy
 
-    host = parsed.hostname or ''
-    if ':' in host and not host.startswith('['):
-        host = f'[{host}]'
-    if parsed.port is not None:
-        host = f'{host}:{parsed.port}'
-    netloc = f'***:***@{host}'
+    if has_auth:
+        host = parsed.hostname or ''
+        if ':' in host and not host.startswith('['):
+            host = f'[{host}]'
+        if parsed.port is not None:
+            host = f'{host}:{parsed.port}'
+        netloc = f'***:***@{host}'
+    else:
+        netloc = parsed.netloc
     return urlunsplit((
         parsed.scheme,
         netloc,
         parsed.path,
-        parsed.query,
-        parsed.fragment,
+        masked_query,
+        '',
     ))
 
 

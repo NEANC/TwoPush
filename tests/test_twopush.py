@@ -404,6 +404,78 @@ def test_format_push_preview_masks_proxy_authentication():
     assert 'socks5://user:password@127.0.0.1:7890' not in preview
 
 
+def test_format_push_preview_masks_proxy_query_sensitive_key():
+    """推送预览应脱敏代理 URL query 中的敏感键值"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080?access_token=QUERY',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'access_token=***' in preview
+    assert 'QUERY' not in preview
+
+
+def test_format_push_preview_masks_proxy_query_sensitive_key_case_insensitive():
+    """代理 URL query 敏感键匹配应大小写不敏感"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080?PASSWORD=SECRETVALUE',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'PASSWORD=***' in preview
+    assert 'SECRETVALUE' not in preview
+
+
+def test_format_push_preview_removes_proxy_fragment():
+    """推送预览应移除代理 URL 的 fragment"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080#secret=FRAG',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "http://proxy.test:8080"' in preview
+    assert 'FRAG' not in preview
+
+
+def test_format_push_preview_masks_proxy_combined_credentials_query_fragment():
+    """代理 URL 同时含认证、敏感 query 与 fragment 时应全部脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://alice:pass@proxy.test:8080?password=QUERY#token=F',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "http://***:***@proxy.test:8080?password=***"' in preview
+    assert 'alice:pass' not in preview
+    assert 'QUERY' not in preview
+    assert 'token=F' not in preview
+
+
+def test_format_push_preview_keeps_proxy_without_credentials():
+    """无认证、无敏感 query 且无 fragment 的代理应原样返回"""
+    for proxy in ('http://127.0.0.1:7890', 'http://proxy.test:8080?x=1'):
+        preview = TwoPush.format_push_preview(
+            title='标题',
+            content='内容',
+            proxy=proxy,
+            retry_settings={'interval': 3, 'max_count': 3},
+            channels=[{'provider': 'serverchan'}],
+        )
+
+        assert f'"proxy": "{proxy}"' in preview
+
+
 def test_format_push_preview_keeps_retry_order_with_reversed_settings():
     """推送预览应固定 retry 字段顺序，不受传入字典顺序影响"""
     preview = TwoPush.format_push_preview(
