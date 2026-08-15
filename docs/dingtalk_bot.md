@@ -233,7 +233,7 @@ text 和 markdown 两种消息类型**都支持** @指定人和 @所有人，但
 
 获取 userId 的方式：
 
-- **简单方式：** 钉钉客户端 → 头像 → 我的信息 → 员工 ID
+- **管理后台方式：** 钉钉管理后台 → 通讯录 → 成员管理 → 点击成员查看「员工 UserID」。客户端「我的信息」中展示的「员工 ID」不保证与 Webhook `atUserIds` 所需的企业 userId 一致，请勿混用
 - **API 方式：** 调用通讯录 API [获取用户详情](https://open.dingtalk.com/document/orgapp/query-user-details)，需要企业内部应用的 AppKey / AppSecret
 
 ```json
