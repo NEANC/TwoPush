@@ -59,6 +59,17 @@ jobs:
         run: |
           pip install "onepush==${{ matrix.onepush-version }}" --force-reinstall --no-deps
 
+      # 验证当前安装的 onepush 版本与矩阵一致
+      - name: Verify OnePush Version
+        shell: bash
+        run: |
+          # 打印当前 onepush 版本
+          python -c "import importlib.metadata as m; print('onepush', m.version('onepush'))"
+          # 非 latest 时断言版本一致
+          if [ "${{ matrix.onepush-version }}" != "latest" ]; then
+            python -c "import importlib.metadata as m; v=m.version('onepush'); assert v == '${{ matrix.onepush-version }}', f'expected ${{ matrix.onepush-version }}, got {v}'"
+          fi
+
       - name: Run Unit Tests
         run: |
           python -m pytest tests/ -v --tb=short --color=yes --junitxml=test-results.xml --durations=10 -p no:cacheprovider
@@ -67,6 +78,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}-${{ matrix.onepush-version }}
           path: test-results.xml
           retention-days: 3
