@@ -432,6 +432,48 @@ def test_format_push_preview_masks_proxy_query_sensitive_key_case_insensitive():
     assert 'SECRETVALUE' not in preview
 
 
+def test_format_push_preview_masks_proxy_query_preserves_plus_for_space():
+    """代理 URL query 中的空格 + 在脱敏重组后应保持 + 而非 %20"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?a=b+c&access_token=Q',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'a=b+c&access_token=***' in preview
+    assert 'b%20c' not in preview
+    assert 'Q' not in preview
+
+
+def test_format_push_preview_masks_proxy_query_empty_sensitive_value():
+    """代理 URL query 中敏感键为空值时应脱敏为空值标记 ***"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?password=',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'password=***' in preview
+
+
+def test_format_push_preview_masks_proxy_query_percent_encoded_key():
+    """代理 URL query 中百分号编码的敏感键名应被解码识别并脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?access%5Ftoken=Q',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'access_token=***' in preview
+    assert 'access%5Ftoken=Q' not in preview
+
+
 def test_format_push_preview_removes_proxy_fragment():
     """推送预览应移除代理 URL 的 fragment"""
     preview = TwoPush.format_push_preview(

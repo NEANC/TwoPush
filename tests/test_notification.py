@@ -1922,3 +1922,18 @@ def test_is_push_successful_rejects_non_int_status_code():
         JsonResponse({'errcode': 0}, status_code=200))
     assert success is True
     assert reason == ''
+
+
+def test_is_push_successful_rejects_bool_status_code():
+    """布尔状态码 True 不应被当作整数 200 误判成功"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 0}, status_code=True))
+    assert success is False
+    assert '状态码' in reason
+
+    success, reason = notification._is_push_successful(
+        JsonResponse({'errcode': 0}, status_code=200))
+    assert success is True
+    assert reason == ''

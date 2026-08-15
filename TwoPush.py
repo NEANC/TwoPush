@@ -13,7 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
-from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -198,8 +198,8 @@ def push_proxy_environment(proxy, logger):
 
 
 def _quote_proxy_query(value, safe, encoding, errors):
-    """urlencode 的 quote_via 回调：额外保留星号，保证脱敏值输出为 ***。"""
-    return quote(value, safe=safe + '*', encoding=encoding, errors=errors)
+    """urlencode 的 quote_via 回调：额外保留星号，空格编码为 +，保证脱敏值输出为 ***。"""
+    return quote_plus(value, safe=safe + '*', encoding=encoding, errors=errors)
 
 
 def _mask_proxy_query(query):
