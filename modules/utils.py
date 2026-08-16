@@ -3,6 +3,7 @@
 
 import logging
 import re
+import urllib.parse
 
 from onepush import all_providers, get_notifier
 
@@ -29,6 +30,15 @@ CHANNEL_KEY_ALIASES = {
     'serverchanturbo': {'key': 'sctkey'},
     'pushdeer': {'key': 'pushkey'},
 }
+
+# 受限解码的输入长度上限：超过该长度不再做解码检测，直接按原文脱敏
+_MAX_DECODE_LENGTH = 4096
+
+# 合法十六进制字符集合，用于识别严格的 %HH 编码序列
+_HEX_DIGITS = '0123456789abcdefABCDEF'
+
+# 解码副本中控制字符的占位符（DEL），仅存在于检测副本中，不会写回原文
+_CONTROL_PLACEHOLDER = '\x7f'
 
 def _percent_encoded_variant(ch):
     """单字符的可选百分号编码变体，返回正则片段
@@ -133,6 +143,183 @@ def _replace_sensitive_key_value(match):
     return f'{prefix}=***'
 
 
+def _percent_decode_once(value):
+    """对字符串执行最多一层的受限百分号解码
+
+    仅解码严格合法的 %HH 序列（HH 为大写或小写 hex），非法 %（如
+    %ZZ、孤立 %）保持原样；解码结果仅用于正则检测，不替换回原文，
+    也不会把解码字节解释为控制字符；输入长度超过 _MAX_DECODE_LENGTH
+    或解码无法构成合法 UTF-8 时返回原文，不做解码检测
+
+    Args:
+        value (str): 待解码的字符串
+
+    Returns:
+        str: 单层解码结果；无法安全解码时返回原字符串
+    """
+    if len(value) > _MAX_DECODE_LENGTH:
+        return value
+    try:
+        return urllib.parse.unquote(value, errors='strict')
+    except (ValueError, KeyError):
+        return value
+
+
+def _decode_once_with_spans(value):
+    """单层受限解码，并记录检测副本各字符对应的原文区间
+
+    解码副本与原文长度可能不一致（%HH 三字符压缩为一字符），记录每个
+    解码字符对应的原文区间，用于将解码副本上命中的敏感片段映射回原文；
+    由 %HH 解码产生的控制字符（如 %0A 换行）以占位符替代，避免裸值
+    匹配因换行等提前终止，占位符仅存在于检测副本中，不会写回原文
+
+    Args:
+        value (str): 待解码的字符串
+
+    Returns:
+        tuple: (decoded, spans)；decoded 为单层解码检测副本，spans 为
+            长度等于 len(decoded) 的区间列表，spans[i] = (start, end)
+            表示 decoded[i] 对应原文 value[start:end]；解码无变化
+            或无法解码时返回 (value, None)
+    """
+    decoded = _percent_decode_once(value)
+    if decoded == value:
+        return value, None
+
+    spans = []
+    decoded_chars = []
+    index = 0
+    length = len(value)
+    for ch in decoded:
+        if (
+            index + 2 < length
+            and value[index] == '%'
+            and value[index + 1] in _HEX_DIGITS
+            and value[index + 2] in _HEX_DIGITS
+        ):
+            # 合法 %HH 序列：可能是单字节 ASCII，也可能是多字节 UTF-8 字符
+            start = index
+            raw = bytearray()
+            target = ch.encode('utf-8')
+            while (
+                index + 2 < length
+                and value[index] == '%'
+                and value[index + 1] in _HEX_DIGITS
+                and value[index + 2] in _HEX_DIGITS
+            ):
+                raw.append(int(value[index + 1:index + 3], 16))
+                index += 3
+                if bytes(raw) == target:
+                    break
+            # 单字节空白或控制字符以占位符替代，避免干扰裸值匹配边界
+            if len(target) == 1 and (ch.isspace() or ord(ch) == 0x7F):
+                decoded_chars.append(_CONTROL_PLACEHOLDER)
+            else:
+                decoded_chars.append(ch)
+            spans.append((start, index))
+        else:
+            # 普通字符或非法 %：解码前后 1:1 对应
+            decoded_chars.append(ch)
+            spans.append((index, index + 1))
+            index += 1
+    return ''.join(decoded_chars), spans
+
+
+def _original_span_text(original, spans, match, group_name):
+    """取解码副本正则匹配分组对应的原文文本片段
+
+    Args:
+        original (str): 原文
+        spans (list): 解码副本字符到原文区间的映射
+        match: 解码副本上的正则匹配对象
+        group_name (str): 分组名
+
+    Returns:
+        str: 分组对应原文的文本片段；分组未参与匹配时返回空字符串
+    """
+    start, end = match.span(group_name)
+    if start < 0 or end <= start:
+        return ''
+    return original[spans[start][0]:spans[end - 1][1]]
+
+
+def _rebuild_sensitive_replacement(original, spans, match):
+    """重建解码副本匹配对应的原文形态脱敏文本
+
+    保留键名、引号与分隔符在原文中的编码形态，仅将敏感值替换为
+    ***，与 _replace_sensitive_key_value 的替换语义保持一致
+
+    Args:
+        original (str): 原文
+        spans (list): 解码副本字符到原文区间的映射
+        match: 解码副本上 _SENSITIVE_KEY_VALUE_RE 的匹配对象
+
+    Returns:
+        str: 原文形态的脱敏文本
+    """
+    groups = match.groupdict()
+    prefix = (
+        f'{_original_span_text(original, spans, match, "leading_quote")}'
+        f'{_original_span_text(original, spans, match, "key")}'
+        f'{_original_span_text(original, spans, match, "trailing_quote")}'
+    )
+    separator = _original_span_text(original, spans, match, 'separator')
+    if groups['double_open']:
+        close = _original_span_text(original, spans, match, 'double_close')
+        return f'{prefix}{separator}"***{close}'
+    if groups['single_open']:
+        close = _original_span_text(original, spans, match, 'single_close')
+        return f"{prefix}{separator}'***{close}"
+    if separator.lstrip().startswith('%'):
+        return f'{prefix}{separator}***'
+    return f'{prefix}=***'
+
+
+def _mask_decoded_variants(original, decoded, spans):
+    """在解码副本上检测敏感片段，并按原文形态替换回原文
+
+    解码副本与原文长度不一致，无法直接在原文上执行正则替换，故先在
+    解码副本上定位敏感片段（URL userinfo 与敏感键值对），映射回原文
+    区间后从后往前替换；与 userinfo 重叠的键值对由 userinfo 规则优先
+
+    Args:
+        original (str): 原文
+        decoded (str): 单层解码副本
+        spans (list): 解码副本字符到原文区间的映射
+
+    Returns:
+        str: 脱敏后的字符串
+    """
+    plan = []
+    userinfo_ranges = []
+    for match in _URL_USERINFO_RE.finditer(decoded):
+        start, end = match.span()
+        scheme = _original_span_text(original, spans, match, 'scheme')
+        plan.append((start, end, f'{scheme}***:***@'))
+        userinfo_ranges.append((start, end))
+
+    for match in _SENSITIVE_KEY_VALUE_RE.finditer(decoded):
+        start, end = match.span()
+        # 与 URL userinfo 重叠的键值对由 userinfo 规则优先，跳过
+        if any(
+            start < user_end and user_start < end
+            for user_start, user_end in userinfo_ranges
+        ):
+            continue
+        plan.append(
+            (start, end, _rebuild_sensitive_replacement(original, spans, match))
+        )
+
+    result = original
+    for start, end, text in sorted(
+        plan, key=lambda item: spans[item[0]][0], reverse=True
+    ):
+        orig_start = spans[start][0]
+        orig_end = spans[end - 1][1]
+        result = result[:orig_start] + text + result[orig_end:]
+    return result
+
+
 def mask_sensitive_fields(fields, sensitive_fields):
     """仅对调用方声明的字段执行敏感片段脱敏
 
@@ -150,9 +337,10 @@ def mask_sensitive_fields(fields, sensitive_fields):
     同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
     键名中任意单个字符均允许以百分号编码形式出现（如 access_%74oken、
     %61ccess_token，hex 字母大小写均可匹配），脱敏时保留其编码形式
-    只替换值，不对整个字符串做 URL 解码；多层（双重及以上）百分号编码
-    （如 %253D、%255F）不做穷尽匹配，日志脱敏属纵深防御，对攻击者
-    完全可控的错误文本无法穷尽编码层级；
+    只替换值；检测前会对值执行最多一层的受限百分号解码，双重编码
+    （如 %253D、%255F 解码一层后为 %3D、%5F）亦可被脱敏，三层及以上
+    仍为已知边界，日志脱敏属纵深防御，对攻击者完全可控的错误文本
+    无法穷尽编码层级；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留
@@ -179,8 +367,14 @@ def mask_sensitive_fields(fields, sensitive_fields):
             continue
         value = str(result[field])
         value = re.sub(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
-        value = _URL_USERINFO_RE.sub(_replace_url_userinfo, value)
-        value = _SENSITIVE_KEY_VALUE_RE.sub(_replace_sensitive_key_value, value)
+        decoded, spans = _decode_once_with_spans(value)
+        if spans is None:
+            # 无解码差异：直接在原文上替换，与既有行为完全一致
+            value = _URL_USERINFO_RE.sub(_replace_url_userinfo, value)
+            value = _SENSITIVE_KEY_VALUE_RE.sub(_replace_sensitive_key_value, value)
+        else:
+            # 存在单层解码差异：在解码副本上检测，将命中片段映射回原文替换
+            value = _mask_decoded_variants(value, decoded, spans)
         result[field] = value
     return result
 

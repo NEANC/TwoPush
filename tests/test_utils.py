@@ -552,3 +552,71 @@ def test_mask_sensitive_fields_url_userinfo_and_key_value_combined():
     assert 'alice' not in result
     assert 'SuperSecret' not in result
     assert 'MailPass' not in result
+
+
+def test_double_percent_encoded_sensitive_key_value_is_masked():
+    """双层百分号编码（%253D/%255F 解码一层为 %3D/%5F）应脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'access%255Ftoken%253DLEAKED'}, {'reason'}
+    )['reason']
+
+    assert 'LEAKED' not in result
+    assert '***' in result
+
+
+def test_double_percent_encoded_key_char_is_masked():
+    """双层编码键名字符（%2577 解码一层为 %77 即 w）应脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'pass%2577ord=LEAK'}, {'reason'}
+    )['reason']
+
+    assert 'LEAK' not in result
+    assert '***' in result
+
+
+def test_double_percent_encoded_separator_is_masked():
+    """双层编码分隔符（sign%253DSIGNED）应脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'sign%253DSIGNED'}, {'reason'}
+    )['reason']
+
+    assert 'SIGNED' not in result
+    assert '***' in result
+
+
+def test_single_layer_percent_encoding_keeps_original_encoding_form():
+    """单层编码防回归：保留编码形式、只替换值"""
+    result = mask_sensitive_fields(
+        {'reason': 'access%5Ftoken%3DLEAKED'}, {'reason'}
+    )['reason']
+
+    assert result == 'access%5Ftoken%3D***'
+    assert 'LEAKED' not in result
+
+
+def test_plain_sensitive_value_still_masked_as_before():
+    """明文防回归：access_token=LEAK 应脱敏为 access_token=***"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=LEAK'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***'
+    assert 'LEAK' not in result
+
+
+def test_invalid_percent_sequences_do_not_raise_or_mask():
+    """非法百分号序列（%ZZ、孤立 %、token=%）不抛异常且不误伤"""
+    result = mask_sensitive_fields(
+        {'reason': 'percent=%ZZ lone=% token=%'}, {'reason'}
+    )['reason']
+
+    assert result == 'percent=%ZZ lone=% token=***'
+
+
+def test_non_sensitive_double_encoded_text_not_masked():
+    """非敏感内容的双层编码文本（a%253Db=keep、普通%25文本）不误伤"""
+    result = mask_sensitive_fields(
+        {'reason': 'a%253Db=keep 普通%25文本'}, {'reason'}
+    )['reason']
+
+    assert result == 'a%253Db=keep 普通%25文本'
