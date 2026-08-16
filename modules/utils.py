@@ -60,12 +60,24 @@ def _sensitive_key_regex(name):
     return ''.join(_percent_encoded_variant(ch) for ch in name)
 
 
-# 敏感键名（access_token/token、sign、secret）中任意单字符均允许以
-# 百分号编码形式出现，access_ 前缀可选，键名字母大小写由 IGNORECASE 折叠
+# 敏感键名（access_token/token、sign、secret、password、api_key、webhook
+# 等常见凭据键）中任意单字符均允许以百分号编码形式出现，access_ 前缀可选，
+# 键名字母大小写由 IGNORECASE 折叠
 _SENSITIVE_KEY_PATTERN = (
     f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
     f'|{_sensitive_key_regex("sign")}'
     f'|{_sensitive_key_regex("secret")}'
+    f'|{_sensitive_key_regex("password")}'
+    f'|{_sensitive_key_regex("passwd")}'
+    f'|{_sensitive_key_regex("api_key")}'
+    f'|{_sensitive_key_regex("apikey")}'
+    f'|{_sensitive_key_regex("webhook")}'
+    f'|{_sensitive_key_regex("secret_key")}'
+    f'|{_sensitive_key_regex("token_key")}'
+    f'|{_sensitive_key_regex("auth")}'
+    f'|{_sensitive_key_regex("credential")}'
+    f'|{_sensitive_key_regex("accesskey")}'
+    f'|{_sensitive_key_regex("access_key")}'
 )
 
 _SENSITIVE_KEY_VALUE_RE = re.compile(
@@ -91,6 +103,19 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
 )
 
 
+# scheme://user:pass@host 形式的 URL userinfo，脱敏为 ***:***@
+# scheme 须以 :// 结尾，故 mailto:、纯文本邮箱（无 scheme 前缀）与
+# 路径中的 @ 均不会被误伤
+_URL_USERINFO_RE = re.compile(
+    r'(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)@',
+)
+
+
+def _replace_url_userinfo(match):
+    """将 URL userinfo 替换为 ***:***@，保留 scheme 与 @ 之后的 host 等部分。"""
+    return f'{match.group("scheme")}***:***@'
+
+
 def _replace_sensitive_key_value(match):
     """将匹配到的敏感键值对替换为脱敏形式，引号形式保留原有结构。"""
     groups = match.groupdict()
@@ -112,8 +137,10 @@ def mask_sensitive_fields(fields, sensitive_fields):
     """仅对调用方声明的字段执行敏感片段脱敏
 
     在字段字典的副本上进行处理：11 位手机号（1[3-9] 开头号段，允许带
-    可选 +86/86 国家码前缀）保留前 3 位与后 4 位，access_token/token、
-    sign、secret 键值对的值替换为 ***
+    可选 +86/86 国家码前缀）保留前 3 位与后 4 位；scheme://user:pass@
+    形式的 URL userinfo 脱敏为 ***:***@（保留 scheme/host/port 等）；
+    access_token/token、sign、secret、password、api_key、webhook 等
+    常见凭据键值对的值替换为 ***
     （支持 key=value、key: value、单双引号键值形式；值侧优先按
     带转义处理的引号字符串匹配到明确闭合引号或字符串末尾，否则取到
     空白、引号、逗号或右括号为止，故值内含转义引号、逗号或 & 等连接符
@@ -152,6 +179,7 @@ def mask_sensitive_fields(fields, sensitive_fields):
             continue
         value = str(result[field])
         value = re.sub(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
+        value = _URL_USERINFO_RE.sub(_replace_url_userinfo, value)
         value = _SENSITIVE_KEY_VALUE_RE.sub(_replace_sensitive_key_value, value)
         result[field] = value
     return result

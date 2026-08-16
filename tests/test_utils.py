@@ -454,3 +454,101 @@ def test_percent_encoded_sensitive_key_substrings_not_masked():
     result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
 
     assert result == original
+
+
+def test_mask_sensitive_fields_masks_url_userinfo():
+    """URL userinfo 中的用户名与密码应脱敏为 ***:***@，保留 scheme/host/port"""
+    result = mask_sensitive_fields(
+        {'reason': 'ProxyError http://alice:SuperSecret@127.0.0.1:9'}, {'reason'}
+    )['reason']
+
+    assert 'http://***:***@127.0.0.1:9' in result
+    assert 'alice' not in result
+    assert 'SuperSecret' not in result
+
+
+def test_mask_sensitive_fields_masks_url_userinfo_without_password():
+    """仅用户名的 URL userinfo 统一脱敏为 ***:***@"""
+    result = mask_sensitive_fields(
+        {'reason': 'https://bob@example.com:8443/api'}, {'reason'}
+    )['reason']
+
+    assert 'https://***:***@example.com:8443/api' in result
+    assert 'bob' not in result
+
+
+def test_mask_sensitive_fields_url_userinfo_does_not_touch_plain_email_or_mailto():
+    """纯文本邮箱与 mailto: 形式不应被 URL userinfo 规则误伤"""
+    original = '联系 a@b.com 或 mailto:c@d.com 均非 URL userinfo'
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
+
+
+def test_mask_sensitive_fields_extra_sensitive_keys_are_masked():
+    """password/api_key/webhook 等扩展敏感键值对应脱敏为 ***"""
+    result = mask_sensitive_fields(
+        {
+            'reason': 'password=MailPass api_key=ApiSecret '
+            'webhook=https://hooks.example/SecretPath'
+        },
+        {'reason'},
+    )['reason']
+
+    assert 'password=***' in result
+    assert 'api_key=***' in result
+    assert 'webhook=***' in result
+    assert 'MailPass' not in result
+    assert 'ApiSecret' not in result
+    assert 'SecretPath' not in result
+
+
+def test_mask_sensitive_fields_extra_sensitive_keys_case_insensitive():
+    """扩展敏感键名大小写折叠，PASSWORD/API_KEY/PassWd 均应脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'PASSWORD=x API_KEY=y PassWd=z'}, {'reason'}
+    )['reason']
+
+    assert 'PASSWORD=***' in result
+    assert 'API_KEY=***' in result
+    assert 'PassWd=***' in result
+
+
+def test_mask_sensitive_fields_extra_sensitive_keys_percent_encoded():
+    """新增敏感键同样支持任意单字符百分号编码变体"""
+    result = mask_sensitive_fields(
+        {'reason': 'pass%77ord=x ap%69_key=y'}, {'reason'}
+    )['reason']
+
+    assert 'pass%77ord=***' in result
+    assert 'ap%69_key=***' in result
+    assert 'pass%77ord=x' not in result
+    assert 'ap%69_key=y' not in result
+
+
+def test_mask_sensitive_fields_extra_sensitive_key_substrings_not_masked():
+    """xpassword/authorname 等含新增敏感键名子串的键不应被误伤"""
+    original = (
+        'xpassword=keep design=keep assign=keep signature=keep '
+        'secretary=keep authorname=keep'
+    )
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
+
+
+def test_mask_sensitive_fields_url_userinfo_and_key_value_combined():
+    """同一错误文本中 URL userinfo 与敏感键值对应同时脱敏"""
+    result = mask_sensitive_fields(
+        {
+            'reason': 'ProxyError http://alice:SuperSecret@127.0.0.1:9 '
+            'password=MailPass'
+        },
+        {'reason'},
+    )['reason']
+
+    assert 'http://***:***@127.0.0.1:9' in result
+    assert 'password=***' in result
+    assert 'alice' not in result
+    assert 'SuperSecret' not in result
+    assert 'MailPass' not in result
