@@ -105,8 +105,12 @@ class TestDingTalkMarkdownMessageData:
         assert dingtalk.data["markdown"]["title"] == "Markdown 标题"
         assert "# Hello" in dingtalk.data["markdown"]["text"]
 
-    def test_markdown_with_image_syntax(self):
-        """Markdown 消息中可嵌入图片语法（变通方案）"""
+    def test_image_payload_preserves_content(self):
+        """验证 OnePush 构造的 markdown 请求体原样透传图片语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         markdown_content = (
             f"## 图片推送测试\n\n"
@@ -239,21 +243,20 @@ class TestDingTalkNotifyFlow:
         assert "markdown" not in captured_data["json"]
 
 
-class TestWebhookImageMessageLimitation:
-    """验证钉钉 Webhook 方式不支持 image 消息类型的说明"""
+class TestDingTalkImagePayloadContract:
+    """验证 OnePush 构造的钉钉图片相关请求体结构（内容透传契约）
 
-    def test_webhook_does_not_support_image_msgtype(self):
-        """钉钉 Webhook 方式不支持 msgtype: 'image' 的消息类型
+    本类用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+    实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+    """
 
-        这是钉钉 API 自身的限制，不是 OnePush 的问题。
-        参考文档: https://open.dingtalk.com/document/development/robot-message-type
+    def test_image_payload_does_not_emit_image_field(self):
+        """验证 OnePush 构造的钉钉请求体不会产生 msgtype 为 image 的字段
 
-        消息类型对比:
-        - text:    Webhook ✅ | 接口 ✅
-        - markdown: Webhook ✅ | 接口 ✅
-        - image:   Webhook ❌ | 接口 ✅
-        - link:    Webhook ✅ | 接口 ✅
-        - feedCard: Webhook ✅ | 接口 ❌
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档
+        (https://open.dingtalk.com/document/development/robot-message-type)
+        或可追溯人工验证为准。
         """
         dingtalk = DingTalk()
         # 确认 OnePush 的 DingTalk 提供者仅支持 text 和 markdown
@@ -342,25 +345,21 @@ class TestAtMentionDataStructure:
         )
 
 
-class TestDingTalkMarkdownFullSyntax:
-    """测试钉钉 Markdown 支持的全部语法
+class TestDingTalkMarkdownContentPassthrough:
+    """验证 OnePush 构造的 markdown 请求体对各类语法内容的内容透传
 
-    钉钉 Markdown 支持以下语法（参考官方文档）：
-    - 标题（# ~ ######）
-    - 引用（>）
-    - 加粗（**text**）、斜体（*text*）
-    - 链接（[text](url)）
-    - 图片（![alt](url)）
-    - 无序列表（- 或 *）
-    - 有序列表（1. 2. 3.）
-
-    不支持：表格、代码块、删除线、任务列表等。
+    本类用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+    实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
     """
 
     IMG = "https://example.com/test.png"
 
-    def test_all_headings(self):
-        """所有六级标题语法"""
+    def test_headings_content_passthrough(self):
+        """验证 markdown 请求体原样透传六级标题语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "# 一级标题\n\n"
@@ -376,8 +375,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "## 二级标题" in data["markdown"]["text"]
         assert "###### 六级标题" in data["markdown"]["text"]
 
-    def test_bold_and_italic(self):
-        """加粗和斜体语法"""
+    def test_bold_italic_content_passthrough(self):
+        """验证 markdown 请求体原样透传加粗与斜体语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "**加粗文字** 和 *斜体文字* 以及 **加粗 *嵌套斜体* 文字**"
         dingtalk._prepare_data(title="文字效果", content=content, markdown=True)
@@ -386,8 +389,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "*斜体文字*" in data["markdown"]["text"]
         assert "**加粗 *嵌套斜体* 文字**" in data["markdown"]["text"]
 
-    def test_quote(self):
-        """引用语法"""
+    def test_quote_content_passthrough(self):
+        """验证 markdown 请求体原样透传引用语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "> 这是一段引用文字。\n> 引用可以有多行。"
         dingtalk._prepare_data(title="引用测试", content=content, markdown=True)
@@ -395,8 +402,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "> 这是一段引用文字。" in data["markdown"]["text"]
         assert "> 引用可以有多行。" in data["markdown"]["text"]
 
-    def test_link(self):
-        """链接语法"""
+    def test_link_content_passthrough(self):
+        """验证 markdown 请求体原样透传链接语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "请访问 [OnePush](https://github.com/y1ndan/onepush) 了解更多。\n"
@@ -407,16 +418,24 @@ class TestDingTalkMarkdownFullSyntax:
         assert "[OnePush](https://github.com/y1ndan/onepush)" in data["markdown"]["text"]
         assert "[钉钉文档](https://open.dingtalk.com/)" in data["markdown"]["text"]
 
-    def test_image(self):
-        """图片语法"""
+    def test_image_content_passthrough(self):
+        """验证 markdown 请求体原样透传图片语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = f"![示例图片]({self.IMG})"
         dingtalk._prepare_data(title="图片测试", content=content, markdown=True)
         data = dingtalk.data
         assert f"![示例图片]({self.IMG})" in data["markdown"]["text"]
 
-    def test_unordered_list(self):
-        """无序列表语法（- 和 *）"""
+    def test_unordered_list_content_passthrough(self):
+        """验证 markdown 请求体原样透传无序列表语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "- 第一项\n"
@@ -431,8 +450,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "- 第三项" in data["markdown"]["text"]
         assert "* 星号列表项1" in data["markdown"]["text"]
 
-    def test_ordered_list(self):
-        """有序列表语法"""
+    def test_ordered_list_content_passthrough(self):
+        """验证 markdown 请求体原样透传有序列表语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "1. 第一步：安装依赖\n"
@@ -445,8 +468,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "1. 第一步" in data["markdown"]["text"]
         assert "4. 第四步" in data["markdown"]["text"]
 
-    def test_full_syntax_combined(self):
-        """全语法组合测试：标题 + 引用 + 加粗斜体 + 链接 + 图片 + 列表 + @"""
+    def test_combined_syntax_content_passthrough(self):
+        """验证 markdown 请求体原样透传多语法组合内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "# OnePush 推送能力测试\n\n"
@@ -487,8 +514,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "1. 获取 Webhook" in data["markdown"]["text"]
         assert "###### 测试完成" in data["markdown"]["text"]
 
-    def test_unsupported_syntax_table(self):
-        """钉钉 Markdown 不支持表格语法（已知限制）"""
+    def test_markdown_table_content_passthrough(self):
+        """验证 markdown 请求体原样透传表格语法文本（内容透传契约）
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "| 列1 | 列2 |\n| --- | --- |\n| A | B |"
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
@@ -496,8 +527,12 @@ class TestDingTalkMarkdownFullSyntax:
         # 表格语法会原样发送，但钉钉不会渲染为表格
         assert "|" in data["markdown"]["text"]
 
-    def test_unsupported_syntax_code_block(self):
-        """钉钉 Markdown 不支持代码块语法（已知限制）"""
+    def test_markdown_code_block_content_passthrough(self):
+        """验证 markdown 请求体原样透传代码块语法文本（内容透传契约）
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "```python\nprint('hello')\n```"
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
