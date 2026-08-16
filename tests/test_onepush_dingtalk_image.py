@@ -2424,18 +2424,18 @@ class TestTwoPushDingTalkMasking:
         def fake_request(method, url, **kwargs):
             raise AssertionError("不应发起真实请求")
 
+        fake_response = unittest.mock.MagicMock()
+        fake_response.status_code = 200
+        fake_response.text = '{"errcode": 0, "errmsg": "ok"}'
+        fake_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+
         monkeypatch.setattr(notification, "request", fake_request)
         monkeypatch.setattr(
             notification, "_send_dingtalk_webhook",
-            lambda channel, title, content: unittest.mock.MagicMock(),
-        )
-        # 避免 _is_push_successful 访问未 mock 的 response 属性
-        monkeypatch.setattr(
-            notification, "_is_push_successful",
-            lambda response: (True, ""),
+            lambda channel, title, content, validated_url=None: fake_response,
         )
 
-        notification.send_notification(
+        result = notification.send_notification(
             "标题 13800138000",
             "内容",
             [
@@ -2449,6 +2449,7 @@ class TestTwoPushDingTalkMasking:
             logger=log,
         )
 
+        assert result == [("dingtalk", True)]
         messages = "\n".join(call.args[0] for call in log.info.call_args_list)
         assert "13800138000" not in messages
         assert "通知标题" not in messages
