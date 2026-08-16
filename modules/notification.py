@@ -619,6 +619,13 @@ def _is_push_successful(response, require_json_body=False):
     if response is None:
         return False, "未收到响应，请求可能已失败"
 
+    # OnePush SMTP 等 provider 直接返回 send_message() 的拒收字典：
+    # 空字典表示全部收件人已接受，非空字典表示存在被拒绝的收件人
+    if isinstance(response, dict):
+        if response:
+            return False, "部分收件人未被接受"
+        return True, ""
+
     status_code = getattr(response, 'status_code', None)
     if status_code is not None:
         if isinstance(status_code, bool) or not isinstance(status_code, int):

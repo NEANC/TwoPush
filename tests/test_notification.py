@@ -1937,3 +1937,27 @@ def test_is_push_successful_rejects_bool_status_code():
         JsonResponse({'errcode': 0}, status_code=200))
     assert success is True
     assert reason == ''
+
+
+def test_is_push_successful_empty_dict_means_success():
+    """OnePush SMTP 直接返回的空字典表示全部收件人被接受，应判成功"""
+    import modules.notification as notification
+
+    success, reason = notification._is_push_successful({})
+
+    assert success is True
+    assert reason == ''
+
+
+def test_is_push_successful_nonempty_dict_means_partial_rejection():
+    """OnePush SMTP 返回的非空拒收字典应判失败，且不回显收件人地址与拒绝详情"""
+    import modules.notification as notification
+
+    rejected = {'bad@example.com': (550, b'rejected')}
+    success, reason = notification._is_push_successful(rejected)
+
+    assert success is False
+    assert '部分收件人未被接受' in reason
+    assert 'bad@example.com' not in reason
+    assert '550' not in reason
+    assert 'rejected' not in reason
