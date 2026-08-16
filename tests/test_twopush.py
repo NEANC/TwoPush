@@ -404,6 +404,44 @@ def test_format_push_preview_masks_proxy_authentication():
     assert 'socks5://user:password@127.0.0.1:7890' not in preview
 
 
+def test_mask_proxy_authentication_malformed_port_returns_placeholder():
+    """代理端口非数字时应返回固定占位符而不抛异常"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:secret@proxy.test:notaport'
+    ) == '***'
+
+
+def test_format_push_preview_masks_proxy_malformed_port():
+    """推送预览对端口非数字的代理应输出占位符且不抛异常"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://alice:secret@proxy.test:notaport',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "***"' in preview
+    assert 'notaport' not in preview
+    assert 'alice:secret' not in preview
+
+
+def test_mask_proxy_authentication_keeps_wellformed_proxy_variants():
+    """合法代理（含端口、无端口、IPv6、无认证）脱敏行为应保持不变"""
+    assert TwoPush.mask_proxy_authentication(
+        'socks5://user:password@127.0.0.1:7890'
+    ) == 'socks5://***:***@127.0.0.1:7890'
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:pass@proxy.test'
+    ) == 'http://***:***@proxy.test'
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:pass@[::1]:8080'
+    ) == 'http://***:***@[::1]:8080'
+    assert TwoPush.mask_proxy_authentication(
+        'http://proxy.test:notaport'
+    ) == 'http://proxy.test:notaport'
+
+
 def test_format_push_preview_masks_proxy_query_sensitive_key():
     """推送预览应脱敏代理 URL query 中的敏感键值"""
     preview = TwoPush.format_push_preview(

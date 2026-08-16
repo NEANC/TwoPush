@@ -245,11 +245,16 @@ def mask_proxy_authentication(proxy):
         return proxy
 
     if has_auth:
+        try:
+            port = parsed.port
+        except ValueError:
+            # 畸形端口（非数字）无法安全重建 URL，返回固定脱敏占位符
+            return '***'
         host = parsed.hostname or ''
         if ':' in host and not host.startswith('['):
             host = f'[{host}]'
-        if parsed.port is not None:
-            host = f'{host}:{parsed.port}'
+        if port is not None:
+            host = f'{host}:{port}'
         netloc = f'***:***@{host}'
     else:
         netloc = parsed.netloc
