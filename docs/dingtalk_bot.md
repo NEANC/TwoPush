@@ -63,7 +63,7 @@ OnePush 1.9.0 自身对完整 HTTP URL 的处理事实仍可由 `onepush.provide
 
 ### 变通方案
 
-在 Markdown 消息中通过 `![图片](URL)` 语法嵌入图片，实测可行。图片 URL 必须能被钉钉客户端公开访问，不能使用本机路径、局域网地址或需要登录授权的地址。
+在 Markdown 消息中通过 `![图片](URL)` 语法嵌入图片，该能力结论来自历史人工验证，版本与请求配置未留存可核实证据，当前不可复现，自动化测试仅覆盖请求体构造。图片 URL 必须能被钉钉客户端公开访问，不能使用本机路径、局域网地址或需要登录授权的地址。
 
 **OnePush 方式：**
 
@@ -221,7 +221,7 @@ text 和 markdown 两种消息类型**都支持** @指定人和 @所有人，但
 }
 ```
 
-实测验证：在 Markdown 消息中，以下样式均能成功触发 @ 通知：
+历史人工记录：在 Markdown 消息中，以下样式均能成功触发 @ 通知（该提醒效果结论来自历史人工验证，版本与请求配置未留存可核实证据，当前不可复现，自动化测试仅覆盖请求体构造）：
 
 - `@138xxxx1234` 开头纯文本
 - `## 标题` 后紧接 `@138xxxx1234`
@@ -229,7 +229,7 @@ text 和 markdown 两种消息类型**都支持** @指定人和 @所有人，但
 
 ### @指定人：atUserIds 方式（需真实 userId）
 
-`atUserIds` 必须使用企业通讯录 API 返回的真实 userId，昵称或个人钉钉号无效。本文仅验证了请求体结构，尚未使用真实企业 userId 验证最终 @效果。
+`atUserIds` 必须使用企业通讯录中的真实 userId，昵称或个人钉钉号无效。本文仅验证了请求体结构，尚未使用真实企业 userId 验证最终 @效果。
 
 获取 userId 的方式：
 
@@ -363,7 +363,7 @@ check_serverchan_response(response)
 
 > **注意：** OnePush 的 ServerChan 提供者使用旧版 API 端点 (`sc.ftqq.com`)，不支持 `channel` 参数。如需指定通道，请直接调用 Server酱 新版 API（`sctapi.ftqq.com`）。
 
-### 实测结论
+### 历史人工验证结论
 
 | 能力 | 直接调用钉钉 | 经 Server酱 中转 | 说明 |
 |------|:-----------:|:----------------:|------|
@@ -371,11 +371,11 @@ check_serverchan_response(response)
 | Markdown 推送 | ✅ | ✅ | `desp` 字段支持 Markdown |
 | Markdown 图片 | ✅ | ✅ | `![img](url)` 语法 |
 | 加签安全设置 | ✅ | ❌ | Server酱 钉钉通道不提供或不传递钉钉加签能力 |
-| @所有人 | ✅ | ❌ 实测(3次) | Server酱 API 无 `at` 字段 |
-| @指定人(手机号) | ✅ | ❌ 实测(1次) | 同上 |
+| @所有人 | ✅ | ❌ 历史实测(3次) | Server酱 API 无 `at` 字段 |
+| @指定人(手机号) | ✅ | ❌ 历史实测(1次) | 同上 |
 | @指定人(userId) | 待实测 | ❌ | 同上 |
 
-**总结：** 经本次人工发送确认，Server酱 中转可以传递 Markdown 文本和图片，但不能传递钉钉加签配置或 `at` 字段。OnePush 的 ServerChan 提供者也不接受 `secret` 参数；需要钉钉加签或 @ 功能时，必须直接调用钉钉 Webhook。自动化测试仅验证本地请求数据结构，不替代真实网络投递验证。
+**总结：** 上述 Server酱 结论来自历史人工验证，版本与请求配置未留存可核实证据，当前不可复现，自动化测试仅覆盖请求体构造。经历史人工发送确认，Server酱 中转可以传递 Markdown 文本和图片，但不能传递钉钉加签配置或 `at` 字段。OnePush 的 ServerChan 提供者也不接受 `secret` 参数；需要钉钉加签或 @ 功能时，必须直接调用钉钉 Webhook。自动化测试仅验证本地请求数据结构，不替代真实网络投递验证。
 
 ## 请求完整示例
 
@@ -572,7 +572,7 @@ TwoPush 仅去除 `token` 首尾普通空格 U+0020，不会使用无参数 `str
 }
 ```
 
-TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文现有测试与实现核对限定为 OnePush 1.9.0；`requirements.txt` 允许的旧版本 `>=1.2.0` 是否保持该行为未获保证。完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 TwoPush 消费并完成唯一一次加签，最终 URL 中已有的 `timestamp`、`sign` 会被替换且各保留一个，OnePush 不会收到 `secret`，因而不会二次签名。
+TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文人工核对环境为 OnePush 1.9.0（见概述），该行为结论仅代表此版本下的实现事实；CI 测试矩阵在 OnePush 1.2.0、1.6.0 与当前最新版上运行钉钉相关测试（见 `.github/workflows/unit_test.yml`），用真实安装版本走到请求边界验证，旧版 request 签名差异由转发包装的 `*args` 透传兼容。完整 HTTP URL 会被 TwoPush 直接拒绝。`secret` 由 TwoPush 消费并完成唯一一次加签，最终 URL 中已有的 `timestamp`、`sign` 会被替换且各保留一个，OnePush 不会收到 `secret`，因而不会二次签名。
 
 **禁止自动重定向：** `dingtalk(onepush)` 路由同样禁止自动跟随重定向。TwoPush 会在发送前于 OnePush 钉钉实例上覆盖底层 `request`，在转发时强制将 `allow_redirects` 置为 `False`，即使上游未来显式传入 `allow_redirects=True` 也不会重新开启。该保证依赖 OnePush 支持实例级覆盖 `request`：`Provider.request` 为 `@staticmethod`，经实例访问得到不绑定 `self` 的底层函数，且 `Provider` 未声明 `__slots__`，故实例可安全覆盖；该结构在 OnePush 1.2.0~1.9.0 保持一致。跨版本的真正差异是 `Provider.request` 的签名：`proxies` 位置参数在 1.6.0 才加入，1.2.0~1.5.0 为 `def request(method, url, **kwargs)`，1.6.0 起为 `def request(method, url, proxies, **kwargs)`（1.6.0 的 `proxies` 为必填位置参数，1.7.0 起 `proxies` 才带默认值 `None`）。TwoPush 的转发包装以 `*args` 透传位置参数，因此同时兼容 1.2.0~1.9.0 的两种 request 签名。若实例缺少可调用的 `request`，TwoPush 会按配置错误拒绝发送（fail-closed），而不是回退到可能自动跟随重定向的不安全发送。
 
