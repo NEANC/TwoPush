@@ -910,7 +910,7 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
     """
     log = logger or LOGGER
     retry = retry_settings or {}
-    retry_interval = int(retry.get('interval', 3))
+    retry_interval = max(int(retry.get('interval', 3)), 0)
     max_count = max(int(retry.get('max_count', 3)), 1)
 
     if not channels:

@@ -289,6 +289,61 @@ def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
     assert 'dingtalk(builtin)' not in caplog.text
 
 
+def test_send_notification_negative_interval_normalized_to_zero(monkeypatch):
+    """负数重试间隔应归一化为 0，不抛 ValueError 并正常返回失败结果"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    log = mock.MagicMock()
+
+    result = notification.send_notification(
+        title='标题',
+        content='正文',
+        channels=[{'provider': 'serverchan'}],
+        retry_settings={'interval': -1, 'max_count': 2},
+        logger=log,
+    )
+
+    assert result == [('serverchan', False)]
+    assert log.error.call_count == 2
+    assert '通道 [serverchan] 通知发送失败' in log.error.call_args[0][0]
+
+
+def test_send_notification_positive_interval_keeps_retry_behavior(monkeypatch):
+    """合法正数重试间隔行为不变：按 max_count 重试并按间隔休眠"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification.send_notification(
+        title='标题',
+        content='正文',
+        channels=[{'provider': 'serverchan'}],
+        retry_settings={'interval': 2, 'max_count': 2},
+        logger=log,
+    )
+
+    assert result == [('serverchan', False)]
+    assert sleep.call_count == 1
+    assert sleep.call_args[0][0] == 2
+    assert log.error.call_count == 2
+
+
 def test_config_error_value_error_is_not_retried():
     """配置性 ValueError（如缺 token）应记录一次错误后直接返回 False，不进入重试"""
     import modules.notification as notification
