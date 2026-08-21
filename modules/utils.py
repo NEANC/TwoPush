@@ -34,6 +34,10 @@ CHANNEL_KEY_ALIASES = {
 # 受限解码的输入长度上限：超过该长度不再做解码检测，直接按原文脱敏
 _MAX_DECODE_LENGTH = 4096
 
+# 正则扫描窗口与重叠长度，重叠区用于覆盖窗口边界上的键名和值
+_MAX_SCAN_WINDOW = 4096
+_SCAN_OVERLAP = 256
+
 # 合法十六进制字符集合，用于识别严格的 %HH 编码序列
 _HEX_DIGITS = '0123456789abcdefABCDEF'
 
@@ -141,6 +145,34 @@ def _replace_sensitive_key_value(match):
     if separator.lstrip().startswith('%'):
         return f'{prefix}{separator}***'
     return f'{prefix}=***'
+
+
+def _bounded_sub(pattern, replacement, value):
+    """在受控窗口内执行正则替换，并合并窗口重叠区的重复匹配。"""
+    if len(value) <= _MAX_SCAN_WINDOW:
+        return pattern.sub(replacement, value)
+
+    matches = {}
+    step = _MAX_SCAN_WINDOW - _SCAN_OVERLAP
+    for window_start in range(0, len(value), step):
+        window_end = min(window_start + _MAX_SCAN_WINDOW, len(value))
+        window = value[window_start:window_end]
+        core_end = window_end
+        if window_end < len(value):
+            core_end -= _SCAN_OVERLAP
+        for match in pattern.finditer(window):
+            start, end = match.span()
+            absolute_start = window_start + start
+            absolute_end = window_start + end
+            if window_start <= absolute_start < core_end:
+                previous = matches.get(absolute_start)
+                if previous is None or absolute_end > previous[0]:
+                    matches[absolute_start] = (absolute_end, match)
+
+    result = value
+    for start, (end, match) in sorted(matches.items(), reverse=True):
+        result = result[:start] + replacement(match) + result[end:]
+    return result
 
 
 def _percent_decode_once(value):
@@ -365,11 +397,17 @@ def mask_sensitive_fields(fields, sensitive_fields):
         if field not in result or result[field] is None:
             continue
         value = str(result[field])
-        value = re.sub(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
+        value = _bounded_sub(
+            re.compile(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)'),
+            lambda match: f'{match.group(1)}****{match.group(2)}',
+            value,
+        )
         decoded, spans = _decode_once_with_spans(value)
         if spans is None:
-            value = _URL_USERINFO_RE.sub(_replace_url_userinfo, value)
-            value = _SENSITIVE_KEY_VALUE_RE.sub(_replace_sensitive_key_value, value)
+            value = _bounded_sub(_URL_USERINFO_RE, _replace_url_userinfo, value)
+            value = _bounded_sub(
+                _SENSITIVE_KEY_VALUE_RE, _replace_sensitive_key_value, value
+            )
         else:
             value = _mask_decoded_variants(value, decoded, spans)
         result[field] = value

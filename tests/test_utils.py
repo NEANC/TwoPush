@@ -5,6 +5,7 @@
 
 import pytest
 
+import modules.utils as utils
 from modules.utils import mask_sensitive_fields
 
 
@@ -592,6 +593,51 @@ def test_long_double_percent_encoded_sensitive_key_value_is_masked():
 
     assert 'LEAKED' not in result
     assert result.endswith('access%255Ftoken%253D***')
+
+
+def test_sensitive_regex_scans_long_text_within_bounded_windows(monkeypatch):
+    """长文本脱敏时每次正则扫描均不得超过受控窗口"""
+    scanned_lengths = []
+    original_regex = utils._SENSITIVE_KEY_VALUE_RE
+
+    class RecordingRegex:
+        def finditer(self, value):
+            scanned_lengths.append(len(value))
+            return original_regex.finditer(value)
+
+        def sub(self, replacement, value):
+            scanned_lengths.append(len(value))
+            return original_regex.sub(replacement, value)
+
+    monkeypatch.setattr(utils, '_SENSITIVE_KEY_VALUE_RE', RecordingRegex())
+    value = ('x' * 100000) + ' access%255Ftoken%253DLEAKED'
+
+    result = mask_sensitive_fields({'reason': value}, {'reason'})['reason']
+
+    assert 'LEAKED' not in result
+    assert scanned_lengths
+    assert max(scanned_lengths) <= 4096
+
+
+def test_sensitive_regex_masks_value_when_key_crosses_scan_window(monkeypatch):
+    """敏感值跨越扫描窗口时仍应完整脱敏"""
+    original_regex = utils._SENSITIVE_KEY_VALUE_RE
+
+    class RecordingRegex:
+        def finditer(self, value):
+            return original_regex.finditer(value)
+
+        def sub(self, replacement, value):
+            return original_regex.sub(replacement, value)
+
+    monkeypatch.setattr(utils, '_SENSITIVE_KEY_VALUE_RE', RecordingRegex())
+    prefix = 'x' * 4090
+    value = prefix + ' access_token=LEAKED'
+
+    result = mask_sensitive_fields({'reason': value}, {'reason'})['reason']
+
+    assert result.endswith('access_token=***')
+    assert 'LEAKED' not in result
 
 
 def test_single_layer_percent_encoding_keeps_original_encoding_form():
