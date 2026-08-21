@@ -708,6 +708,7 @@ def test_generated_update_scripts_use_injected_absolute_paths(tmp_path):
         app_name='TwoPush',
         current_version='v1.0.0',
         proxy='',
+        temp_folder=str(tmp_path / 'temp'),
         logger=logging.getLogger('test_generated_update_scripts_paths'),
     )
     paths = _make_update_runtime_paths(updater, tmp_path)
@@ -745,6 +746,7 @@ def test_generated_update_scripts_are_bom_encoded_and_keep_key_functions(tmp_pat
         app_name='TwoPush',
         current_version='v1.0.0',
         proxy='',
+        temp_folder=str(tmp_path / 'temp'),
         logger=logging.getLogger('test_generated_update_scripts'),
     )
 
