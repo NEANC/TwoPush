@@ -15,6 +15,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.notification import send_notification
+from tests import make_mobile_number, mask_mobile_number
 
 
 class RecordingExecutor:
@@ -178,8 +179,10 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
     """失败日志应区分路由分支并对失败原因脱敏"""
     import modules.notification as notification
 
+    mobile = make_mobile_number()
+
     def fail_notify(*args, **kwargs):
-        raise RuntimeError('手机号 13800138000 access_token=abc sign=xyz secret=SECa')
+        raise RuntimeError(f'手机号 {mobile} access_token=abc sign=xyz secret=SECa')
 
     monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
         'Notifier', (), {
@@ -198,11 +201,11 @@ def test_send_notification_failure_logs_branch_tag_and_masks_reason(monkeypatch,
 
     assert result == [('dingtalk', False)]
     assert '通道 [dingtalk(onepush)] 通知发送失败' in caplog.text
-    assert '138****8000' in caplog.text
+    assert mask_mobile_number(mobile) in caplog.text
     assert 'access_token=***' in caplog.text
     assert 'sign=***' in caplog.text
     assert 'secret=***' in caplog.text
-    assert '13800138000' not in caplog.text
+    assert mobile not in caplog.text
     assert 'access_token=abc' not in caplog.text
     assert '已超过最大重试次数' not in caplog.text
 
@@ -232,7 +235,7 @@ def test_is_mobile_number_accepts_valid_mobile_segments():
     """11 位且第二位为 3-9 的数字应判定为手机号"""
     from modules.notification import _is_mobile_number
 
-    assert _is_mobile_number('13800138000') is True
+    assert _is_mobile_number(make_mobile_number()) is True
 
 
 def test_is_mobile_number_rejects_other_segments():
@@ -257,11 +260,13 @@ def test_is_mobile_number_accepts_country_code_prefix():
     """带 +86/86 前缀的 11 位手机号应判定为手机号"""
     from modules.notification import _is_mobile_number
 
-    assert _is_mobile_number('+8613800138000') is True
-    assert _is_mobile_number('8613800138000') is True
-    assert _is_mobile_number('13800138000') is True
+    mobile = make_mobile_number()
+
+    assert _is_mobile_number(f'+86{mobile}') is True
+    assert _is_mobile_number(f'86{mobile}') is True
+    assert _is_mobile_number(mobile) is True
     assert _is_mobile_number('+8612000000000') is False
-    assert _is_mobile_number('861380013800') is False
+    assert _is_mobile_number(f'86{mobile[:-1]}') is False
 
 
 def test_other_provider_failure_keeps_original_provider(monkeypatch, caplog):
