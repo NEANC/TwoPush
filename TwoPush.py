@@ -13,7 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
-from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote_plus, unquote_plus, urlencode, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -213,17 +213,29 @@ def _mask_proxy_query(query):
     """
     if not query:
         return query
-    try:
-        pairs = parse_qsl(query, keep_blank_values=True)
-    except Exception:
+    masked_parts = []
+    has_sensitive_key = False
+    for part in query.split('&'):
+        key, separator, value = part.partition('=')
+        decoded_key = key
+        decode_count = 0
+        for _ in range(2):
+            next_key = unquote_plus(decoded_key)
+            if next_key == decoded_key:
+                break
+            decoded_key = next_key
+            decode_count += 1
+        if decoded_key.strip().lower() in _PROXY_SENSITIVE_QUERY_KEYS:
+            has_sensitive_key = True
+            output_key = decoded_key if decode_count == 1 else key
+            masked_parts.append(
+                f'{output_key}{separator}***' if separator else f'{output_key}=***'
+            )
+        else:
+            masked_parts.append(part)
+    if not has_sensitive_key:
         return query
-    masked = [
-        (key, '***' if key.strip().lower() in _PROXY_SENSITIVE_QUERY_KEYS else value)
-        for key, value in pairs
-    ]
-    if all(mask == orig for mask, orig in zip(masked, pairs)):
-        return query
-    return urlencode(masked, quote_via=_quote_proxy_query)
+    return '&'.join(masked_parts)
 
 
 def mask_proxy_authentication(proxy):

@@ -498,6 +498,13 @@ def test_format_push_preview_masks_proxy_query_sensitive_key():
     assert 'QUERY' not in preview
 
 
+def test_mask_proxy_authentication_masks_double_encoded_sensitive_query_key():
+    """代理 URL query 键名双层编码时也应脱敏敏感值"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://proxy.test:8080?access%255Ftoken=QUERY&name=value'
+    ) == 'http://proxy.test:8080?access%255Ftoken=***&name=value'
+
+
 def test_format_push_preview_masks_proxy_query_sensitive_key_case_insensitive():
     """代理 URL query 敏感键匹配应大小写不敏感"""
     preview = TwoPush.format_push_preview(
