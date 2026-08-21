@@ -565,6 +565,16 @@ def test_double_percent_encoded_sensitive_key_value_is_masked():
     assert '***' in result
 
 
+def test_double_percent_encoded_sensitive_value_is_masked():
+    """双层编码敏感键值中的值应在有限层级解码后脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': 'access%255Ftoken%253DLEAK%2526sign%253DSIGNED'},
+        {'reason'},
+    )['reason']
+
+    assert result == 'access%255Ftoken%253D***%2526sign%253D***'
+
+
 def test_double_percent_encoded_key_char_is_masked():
     """双层编码键名字符（%2577 解码一层为 %77 即 w）应脱敏"""
     result = mask_sensitive_fields(

@@ -110,7 +110,7 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
         (?P<single_value>(?:[^'\\]|\\[\s\S])*\\?)
         (?P<single_close>'|$)
         |
-        (?P<bare_value>[^"'\s,}}\]]+)
+        (?P<bare_value>[^"'\s,&}}\]]+)
     )
     ''',
     flags=re.IGNORECASE | re.VERBOSE,
@@ -310,6 +310,26 @@ def _decode_once_with_spans(value):
     return ''.join(decoded_chars), spans
 
 
+def _decode_limited_with_spans(value, max_depth=2):
+    """执行有限层级百分号解码，并保留解码副本到原文的区间映射。"""
+    decoded = value
+    spans = [(index, index + 1) for index in range(len(value))]
+    changed = False
+
+    for _ in range(max_depth):
+        next_decoded, next_spans = _decode_once_with_spans(decoded)
+        if next_spans is None:
+            break
+        spans = [
+            (spans[start][0], spans[end - 1][1])
+            for start, end in next_spans
+        ]
+        decoded = next_decoded
+        changed = True
+
+    return decoded, spans if changed else None
+
+
 def _original_span_text(original, spans, match, group_name):
     """取解码副本正则匹配分组对应的原文文本片段
 
@@ -457,7 +477,7 @@ def mask_sensitive_fields(fields, sensitive_fields):
             lambda match: f'{match.group(1)}****{match.group(2)}',
             value,
         )
-        decoded, spans = _decode_once_with_spans(value)
+        decoded, spans = _decode_limited_with_spans(value)
         if spans is None:
             value = _bounded_sub(
                 _URL_USERINFO_RE,
