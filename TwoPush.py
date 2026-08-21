@@ -250,7 +250,10 @@ def mask_proxy_authentication(proxy):
     if not proxy:
         return proxy
 
-    parsed = urlsplit(proxy)
+    try:
+        parsed = urlsplit(proxy)
+    except ValueError:
+        return '***'
     has_auth = bool(parsed.username) or parsed.password is not None
     masked_query = _mask_proxy_query(parsed.query)
     if not has_auth and masked_query == parsed.query and not parsed.fragment:

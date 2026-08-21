@@ -453,6 +453,13 @@ def test_mask_proxy_authentication_malformed_port_returns_placeholder():
     ) == '***'
 
 
+def test_mask_proxy_authentication_malformed_ipv6_returns_placeholder():
+    """代理 IPv6 地址畸形时应返回固定占位符而不抛异常"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:secret@[2001:db8::1'
+    ) == '***'
+
+
 def test_format_push_preview_masks_proxy_malformed_port():
     """推送预览对端口非数字的代理应输出占位符且不抛异常"""
     preview = TwoPush.format_push_preview(
