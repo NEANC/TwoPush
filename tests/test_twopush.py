@@ -322,48 +322,6 @@ def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
     assert captured['retry_settings']['max_count'] == 3
 
 
-def test_format_push_preview_keeps_existing_shape_and_content():
-    """推送预览应保持既有字段结构，不混入通道分支信息"""
-    preview = TwoPush.format_push_preview(
-        title='每日报告 - HOST',
-        content='截止 2026/07/12 12:00:00，系统运行正常',
-        proxy='http://127.0.0.1:7890',
-        retry_settings={'interval': 5, 'max_count': 2},
-        channels=[{'provider': 'dingtalk'}],
-    )
-
-    assert 'branch=' not in preview
-    assert 'dingtalk(onepush)' not in preview
-    assert 'dingtalk(builtin)' not in preview
-    assert '每日报告 - HOST' in preview
-
-
-def test_execute_push_sends_original_title_and_content_after_preview_masking(
-        monkeypatch, tmp_path):
-    """预览脱敏后实际发送仍应使用原始标题和正文"""
-    original_title = '标题 13800138000'
-    original_content = '# 测试推送\n\n正文 access_token=raw-token'
-    captured = {}
-
-    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
-        'title': original_title,
-        'content': original_content,
-        'channels': [{'provider': 'dingtalk'}],
-    })
-    monkeypatch.setattr(
-        TwoPush,
-        'send_notification',
-        lambda **kwargs: captured.update(kwargs) or [('dingtalk', True)],
-    )
-    monkeypatch.setattr(TwoPush, 'resolve_proxy', lambda template, config: None)
-
-    result = TwoPush.execute_push(str(tmp_path / 'push.json'), object(), object())
-
-    assert result == 0
-    assert captured['title'] == original_title
-    assert captured['content'] == original_content
-
-
 def test_execute_push_logs_rendered_push_preview_before_send(monkeypatch, caplog):
     """execute_push 应在发送前记录渲染后的推送预览"""
     monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
@@ -1469,7 +1427,7 @@ def test_main_push_failed_exits_before_update(monkeypatch, tmp_path, mock_cleanu
     assert 'auto_check' not in call_log
 
 
-def test_format_push_preview_keeps_existing_shape_and_content():
+def test_format_push_preview_preserves_dingtalk_route_label():
     """推送预览应保持原有结构，不新增分支字段"""
     preview = TwoPush.format_push_preview(
         title='每日报告 - HOST',
@@ -1531,7 +1489,7 @@ def test_format_push_preview_still_masks_string_values():
     assert '13800138000' not in preview
 
 
-def test_execute_push_sends_original_title_and_content_after_preview_masking(
+def test_execute_push_uses_original_content_after_preview_masking(
         monkeypatch, tmp_path):
     """推送预览脱敏不应影响实际发送参数，发送仍用原始 title/content"""
     original_title = '标题 13800138000'
