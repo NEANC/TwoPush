@@ -605,7 +605,7 @@ TwoPush 依赖 OnePush 对小写 HTTPS 完整 URL 的复用行为。本文人工
       "token": "https://oapi.dingtalk.com/robot/send?access_token=yyy",
       "secret": "SECyyy",
       "msgtype": "markdown",
-      "at": ["13900139000"]
+      "at": ["138xxxx1234"]
     }
   ]
 }
@@ -623,8 +623,8 @@ TwoPush 默认只支持手机号 @。`at` 可写为字符串或数组，程序�
 
 `at` 支持以下写法：
 
-- 字符串或数组：`"at": "13800138000"` 或 `"at": ["13800138000"]`，程序归一为 `atMobiles`
-- 字典：`"at": {"atMobiles": ["13800138000"], "isAtAll": true}`
+- 字符串或数组：`"at": "138xxxx1234"` 或 `"at": ["138xxxx1234"]`，程序归一为 `atMobiles`
+- 字典：`"at": {"atMobiles": ["138xxxx1234"], "isAtAll": true}`
 - 顶层键：`at_mobiles` / `atMobiles`（手机号数组）、`is_at_all` / `isAtAll`（@ 全员）
 
 @ 全员（`isAtAll`）的布尔解析规则：布尔值原样生效；字符串 `true`、`1`、`yes`、`on`（大小写不敏感）视为真，其余字符串（含 `false`、`0`、`no`、`off`）视为假。`at` 字典内部的 `isAtAll` 与顶层 `is_at_all`/`isAtAll` 取或生效。
