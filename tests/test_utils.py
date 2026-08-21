@@ -584,6 +584,16 @@ def test_double_percent_encoded_separator_is_masked():
     assert '***' in result
 
 
+def test_long_double_percent_encoded_sensitive_key_value_is_masked():
+    """超过解码上限的文本中双层百分号编码敏感键值仍应脱敏"""
+    original = ('x' * 4097) + ' access%255Ftoken%253DLEAKED'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert 'LEAKED' not in result
+    assert result.endswith('access%255Ftoken%253D***')
+
+
 def test_single_layer_percent_encoding_keeps_original_encoding_form():
     """单层编码防回归：保留编码形式、只替换值"""
     result = mask_sensitive_fields(

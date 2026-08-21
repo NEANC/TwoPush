@@ -54,8 +54,8 @@ def _percent_encoded_variant(ch):
         str: 匹配该字符明文或百分号编码形式的正则片段
     """
     if ch == '_':
-        return r'(?:_|%5F)'
-    return rf'(?:{re.escape(ch)}|%{ord(ch):02X})'
+        return r'(?:_|%5F|%255F)'
+    return rf'(?:{re.escape(ch)}|%{ord(ch):02X}|%25{ord(ch):02X})'
 
 
 def _sensitive_key_regex(name):
@@ -96,7 +96,7 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
     (?P<leading_quote>["']?)
     (?P<key>{_SENSITIVE_KEY_PATTERN})
     (?P<trailing_quote>["']?)
-    (?P<separator>\s*(?:=|:|%3[Dd]|%3[Aa])\s*)
+    (?P<separator>\s*(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])\s*)
     (?:
         (?P<double_open>")
         (?P<double_value>(?:[^"\\]|\\[\s\S])*\\?)
@@ -337,10 +337,9 @@ def mask_sensitive_fields(fields, sensitive_fields):
     同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
     键名中任意单个字符均允许以百分号编码形式出现（如 access_%74oken、
     %61ccess_token，hex 字母大小写均可匹配），脱敏时保留其编码形式
-    只替换值；检测前会对值执行最多一层的受限百分号解码，双重编码
-    （如 %253D、%255F 解码一层后为 %3D、%5F）亦可被脱敏，三层及以上
-    仍为已知边界，日志脱敏属纵深防御，对攻击者完全可控的错误文本
-    无法穷尽编码层级；
+    只替换值；双层编码的键名与分隔符由固定深度正则直接识别，不受
+    解码长度上限影响；其余检测会对不超过 4096 字符的值执行最多一层
+    受限百分号解码，以限制解码副本资源，三层及以上编码仍为已知边界；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
     未声明字段与 None 值原样保留
@@ -369,11 +368,9 @@ def mask_sensitive_fields(fields, sensitive_fields):
         value = re.sub(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)', r'\1****\2', value)
         decoded, spans = _decode_once_with_spans(value)
         if spans is None:
-            # 无解码差异：直接在原文上替换，与既有行为完全一致
             value = _URL_USERINFO_RE.sub(_replace_url_userinfo, value)
             value = _SENSITIVE_KEY_VALUE_RE.sub(_replace_sensitive_key_value, value)
         else:
-            # 存在单层解码差异：在解码副本上检测，将命中片段映射回原文替换
             value = _mask_decoded_variants(value, decoded, spans)
         result[field] = value
     return result
