@@ -23,8 +23,15 @@ import pytest
 from onepush import get_notifier
 from onepush.providers.dingtalk import DingTalk
 
+from tests import make_mobile_number, mask_mobile_number
+
 # 测试用的图片 URL（公开可访问的示例图片）
 TEST_IMAGE_URL = "https://img.alicdn.com/tfs/TB1NwmBEL9TBuNjy1zbXXXpepXa-2400-1218.png"
+
+# 手机号样本在导入时随机生成，避免仓库内出现完整号码字面量
+MOBILE = make_mobile_number()
+MOBILE_ALT = make_mobile_number(exclude=(MOBILE,))
+MOBILE_MASKED = mask_mobile_number(MOBILE)
 
 
 class TestDingTalkProviderParams:
@@ -663,7 +670,7 @@ class TestTwoPushDingTalkRouting:
                 "provider": "dingtalk",
                 "token": "token-only",
                 "msgtype": "markdown",
-                "at": ["13800138000"],
+                "at": [MOBILE],
             },
             "标题",
             "内容",
@@ -698,7 +705,7 @@ class TestIsEnhancedDingtalkChannel:
         from modules.notification import _is_enhanced_dingtalk_channel
 
         assert _is_enhanced_dingtalk_channel(
-            "dingtalk", {"at": ["13800138000"]}
+            "dingtalk", {"at": [MOBILE]}
         ) is True
         assert _is_enhanced_dingtalk_channel(
             "dingtalk", {"msgtype": "markdown"}
@@ -709,7 +716,7 @@ class TestIsEnhancedDingtalkChannel:
         from modules.notification import _is_enhanced_dingtalk_channel
 
         assert _is_enhanced_dingtalk_channel(
-            "serverchan", {"at": ["13800138000"]}
+            "serverchan", {"at": [MOBILE]}
         ) is False
 
 
@@ -1603,18 +1610,18 @@ class TestTwoPushDingTalkAt:
         """字符串 at 应归一为 atMobiles。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": "13800138000"})
+        at = _normalize_dingtalk_at({"at": MOBILE})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_list_at_normalizes_to_mobile_list(self):
         """数组 at 应归一为 atMobiles。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": ["13800138000", "13900139000"]})
+        at = _normalize_dingtalk_at({"at": [MOBILE, MOBILE_ALT]})
 
         assert at == {
-            "atMobiles": ["13800138000", "13900139000"],
+            "atMobiles": [MOBILE, MOBILE_ALT],
             "isAtAll": False,
         }
 
@@ -1622,45 +1629,45 @@ class TestTwoPushDingTalkAt:
         """带 +86/86 前缀的手机号应归一化为纯号段进入 atMobiles。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": ["+8613800138000"]})
+        at = _normalize_dingtalk_at({"at": [f"+86{MOBILE}"]})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
-        at = _normalize_dingtalk_at({"at": ["8613800138000", "13900139000"]})
+        at = _normalize_dingtalk_at({"at": [f"86{MOBILE}", MOBILE_ALT]})
 
-        assert at["atMobiles"] == ["13800138000", "13900139000"]
+        assert at["atMobiles"] == [MOBILE, MOBILE_ALT]
 
     def test_dict_at_mobiles_is_supported(self):
         """字典 at.atMobiles 应被支持。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": {"atMobiles": ["13800138000"]}})
+        at = _normalize_dingtalk_at({"at": {"atMobiles": [MOBILE]}})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_at_mobiles_alias_is_supported(self):
         """at_mobiles 别名应被支持。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at_mobiles": ["13800138000"]})
+        at = _normalize_dingtalk_at({"at_mobiles": [MOBILE]})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_numeric_at_normalizes_to_mobile_list(self):
         """数字 at 应转字符串归一为 atMobiles。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": 13800138000})
+        at = _normalize_dingtalk_at({"at": int(MOBILE)})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_numeric_at_mobiles_alias_works(self):
         """数字 at_mobiles 别名应转字符串生效。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at_mobiles": 13800138000})
+        at = _normalize_dingtalk_at({"at_mobiles": int(MOBILE)})
 
-        assert at["atMobiles"] == ["13800138000"]
+        assert at["atMobiles"] == [MOBILE]
 
     def test_non_mobile_numeric_at_is_filtered(self):
         """非手机号数字 at 应被过滤，不进入 atMobiles。"""
@@ -1682,20 +1689,20 @@ class TestTwoPushDingTalkAt:
         """正文缺少 @手机号 时应自动补齐。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
-        text = _append_missing_dingtalk_mentions("通知内容", ["13800138000"])
+        text = _append_missing_dingtalk_mentions("通知内容", [MOBILE])
 
-        assert text == "通知内容\n\n@13800138000"
+        assert text == f"通知内容\n\n@{MOBILE}"
 
     def test_existing_mobile_mentions_are_not_duplicated(self):
         """正文已有 @手机号 时不应重复补齐。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
         text = _append_missing_dingtalk_mentions(
-            "通知内容\n\n@13800138000",
-            ["13800138000"],
+            f"通知内容\n\n@{MOBILE}",
+            [MOBILE],
         )
 
-        assert text.count("@13800138000") == 1
+        assert text.count(f"@{MOBILE}") == 1
 
     @pytest.mark.parametrize(
         "format_character",
@@ -1718,7 +1725,7 @@ class TestTwoPushDingTalkAt:
     @pytest.mark.parametrize(
         ("mention", "mobiles", "is_at_all"),
         [
-            ("@13800138000", ["13800138000"], False),
+            (f"@{MOBILE}", [MOBILE], False),
             ("@所有人", [], True),
         ],
     )
@@ -1742,7 +1749,7 @@ class TestTwoPushDingTalkAt:
     @pytest.mark.parametrize(
         ("mention", "mobiles", "is_at_all"),
         [
-            ("@13800138000", ["13800138000"], False),
+            (f"@{MOBILE}", [MOBILE], False),
             ("@所有人", [], True),
         ],
     )
@@ -1760,41 +1767,35 @@ class TestTwoPushDingTalkAt:
         assert text == f"{content}\n\n{mention}"
 
     @pytest.mark.parametrize(
-        "content",
-        [
-            "通知内容 @138001380001",
-            "通知内容 @13800138000abc",
-            "通知内容 @13800138000_",
-            "通知内容 @13800138000１",
-            "通知内容 @13800138000é",
-            "通知内容 @13800138000中",
-            "通知内容 @13800138000\u0301",
-        ],
+        "suffix",
+        ["1", "abc", "_", "１", "é", "中", "\u0301"],
     )
-    def test_mobile_mention_followed_by_unicode_word_is_not_independent(self, content):
+    def test_mobile_mention_followed_by_unicode_word_is_not_independent(self, suffix):
         """手机号提醒后紧跟 Unicode 单词字符或组合符时应补齐独立提醒。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
-        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+        content = f"通知内容 @{MOBILE}{suffix}"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
 
-        assert text == f"{content}\n\n@13800138000"
+        assert text == f"{content}\n\n@{MOBILE}"
 
     @pytest.mark.parametrize(
-        "content",
+        "template",
         [
-            "通知内容 @13800138000，已发送",
-            "通知内容 @13800138000 已发送",
-            "通知内容\n@13800138000",
-            "@13800138000 通知内容",
-            "通知内容 @13800138000\r\n下一行",
-            "通知内容 @13800138000😀已发送",
+            "通知内容 @{mobile}，已发送",
+            "通知内容 @{mobile} 已发送",
+            "通知内容\n@{mobile}",
+            "@{mobile} 通知内容",
+            "通知内容 @{mobile}\r\n下一行",
+            "通知内容 @{mobile}😀已发送",
         ],
     )
-    def test_mobile_mention_with_independent_boundary_is_not_duplicated(self, content):
+    def test_mobile_mention_with_independent_boundary_is_not_duplicated(self, template):
         """手机号提醒位于文本边界或后接分隔字符时不应重复补齐。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
-        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+        content = template.format(mobile=MOBILE)
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
 
         assert text == content
 
@@ -1841,18 +1842,18 @@ class TestTwoPushDingTalkAt:
         from modules.notification import _append_missing_dingtalk_mentions
 
         text = _append_missing_dingtalk_mentions(
-            "通知内容 @13800138000，关联 @13900139000abc",
-            ["13800138000", "13900139000"],
+            f"通知内容 @{MOBILE}，关联 @{MOBILE_ALT}abc",
+            [MOBILE, MOBILE_ALT],
         )
 
-        assert text == "通知内容 @13800138000，关联 @13900139000abc\n\n@13900139000"
+        assert text == f"通知内容 @{MOBILE}，关联 @{MOBILE_ALT}abc\n\n@{MOBILE_ALT}"
 
     def test_later_independent_mention_is_found_after_invalid_candidate(self):
         """先出现无效候选时仍应识别后续独立提醒。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
-        content = "通知内容 @13800138000\u200d后缀，随后 @13800138000。"
-        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+        content = f"通知内容 @{MOBILE}\u200d后缀，随后 @{MOBILE}。"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
 
         assert text == content
 
@@ -1861,8 +1862,8 @@ class TestTwoPushDingTalkAt:
         """孤立代理字符作为边界时扫描不应崩溃。"""
         from modules.notification import _append_missing_dingtalk_mentions
 
-        content = f"通知内容 @13800138000{surrogate}"
-        text = _append_missing_dingtalk_mentions(content, ["13800138000"])
+        content = f"通知内容 @{MOBILE}{surrogate}"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
 
         assert text == content
 
@@ -1870,17 +1871,17 @@ class TestTwoPushDingTalkAt:
         """重复手机号应去重且保持顺序。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": ["13800138000", "13900139000", "13800138000"]})
+        at = _normalize_dingtalk_at({"at": [MOBILE, MOBILE_ALT, MOBILE]})
 
-        assert at["atMobiles"] == ["13800138000", "13900139000"]
+        assert at["atMobiles"] == [MOBILE, MOBILE_ALT]
 
     def test_at_mobiles_camel_case_alias_is_supported(self):
         """atMobiles 驼峰别名应被支持。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"atMobiles": ["13800138000"]})
+        at = _normalize_dingtalk_at({"atMobiles": [MOBILE]})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_is_at_all_flags_are_passed_through(self):
         """is_at_all 与 isAtAll 应传递到 at 结构。"""
@@ -1888,15 +1889,15 @@ class TestTwoPushDingTalkAt:
 
         assert _normalize_dingtalk_at({"is_at_all": True})["isAtAll"] is True
         assert _normalize_dingtalk_at({"isAtAll": True})["isAtAll"] is True
-        assert _normalize_dingtalk_at({"at": ["13800138000"]})["isAtAll"] is False
+        assert _normalize_dingtalk_at({"at": [MOBILE]})["isAtAll"] is False
 
     def test_non_mobile_values_are_filtered_out(self):
         """非手机号值应被过滤，不进入 atMobiles。"""
         from modules.notification import _normalize_dingtalk_at
 
-        at = _normalize_dingtalk_at({"at": ["13800138000", "alice", "userId123"]})
+        at = _normalize_dingtalk_at({"at": [MOBILE, "alice", "userId123"]})
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": False}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
 
     def test_is_at_all_string_false_is_parsed_as_false(self):
         """字符串形式的 false 不应被判定为 @全员。"""
@@ -1919,10 +1920,10 @@ class TestTwoPushDingTalkAt:
         from modules.notification import _normalize_dingtalk_at
 
         at = _normalize_dingtalk_at(
-            {"at": {"atMobiles": ["13800138000"], "isAtAll": True}}
+            {"at": {"atMobiles": [MOBILE], "isAtAll": True}}
         )
 
-        assert at == {"atMobiles": ["13800138000"], "isAtAll": True}
+        assert at == {"atMobiles": [MOBILE], "isAtAll": True}
         assert _normalize_dingtalk_at({"at": {"isAtAll": True}})["isAtAll"] is True
 
     def test_dict_at_is_at_all_merges_with_top_level(self):
@@ -1951,7 +1952,7 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "markdown", "at": ["13800138000"]},
+            {"msgtype": "markdown", "at": [MOBILE]},
             "通知标题",
             "## 通知内容",
         )
@@ -1959,9 +1960,9 @@ class TestTwoPushDingTalkPayload:
         assert payload["msgtype"] == "markdown"
         assert payload["markdown"]["title"] == "通知标题"
         assert "## 通知内容" in payload["markdown"]["text"]
-        assert "@13800138000" in payload["markdown"]["text"]
+        assert f"@{MOBILE}" in payload["markdown"]["text"]
         assert payload["at"] == {
-            "atMobiles": ["13800138000"],
+            "atMobiles": [MOBILE],
             "isAtAll": False,
         }
 
@@ -1970,7 +1971,7 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "text", "at": ["13800138000"]},
+            {"msgtype": "text", "at": [MOBILE]},
             "通知标题",
             "通知内容",
         )
@@ -1978,8 +1979,8 @@ class TestTwoPushDingTalkPayload:
         assert payload["msgtype"] == "text"
         assert "通知标题" in payload["text"]["content"]
         assert "通知内容" in payload["text"]["content"]
-        assert "@13800138000" in payload["text"]["content"]
-        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert f"@{MOBILE}" in payload["text"]["content"]
+        assert payload["at"]["atMobiles"] == [MOBILE]
 
     @pytest.mark.parametrize(
         ("msgtype", "body_key"),
@@ -1992,13 +1993,13 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": msgtype, "at": ["13800138000"]},
+            {"msgtype": msgtype, "at": [MOBILE]},
             "通知标题",
-            "通知内容 @138001380001",
+            f"通知内容 @{MOBILE}1",
         )
 
         body_field = "content" if msgtype == "text" else "text"
-        assert payload[body_key][body_field].endswith("\n\n@13800138000")
+        assert payload[body_key][body_field].endswith(f"\n\n@{MOBILE}")
 
     @pytest.mark.parametrize("backslash_count", [1, 2, 3])
     @pytest.mark.parametrize(
@@ -2014,39 +2015,39 @@ class TestTwoPushDingTalkPayload:
         """text 与 markdown 均保守拒绝反斜杠紧邻的提醒。"""
         from modules.notification import _build_dingtalk_payload
 
-        escaped_mention = f"{'\\' * backslash_count}@13800138000"
+        escaped_mention = f"{'\\' * backslash_count}@{MOBILE}"
         payload = _build_dingtalk_payload(
-            {"msgtype": msgtype, "at": ["13800138000"]},
+            {"msgtype": msgtype, "at": [MOBILE]},
             "通知标题",
             f"通知内容 {escaped_mention}",
         )
 
-        assert payload[body_key][body_field].endswith("\n\n@13800138000")
+        assert payload[body_key][body_field].endswith(f"\n\n@{MOBILE}")
 
     def test_markdown_inline_code_is_checked_only_by_text_boundary(self):
         """markdown 行内代码中的独立提醒按普通文本处理且不重复。"""
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "markdown", "at": ["13800138000"]},
+            {"msgtype": "markdown", "at": [MOBILE]},
             "通知标题",
-            "示例 `@13800138000`",
+            f"示例 `@{MOBILE}`",
         )
 
-        assert payload["markdown"]["text"] == "示例 `@13800138000`"
+        assert payload["markdown"]["text"] == f"示例 `@{MOBILE}`"
 
     def test_country_code_mobile_checks_normalized_mention_in_body(self):
         """国家码手机号应使用归一化号码检查正文中的独立提醒。"""
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "markdown", "at": ["+8613800138000"]},
+            {"msgtype": "markdown", "at": [f"+86{MOBILE}"]},
             "通知标题",
-            "通知内容 @13800138000",
+            f"通知内容 @{MOBILE}",
         )
 
-        assert payload["markdown"]["text"] == "通知内容 @13800138000"
-        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert payload["markdown"]["text"] == f"通知内容 @{MOBILE}"
+        assert payload["at"]["atMobiles"] == [MOBILE]
 
     @pytest.mark.parametrize(
         ("msgtype", "body_key", "body_field"),
@@ -2060,12 +2061,12 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": msgtype, "at": ["13800138000"]},
+            {"msgtype": msgtype, "at": [MOBILE]},
             "",
             "",
         )
 
-        assert payload[body_key][body_field] == "@13800138000"
+        assert payload[body_key][body_field] == f"@{MOBILE}"
 
     def test_build_text_payload_joins_title_and_content_with_double_newline(self):
         """text 请求体应以双换行分隔 title 与 content，与 onepush 行为一致。"""
@@ -2089,7 +2090,7 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"at": ["13800138000"]},
+            {"at": [MOBILE]},
             "通知标题",
             "通知内容",
         )
@@ -2102,7 +2103,7 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "image", "at": ["13800138000"]},
+            {"msgtype": "image", "at": [MOBILE]},
             "通知标题",
             "通知内容",
         )
@@ -2190,15 +2191,15 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "text", "at": ["13800138000"], "isAtAll": True},
+            {"msgtype": "text", "at": [MOBILE], "isAtAll": True},
             "通知标题",
             "通知内容",
         )
 
         content = payload["text"]["content"]
-        assert "@13800138000" in content
+        assert f"@{MOBILE}" in content
         assert "@所有人" in content
-        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert payload["at"]["atMobiles"] == [MOBILE]
         assert payload["at"]["isAtAll"] is True
 
     def test_markdown_is_at_all_with_mobiles_appends_both(self):
@@ -2206,15 +2207,15 @@ class TestTwoPushDingTalkPayload:
         from modules.notification import _build_dingtalk_payload
 
         payload = _build_dingtalk_payload(
-            {"msgtype": "markdown", "at": ["13800138000"], "isAtAll": True},
+            {"msgtype": "markdown", "at": [MOBILE], "isAtAll": True},
             "通知标题",
             "通知内容",
         )
 
         text = payload["markdown"]["text"]
-        assert "@13800138000" in text
+        assert f"@{MOBILE}" in text
         assert "@所有人" in text
-        assert payload["at"]["atMobiles"] == ["13800138000"]
+        assert payload["at"]["atMobiles"] == [MOBILE]
         assert payload["at"]["isAtAll"] is True
 
     def test_is_at_all_dict_nested_flag_appends_at_everyone(self):
@@ -2258,7 +2259,7 @@ class TestTwoPushDingTalkDirectSend:
             {
                 "token": "abc123",
                 "msgtype": "markdown",
-                "at": ["13800138000"],
+                "at": [MOBILE],
             },
             "通知标题",
             "通知内容",
@@ -2270,7 +2271,7 @@ class TestTwoPushDingTalkDirectSend:
         assert captured["headers"] == {"Content-Type": "application/json"}
         assert captured["timeout"] == 10
         assert captured["json"]["msgtype"] == "markdown"
-        assert captured["json"]["at"]["atMobiles"] == ["13800138000"]
+        assert captured["json"]["at"]["atMobiles"] == [MOBILE]
 
     def test_send_dingtalk_webhook_without_token_raises_value_error(self, monkeypatch):
         """缺少 token 时应抛出 ValueError。"""
@@ -2324,10 +2325,10 @@ class TestTwoPushDingTalkMasking:
         """手机号应脱敏。"""
         from modules.utils import mask_sensitive_fields
 
-        text = mask_sensitive_fields({'text': '通知 @13800138000'}, {'text'})['text']
+        text = mask_sensitive_fields({'text': f'通知 @{MOBILE}'}, {'text'})['text']
 
-        assert "13800138000" not in text
-        assert "138****8000" in text
+        assert MOBILE not in text
+        assert MOBILE_MASKED in text
 
     def test_mask_webhook_query(self):
         """Webhook URL query 中的敏感参数应脱敏。"""
@@ -2353,13 +2354,13 @@ class TestTwoPushDingTalkMasking:
             "dingtalk(onepush)",
             1,
             1,
-            "手机号 13800138000 access_token=abc sign=xyz",
+            f"手机号 {MOBILE} access_token=abc sign=xyz",
             0,
             log,
         )
 
         messages = "\n".join(call.args[0] for call in log.error.call_args_list)
-        assert "13800138000" not in messages
+        assert MOBILE not in messages
         assert "access_token=abc" not in messages
         assert "sign=xyz" not in messages
 
@@ -2440,7 +2441,7 @@ class TestTwoPushDingTalkMasking:
                 "token": "abc123",
                 "msgtype": "markdown",
             },
-            "通知 13800138000",
+            f"通知 {MOBILE}",
             "内容",
             0,
             1,
@@ -2471,7 +2472,7 @@ class TestTwoPushDingTalkMasking:
         )
 
         result = notification.send_notification(
-            "标题 13800138000",
+            f"标题 {MOBILE}",
             "内容",
             [
                 {
@@ -2486,7 +2487,7 @@ class TestTwoPushDingTalkMasking:
 
         assert result == [("dingtalk", True)]
         messages = "\n".join(call.args[0] for call in log.info.call_args_list)
-        assert "13800138000" not in messages
+        assert MOBILE not in messages
         assert "通知标题" not in messages
 
     def test_mask_does_not_touch_unrelated_params(self):
@@ -2558,7 +2559,7 @@ class TestTwoPushDingTalkMultipleChannels:
                     "provider": "dingtalk",
                     "token": "enhanced-token",
                     "msgtype": "markdown",
-                    "at": ["13800138000"],
+                    "at": [MOBILE],
                 },
             ],
             retry_settings={"interval": 0, "max_count": 1},
