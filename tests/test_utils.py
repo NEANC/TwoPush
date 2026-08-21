@@ -7,19 +7,21 @@ import pytest
 
 import modules.utils as utils
 from modules.utils import mask_sensitive_fields
+from tests import make_mobile_number, mask_mobile_number
 
 
 def test_mask_sensitive_fields_masks_only_declared_fields():
     """仅对调用方声明的字段执行敏感片段脱敏"""
+    mobile = make_mobile_number()
     fields = {
-        'reason': '手机号 13800138000 access_token=abc sign=xyz secret=SECa token=xyz',
+        'reason': f'手机号 {mobile} access_token=abc sign=xyz secret=SECa token=xyz',
         'provider': 'dingtalk(builtin)',
         'content': 'design=keep assign=keep xaccess_token=keep',
     }
     masked = mask_sensitive_fields(fields, sensitive_fields={'reason'})
 
-    assert '13800138000' not in masked['reason']
-    assert '138****8000' in masked['reason']
+    assert mobile not in masked['reason']
+    assert mask_mobile_number(mobile) in masked['reason']
     assert 'access_token=***' in masked['reason']
     assert ' token=***' in masked['reason']
     assert 'token=xyz' not in masked['reason']
@@ -32,13 +34,14 @@ def test_mask_sensitive_fields_masks_only_declared_fields():
 
 def test_mask_sensitive_fields_validates_input_and_returns_copy():
     """校验入参类型并返回新字典，不修改原字段"""
-    fields = {'reason': '13800138000', 'count': 13800138000, 'empty': None}
+    mobile = make_mobile_number()
+    fields = {'reason': mobile, 'count': int(mobile), 'empty': None}
     result = mask_sensitive_fields(fields, sensitive_fields={'reason', 'count', 'empty'})
 
     assert result is not fields
-    assert fields['reason'] == '13800138000'
-    assert result['reason'] == '138****8000'
-    assert result['count'] == '138****8000'
+    assert fields['reason'] == mobile
+    assert result['reason'] == mask_mobile_number(mobile)
+    assert result['count'] == mask_mobile_number(mobile)
     assert result['empty'] is None
     assert mask_sensitive_fields(fields, sensitive_fields=set()) == fields
     assert mask_sensitive_fields(fields, sensitive_fields=set()) is not fields
@@ -57,21 +60,23 @@ def test_mask_sensitive_fields_keeps_non_mobile_segments_untouched():
 
 
 def test_mask_sensitive_fields_still_masks_valid_mobile_segments():
-    """11 位且第二位为 3-9 的手机号仍应被脱敏为 138****8000 形式"""
-    text = mask_sensitive_fields({'text': '手机号 13800138000'}, {'text'})['text']
+    """11 位且第二位为 3-9 的手机号仍应脱敏为保留首 3 位与末 4 位的形式"""
+    mobile = make_mobile_number()
+    text = mask_sensitive_fields({'text': f'手机号 {mobile}'}, {'text'})['text']
 
-    assert '13800138000' not in text
-    assert '138****8000' in text
+    assert mobile not in text
+    assert mask_mobile_number(mobile) in text
 
 
 def test_mask_sensitive_fields_masks_country_code_prefixed_mobiles():
     """带 +86/86 前缀的手机号应脱敏为纯号段掩码，不泄露完整号码"""
+    mobile = make_mobile_number()
     text = mask_sensitive_fields(
-        {'t': '手机号 +8613800138000 备用 8613800138000'}, {'t'}
+        {'t': f'手机号 +86{mobile} 备用 86{mobile}'}, {'t'}
     )['t']
 
-    assert '8613800138000' not in text
-    assert text.count('138****8000') == 2
+    assert mobile not in text
+    assert text.count(mask_mobile_number(mobile)) == 2
 
 
 def test_ampersand_in_sensitive_value_is_fully_masked():
