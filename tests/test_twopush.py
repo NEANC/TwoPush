@@ -16,6 +16,7 @@ import TwoPush
 import modules.json_manager as json_manager
 from modules.json_manager import build_default_json_template
 from modules.utils import parse_push_channels
+from tests import make_mobile_number, mask_mobile_number
 
 
 @pytest.fixture
@@ -619,16 +620,17 @@ def test_format_push_preview_hides_channel_parameters():
 
 def test_format_push_preview_masks_sensitive_title_and_content():
     """预览中的标题与正文含敏感信息时应脱敏"""
+    mobile = make_mobile_number()
     preview = TwoPush.format_push_preview(
-        title='通知 13800138000 access_token=abc',
+        title=f'通知 {mobile} access_token=abc',
         content='正文 sign=xyz secret=SECa',
         proxy=None,
         retry_settings={'interval': 3, 'max_count': 3},
         channels=[{'provider': 'dingtalk'}],
     )
 
-    assert '13800138000' not in preview
-    assert '138****8000' in preview
+    assert mobile not in preview
+    assert mask_mobile_number(mobile) in preview
     assert 'access_token=abc' not in preview
     assert 'sign=xyz' not in preview
     assert 'SECa' not in preview
@@ -1477,22 +1479,23 @@ def test_format_push_preview_keeps_non_string_values_unchanged():
 
 def test_format_push_preview_still_masks_string_values():
     """预览对字符串 title/content 仍应执行脱敏"""
+    mobile = make_mobile_number()
     preview = TwoPush.format_push_preview(
-        title='标题 13800138000',
-        content='正文 13800138000',
+        title=f'标题 {mobile}',
+        content=f'正文 {mobile}',
         proxy=None,
         retry_settings={},
         channels=[],
     )
 
-    assert '138****8000' in preview
-    assert '13800138000' not in preview
+    assert mask_mobile_number(mobile) in preview
+    assert mobile not in preview
 
 
 def test_execute_push_uses_original_content_after_preview_masking(
         monkeypatch, tmp_path):
     """推送预览脱敏不应影响实际发送参数，发送仍用原始 title/content"""
-    original_title = '标题 13800138000'
+    original_title = f'标题 {make_mobile_number()}'
     original_content = '# 测试推送\n\n正文 access_token=raw-token'
     captured = {}
 
