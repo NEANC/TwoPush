@@ -640,6 +640,92 @@ def test_sensitive_regex_masks_value_when_key_crosses_scan_window(monkeypatch):
     assert 'LEAKED' not in result
 
 
+def test_long_bare_sensitive_value_crossing_scan_windows_is_fully_masked():
+    """超长裸敏感值跨越多个扫描窗口时不得残留后续片段"""
+    secret = 'B' * 9000
+    original = f'prefix access_token={secret} suffix'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == 'prefix access_token=*** suffix'
+    assert secret not in result
+    assert 'B' not in result
+
+
+@pytest.mark.parametrize('quote', ['"', "'"], ids=['double', 'single'])
+def test_long_quoted_sensitive_value_crossing_scan_windows_is_fully_masked(
+    quote,
+):
+    """超长单双引号敏感值跨越多个扫描窗口时应脱敏至闭合引号"""
+    secret = 'Q' * 9000
+    original = f'prefix secret={quote}{secret}{quote} suffix'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == f'prefix secret={quote}***{quote} suffix'
+    assert secret not in result
+    assert 'Q' not in result
+
+
+def test_long_url_userinfo_crossing_scan_windows_is_fully_masked():
+    """超长 URL userinfo 跨越多个扫描窗口时不得残留用户名或密码"""
+    username = 'user' * 1200
+    password = 'pass' * 1200
+    original = f'ProxyError http://{username}:{password}@example.com:8080/path'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == 'ProxyError http://***:***@example.com:8080/path'
+    assert username not in result
+    assert password not in result
+
+
+def test_percent_encoded_text_keeps_url_without_userinfo_unchanged():
+    """含百分号编码的文本不得将普通 URL 误判为未完成 userinfo"""
+    original = 'prefix%20 redirect=https://example.com'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert result == original
+
+
+def test_cross_window_masking_keeps_all_regex_scans_bounded(monkeypatch):
+    """跨窗口完整脱敏时各敏感正则的单次扫描仍不得超过边界"""
+    scanned_lengths = []
+
+    class RecordingRegex:
+        def __init__(self, pattern):
+            self.pattern = pattern
+
+        def finditer(self, value):
+            scanned_lengths.append(len(value))
+            return self.pattern.finditer(value)
+
+        def sub(self, replacement, value):
+            scanned_lengths.append(len(value))
+            return self.pattern.sub(replacement, value)
+
+    monkeypatch.setattr(
+        utils,
+        '_SENSITIVE_KEY_VALUE_RE',
+        RecordingRegex(utils._SENSITIVE_KEY_VALUE_RE),
+    )
+    monkeypatch.setattr(
+        utils,
+        '_URL_USERINFO_RE',
+        RecordingRegex(utils._URL_USERINFO_RE),
+    )
+    secret = 'S' * 9000
+    userinfo = 'U' * 9000
+    value = f'access_token={secret} http://{userinfo}:password@example.com'
+
+    result = mask_sensitive_fields({'reason': value}, {'reason'})['reason']
+
+    assert result == 'access_token=*** http://***:***@example.com'
+    assert scanned_lengths
+    assert max(scanned_lengths) <= 4096
+
+
 def test_single_layer_percent_encoding_keeps_original_encoding_form():
     """单层编码防回归：保留编码形式、只替换值"""
     result = mask_sensitive_fields(

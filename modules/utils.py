@@ -121,7 +121,8 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
 # scheme 须以 :// 结尾，故 mailto:、纯文本邮箱（无 scheme 前缀）与
 # 路径中的 @ 均不会被误伤
 _URL_USERINFO_RE = re.compile(
-    r'(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)@',
+    r'(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)'
+    r'(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)(?P<userinfo_end>@|$)',
 )
 
 
@@ -147,9 +148,55 @@ def _replace_sensitive_key_value(match):
     return f'{prefix}=***'
 
 
-def _bounded_sub(pattern, replacement, value):
+def _resolve_url_userinfo_match(value, window_start, window_end, match):
+    """确认 URL userinfo 的真实结尾，并返回跨窗口替换计划。"""
+    absolute_end = window_start + match.end()
+    if match.group('userinfo_end') == '@':
+        return absolute_end, _replace_url_userinfo(match)
+
+    index = absolute_end
+    while index < len(value) and value[index] not in '/\r\n\t ':
+        if value[index] == '@':
+            return index + 1, _replace_url_userinfo(match)
+        index += 1
+    return None
+
+
+def _resolve_sensitive_key_value_match(value, window_start, window_end, match):
+    """确认敏感值的真实结尾，并生成覆盖完整跨窗口值的替换文本。"""
+    absolute_end = window_start + match.end()
+    groups = match.groupdict()
+    quote = None
+    open_group = None
+    if groups['double_open']:
+        quote = '"'
+        open_group = 'double_open'
+    elif groups['single_open']:
+        quote = "'"
+        open_group = 'single_open'
+
+    if quote is not None:
+        if groups[f'{"double" if quote == chr(34) else "single"}_close']:
+            return absolute_end, _replace_sensitive_key_value(match)
+        index = window_start + match.start(open_group) + 1
+        while index < len(value):
+            if value[index] == '\\':
+                index += 2
+                continue
+            if value[index] == quote:
+                return index + 1, f'{_replace_sensitive_key_value(match)}{quote}'
+            index += 1
+        return len(value), _replace_sensitive_key_value(match)
+
+    index = absolute_end
+    while index < len(value) and value[index] not in '"\'\r\n\t ,}]':
+        index += 1
+    return index, _replace_sensitive_key_value(match)
+
+
+def _bounded_sub(pattern, replacement, value, resolver=None):
     """在受控窗口内执行正则替换，并合并窗口重叠区的重复匹配。"""
-    if len(value) <= _MAX_SCAN_WINDOW:
+    if len(value) <= _MAX_SCAN_WINDOW and resolver is None:
         return pattern.sub(replacement, value)
 
     matches = {}
@@ -165,13 +212,19 @@ def _bounded_sub(pattern, replacement, value):
             absolute_start = window_start + start
             absolute_end = window_start + end
             if window_start <= absolute_start < core_end:
+                replacement_text = replacement(match)
+                if resolver is not None:
+                    resolved = resolver(value, window_start, window_end, match)
+                    if resolved is None:
+                        continue
+                    absolute_end, replacement_text = resolved
                 previous = matches.get(absolute_start)
                 if previous is None or absolute_end > previous[0]:
-                    matches[absolute_start] = (absolute_end, match)
+                    matches[absolute_start] = (absolute_end, replacement_text)
 
     result = value
-    for start, (end, match) in sorted(matches.items(), reverse=True):
-        result = result[:start] + replacement(match) + result[end:]
+    for start, (end, replacement_text) in sorted(matches.items(), reverse=True):
+        result = result[:start] + replacement_text + result[end:]
     return result
 
 
@@ -325,6 +378,8 @@ def _mask_decoded_variants(original, decoded, spans):
     plan = []
     userinfo_ranges = []
     for match in _URL_USERINFO_RE.finditer(decoded):
+        if match.group('userinfo_end') != '@':
+            continue
         start, end = match.span()
         scheme = _original_span_text(original, spans, match, 'scheme')
         plan.append((start, end, f'{scheme}***:***@'))
@@ -404,9 +459,17 @@ def mask_sensitive_fields(fields, sensitive_fields):
         )
         decoded, spans = _decode_once_with_spans(value)
         if spans is None:
-            value = _bounded_sub(_URL_USERINFO_RE, _replace_url_userinfo, value)
             value = _bounded_sub(
-                _SENSITIVE_KEY_VALUE_RE, _replace_sensitive_key_value, value
+                _URL_USERINFO_RE,
+                _replace_url_userinfo,
+                value,
+                _resolve_url_userinfo_match,
+            )
+            value = _bounded_sub(
+                _SENSITIVE_KEY_VALUE_RE,
+                _replace_sensitive_key_value,
+                value,
+                _resolve_sensitive_key_value_match,
             )
         else:
             value = _mask_decoded_variants(value, decoded, spans)
