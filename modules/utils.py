@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import math
 import re
 import urllib.parse
 
@@ -920,7 +921,8 @@ def parse_time_string(time_str):
         float: 转换后的秒数
 
     Raises:
-        ValueError: 如果时间字符串格式无效
+        ValueError: 如果时间字符串格式无效，或解析出的数值为非有限值
+            （inf / -inf / nan）
     """
     LOGGER.info(f"解析时间字符串: {time_str}")
     # 兼容负值输入：自动去除前缀减号，保持时间语义为正数
@@ -947,6 +949,15 @@ def parse_time_string(time_str):
     
     if time_str[-1] in units:
         value = float(time_str[:-1])
+        # float() 接受 inf/1e400/nan 等字面量，非有限值会让调用方的 int() 抛
+        # OverflowError 穿透，此处统一收敛为 ValueError
+        if not math.isfinite(value):
+            LOGGER.error(
+                f"无效的时间数值: {time_str}，请使用 '1h', '15m', '30s'"
+            )
+            raise ValueError(
+                f"无效的时间数值: {time_str}，请使用 '1h', '15m', '30s'"
+            )
         unit = time_str[-1]
         seconds = value * units[unit]
         LOGGER.info(f"解析结果: {seconds} 秒")

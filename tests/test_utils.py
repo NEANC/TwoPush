@@ -6,7 +6,7 @@
 import pytest
 
 import modules.utils as utils
-from modules.utils import mask_sensitive_fields
+from modules.utils import mask_sensitive_fields, parse_time_string
 from tests import make_mobile_number, mask_mobile_number
 
 
@@ -823,3 +823,40 @@ def test_non_sensitive_double_encoded_text_not_masked():
     )['reason']
 
     assert result == 'a%253Db=keep 普通%25文本'
+
+
+@pytest.mark.parametrize(
+    'time_str',
+    ['infs', '1e400s', '-infs', 'nans'],
+    ids=['inf', 'overflow', 'negative_inf', 'nan'],
+)
+def test_parse_time_string_rejects_non_finite_values(time_str):
+    """非有限时间数值（inf / -inf / nan）应抛出 ValueError"""
+    with pytest.raises(ValueError):
+        parse_time_string(time_str)
+
+
+@pytest.mark.parametrize(
+    'time_str',
+    ['infh', 'infm', 'infs', 'nanh', 'nanm', 'nans'],
+)
+def test_parse_time_string_rejects_non_finite_values_for_all_units(time_str):
+    """h/m/s 三种单位下的非有限数值均应抛出 ValueError"""
+    with pytest.raises(ValueError):
+        parse_time_string(time_str)
+
+
+@pytest.mark.parametrize(
+    ('time_str', 'expected'),
+    [('3s', 3), ('1h', 3600), ('15m', 900), ('1.5s', 1.5)],
+)
+def test_parse_time_string_keeps_valid_values(time_str, expected):
+    """防回归：合法时间字符串的解析结果保持不变"""
+    assert parse_time_string(time_str) == expected
+
+
+@pytest.mark.parametrize('time_str', ['infs', '1e400s', '-infs'])
+def test_parse_time_string_int_conversion_raises_value_error(time_str):
+    """调用方 int(parse_time_string(...)) 形态须抛 ValueError 而非 OverflowError"""
+    with pytest.raises(ValueError):
+        int(parse_time_string(time_str))
