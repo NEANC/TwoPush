@@ -84,7 +84,6 @@ def test_ampersand_in_sensitive_value_is_fully_masked():
     result = mask_sensitive_fields({'reason': 'secret=abc&def'}, {'reason'})['reason']
 
     assert result == 'secret=***'
-    assert '&def' not in result
 
 
 def test_query_chain_is_fully_masked():
@@ -93,9 +92,56 @@ def test_query_chain_is_fully_masked():
         {'reason': 'access_token=abc&sign=xyz'}, {'reason'}
     )['reason']
 
+    assert result == 'access_token=***&sign=***'
     assert 'abc' not in result
     assert 'xyz' not in result
-    assert 'access_token=***' in result
+
+
+def test_non_sensitive_query_param_after_ampersand_is_kept():
+    """& 后紧跟非敏感 key= 形态时该 & 为参数分隔符，非敏感参数须保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=abc&foo=bar'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***&foo=bar'
+
+
+def test_query_param_boundary_keeps_surrounding_text():
+    """敏感值按 & 边界结束时，其前后的普通文本片段应原样保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'prefix token=abc&a=1 tail'}, {'reason'}
+    )['reason']
+
+    assert result == 'prefix token=***&a=1 tail'
+
+
+def test_consecutive_sensitive_query_params_are_masked_separately():
+    """连续多个敏感 query 参数应各自脱敏，不出现星号数量畸形的输出"""
+    two = mask_sensitive_fields({'reason': 'token=a&sign=b'}, {'reason'})['reason']
+    three = mask_sensitive_fields(
+        {'reason': 'token=a&sign=b&auth=c'}, {'reason'}
+    )['reason']
+
+    assert two == 'token=***&sign=***'
+    assert three == 'token=***&sign=***&auth=***'
+
+
+def test_dingtalk_signed_url_keeps_timestamp_param():
+    """钉钉签名 URL 中凭据须脱敏，而 timestamp 等非敏感参数完整保留"""
+    result = mask_sensitive_fields(
+        {
+            'reason': (
+                'https://oapi.dingtalk.com/robot/send?'
+                'access_token=REALTOKEN123&timestamp=1700000000000&'
+                'sign=REALSIGNabc failed'
+            )
+        },
+        {'reason'},
+    )['reason']
+
+    assert 'REALTOKEN123' not in result
+    assert 'REALSIGNabc' not in result
+    assert 'timestamp=1700000000000' in result
 
 
 def test_whitespace_separated_sensitive_values_are_masked():

@@ -117,6 +117,17 @@ _SENSITIVE_KEY_VALUE_RE = re.compile(
 )
 
 
+# query 串中的 & 参数分隔符：& 之后紧跟“键名 + 分隔符”形态（键名字符为
+# 字母数字、下划线、百分号、点、连字符，分隔符为 = / : 或其百分号编码）
+# _SENSITIVE_KEY_VALUE_RE 的 bare_value 组已排除 &，正则本身只能匹配到 & 之前；
+# 而结尾扫描会继续向后吞字符以覆盖“值内自带 &”的情形（如 secret=abc&def），
+# 故需靠本正则区分两类 &：命中即视为参数分隔符，敏感值到 & 之前结束，
+# & 及其后的非敏感参数（如 &timestamp=...）原样保留；未命中则 & 属于值本身
+_QUERY_PARAM_BOUNDARY_RE = re.compile(
+    r'&[A-Za-z0-9_%.\-]+(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])',
+)
+
+
 # scheme://user:pass@host 形式的 URL userinfo，脱敏为 ***:***@
 # scheme 须以 :// 结尾，故 mailto:、纯文本邮箱（无 scheme 前缀）与
 # 路径中的 @ 均不会被误伤
@@ -190,6 +201,10 @@ def _resolve_sensitive_key_value_match(value, window_start, window_end, match):
 
     index = absolute_end
     while index < len(value) and value[index] not in '"\'\r\n\t ,}]':
+        # & 后紧跟“键名 + 分隔符”时视为 query 参数分隔符，敏感值到此结束，
+        # 保留 & 及其后的非敏感参数；否则 & 属于值本身，继续向后扫描
+        if value[index] == '&' and _QUERY_PARAM_BOUNDARY_RE.match(value, index):
+            break
         index += 1
     return index, _replace_sensitive_key_value(match)
 
@@ -222,8 +237,21 @@ def _bounded_sub(pattern, replacement, value, resolver=None):
                 if previous is None or absolute_end > previous[0]:
                     matches[absolute_start] = (absolute_end, replacement_text)
 
+    # 结尾扫描可能把后一个匹配的起点纳入前一个匹配的区间（如敏感值内含 &
+    # 时继续吞掉后续敏感键值对），仅按起点去重无法发现这类区间重叠，倒序
+    # 替换时会重复写入导致畸形输出；故先按起点升序做重叠剔除，保留起点在前
+    # 且覆盖范围更大的匹配，使剩余区间互不相交后再倒序替换
+    planned = []
+    covered_end = 0
+    for start in sorted(matches):
+        end, replacement_text = matches[start]
+        if planned and start < covered_end:
+            continue
+        planned.append((start, end, replacement_text))
+        covered_end = max(covered_end, end)
+
     result = value
-    for start, (end, replacement_text) in sorted(matches.items(), reverse=True):
+    for start, end, replacement_text in reversed(planned):
         result = result[:start] + replacement_text + result[end:]
     return result
 
@@ -439,6 +467,9 @@ def mask_sensitive_fields(fields, sensitive_fields):
     带转义处理的引号字符串匹配到明确闭合引号或字符串末尾，否则取到
     空白、引号、逗号或右括号为止，故值内含转义引号、逗号或 & 等连接符
     时均能完整脱敏，未闭合的引号值不会凭空补充闭合引号；
+    其中 & 后紧跟“键名 + = / : 或其百分号编码”形态时按 query 参数分隔符
+    处理，敏感值到该 & 之前结束，& 及其后的非敏感参数（如
+    &timestamp=1700000000000）原样保留，后续敏感参数各自单独脱敏；
     引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
     'access_token': '***'，裸值形式输出为 access_token=***）；
     同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），

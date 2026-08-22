@@ -2342,8 +2342,8 @@ class TestTwoPushDingTalkMasking:
         assert "access_token=abc" not in text
         assert "sign=xyz" not in text
         assert "access_token=***" in text
-        # query 链（含 & 连接的 sign=xyz）整体被 access_token 的脱敏覆盖，sign 键名不残留
-        assert "&sign=" not in text
+        # & 后紧跟 key= 形态时按 query 参数分隔符处理，sign 作为独立参数各自脱敏
+        assert text == "https://oapi.dingtalk.com/robot/send?access_token=***&sign=***"
 
     def test_failure_reason_is_masked(self):
         """失败原因日志不得泄露手机号或 token。"""
