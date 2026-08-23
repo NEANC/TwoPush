@@ -149,9 +149,16 @@ def resolve_proxy(json_template, config):
 
     Returns:
         str | None: 代理地址，不使用代理时返回 None
+
+    Raises:
+        ValueError: JSON 模板中的 proxy 不是字符串时抛出。
     """
     json_proxy = json_template.get('proxy')
     if json_proxy:
+        if not isinstance(json_proxy, str):
+            # 非字符串代理值会在 urlsplit 处抛 AttributeError/TypeError，
+            # 在此提前拦下并转为可被调用方友好处理的 ValueError
+            raise ValueError('JSON 模板中的 proxy 必须是字符串')
         return json_proxy
     if config.get_attr_bool('enable_proxy_for_push', False):
         return config.get_attr('proxy', '') or None
@@ -244,6 +251,10 @@ def mask_proxy_authentication(proxy):
     """
     if not proxy:
         return proxy
+    if not isinstance(proxy, str):
+        # 脱敏是安全边界，非字符串输入宁可返回占位符也不能让
+        # urlsplit 抛 AttributeError/TypeError 使原值随异常暴露
+        return '***'
 
     try:
         parsed = urlsplit(proxy)
@@ -471,6 +482,13 @@ def execute_push(json_path, config, logger):
         retry_settings['max_count'] = max(config.get_attr_int('retry_max_count', 3), 1)
 
     vars_ = render_template_vars()
+    for field in ('title', 'content'):
+        if not isinstance(template.get(field), str):
+            # JSON 模板只做真值校验，数字/列表/字典等非字符串值能通过校验，
+            # 但没有 str.format 方法，直接调用会抛 AttributeError 穿透调用栈
+            logger.error(f"模板字段 {field} 必须是字符串")
+            return 2
+
     try:
         title = template['title'].format(**vars_)
         content = template['content'].format(**vars_)
@@ -483,7 +501,12 @@ def execute_push(json_path, config, logger):
         logger.error(f"模板占位符语法错误: {e}")
         return 2
 
-    proxy = resolve_proxy(template, config)
+    try:
+        proxy = resolve_proxy(template, config)
+    except ValueError as e:
+        logger.error(f"代理配置无效: {e}")
+        return 2
+
     preview = format_push_preview(
         title=title,
         content=content,

@@ -377,6 +377,78 @@ def test_execute_push_invalid_template_syntax_returns_error(monkeypatch, title):
     assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
 
 
+@pytest.mark.parametrize(
+    'field,value',
+    [
+        ('title', 123),
+        ('title', ['标题']),
+        ('content', 123),
+        ('content', {'text': '内容'}),
+    ],
+    ids=['title_int', 'title_list', 'content_int', 'content_dict'],
+)
+def test_execute_push_non_string_template_field_returns_error(
+    monkeypatch, field, value
+):
+    """title/content 为非字符串时应返回错误码而非抛出 AttributeError"""
+    template = {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    }
+    template[field] = value
+    monkeypatch.setattr(
+        TwoPush, 'load_json_template', lambda path, logger: template
+    )
+
+    def fake_send_notification(**kwargs):
+        """字段类型非法时不应触达发送环节"""
+        raise AssertionError('模板字段类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_non_string_template_field_returns_error'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [123, True, {'http': 'http://127.0.0.1:7890'}, ['http://127.0.0.1:7890']],
+    ids=['int', 'bool', 'dict', 'list'],
+)
+def test_execute_push_non_string_proxy_returns_error(monkeypatch, value):
+    """JSON proxy 为非字符串时应返回错误码而非抛出 AttributeError/TypeError"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'proxy': value,
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """代理类型非法时不应触达发送环节"""
+        raise AssertionError('代理类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_non_string_proxy_returns_error'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [123, True, {'http': 'http://u:pw@host'}, ['http://u:pw@host']],
+    ids=['int', 'bool', 'dict', 'list'],
+)
+def test_mask_proxy_authentication_non_string_returns_placeholder(value):
+    """脱敏函数收到非字符串时返回占位符，不得抛异常或回显原值"""
+    assert TwoPush.mask_proxy_authentication(value) == '***'
+
+
 @pytest.mark.parametrize('configured', [0, -5], ids=['zero', 'negative'])
 def test_execute_push_ini_retry_max_count_has_lower_bound(monkeypatch, configured):
     """INI retry_max_count 配置为非正数时应钳制到至少一次重试"""
