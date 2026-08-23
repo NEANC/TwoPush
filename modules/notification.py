@@ -915,9 +915,12 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
     """
     log = logger or LOGGER
     retry = retry_settings or {}
-    retry_interval = min(
-        max(int(retry.get('interval', 3)), 0), MAX_RETRY_INTERVAL
-    )
+    configured_interval = max(int(retry.get('interval', 3)), 0)
+    retry_interval = min(configured_interval, MAX_RETRY_INTERVAL)
+    if configured_interval != retry_interval:
+        log.warning(
+            f"重试间隔超出上限，已钳制: {configured_interval} -> {retry_interval} 秒"
+        )
     max_count = max(int(retry.get('max_count', 3)), 1)
 
     if not channels:

@@ -380,7 +380,46 @@ def test_send_notification_clamps_oversized_interval(monkeypatch, configured):
     )
 
     assert result == [('serverchan', False)]
+    assert sleep.call_count == 1
     assert sleep.call_args[0][0] == notification.MAX_RETRY_INTERVAL
+    assert log.warning.called
+
+
+def test_max_retry_interval_contract():
+    """钳制上限锁定为 3600 秒，改动须显式修改本契约"""
+    import modules.notification as notification
+
+    assert notification.MAX_RETRY_INTERVAL == 3600
+
+
+def test_send_notification_keeps_interval_at_upper_limit(monkeypatch):
+    """恰好等于上限的间隔不应被钳制，也不应产生告警"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        """模拟发送始终失败以触发重试休眠"""
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    notification.send_notification(
+        title='标题',
+        content='正文',
+        channels=[{'provider': 'serverchan'}],
+        retry_settings={
+            'interval': notification.MAX_RETRY_INTERVAL, 'max_count': 2
+        },
+        logger=log,
+    )
+
+    assert sleep.call_args[0][0] == notification.MAX_RETRY_INTERVAL
+    assert log.warning.called is False
 
 
 def test_max_retry_interval_survives_c_layer_time_conversion():
