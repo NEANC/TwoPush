@@ -449,6 +449,102 @@ def test_mask_proxy_authentication_non_string_returns_placeholder(value):
     assert TwoPush.mask_proxy_authentication(value) == '***'
 
 
+@pytest.mark.parametrize(
+    'value',
+    ['5s', ['5s'], 5, 5.5],
+    ids=['str', 'list', 'int', 'float'],
+)
+def test_execute_push_non_dict_retry_returns_error(monkeypatch, value):
+    """JSON retry 为非对象真值时应返回错误码而非抛出 AttributeError"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'retry': value,
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """retry 类型非法时不应触达发送环节"""
+        raise AssertionError('retry 类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_non_dict_retry_returns_error')
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    ['1e308h', '1e308m', None, ['5s'], {'v': '5s'}],
+    ids=['overflow_hour', 'overflow_minute', 'none', 'list', 'dict'],
+)
+def test_execute_push_invalid_json_retry_interval_falls_back(
+    monkeypatch, value
+):
+    """JSON retry.interval 溢出或类型非法时应回退默认间隔而非崩溃"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'retry': {'interval': value, 'max_count': 2},
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_invalid_json_retry_interval_falls_back'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 0
+    assert captured['retry_settings']['interval'] == 3
+
+
+@pytest.mark.parametrize(
+    'configured',
+    ['1e308h', '1e308m', '5e304h'],
+    ids=['overflow_hour', 'overflow_minute', 'threshold_hour'],
+)
+def test_execute_push_ini_retry_interval_overflow_falls_back(
+    monkeypatch, configured
+):
+    """INI retry_interval 乘以单位系数溢出时应回退默认间隔而非崩溃"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    class OverflowIntervalConfig(FakeConfig):
+        """返回溢出 retry_interval 的配置对象"""
+
+        def get_attr(self, key, default=''):
+            """返回被测的溢出重试间隔"""
+            if key == 'retry_interval':
+                return configured
+            return super().get_attr(key, default)
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_ini_retry_interval_overflow_falls_back'
+    )
+
+    assert TwoPush.execute_push(
+        'unused.json', OverflowIntervalConfig(), logger
+    ) == 0
+    assert captured['retry_settings']['interval'] == 3
+
+
 @pytest.mark.parametrize('configured', [0, -5], ids=['zero', 'negative'])
 def test_execute_push_ini_retry_max_count_has_lower_bound(monkeypatch, configured):
     """INI retry_max_count 配置为非正数时应钳制到至少一次重试"""

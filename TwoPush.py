@@ -463,6 +463,11 @@ def execute_push(json_path, config, logger):
 
     retry_settings = {}
     json_retry = template.get('retry')
+    if json_retry and not isinstance(json_retry, dict):
+        # JSON 模板不校验 retry 类型，字符串/列表/数字等真值没有 get 方法，
+        # 直接取值会抛 AttributeError 穿透调用栈
+        logger.error("模板字段 retry 必须是对象")
+        return 2
     if json_retry:
         interval_str = json_retry.get('interval', '3s')
         try:

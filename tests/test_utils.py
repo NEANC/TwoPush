@@ -951,6 +951,28 @@ def test_parse_time_string_int_conversion_raises_value_error(time_str):
 
 
 @pytest.mark.parametrize(
+    'time_str',
+    ['1e308h', '1e308m', '5e304h', '1e307m'],
+    ids=['huge_hour', 'huge_minute', 'threshold_hour', 'threshold_minute'],
+)
+def test_parse_time_string_rejects_unit_multiplication_overflow(time_str):
+    """字面量有限但乘以单位系数后溢出为 inf 的取值须抛 ValueError"""
+    with pytest.raises(ValueError):
+        int(parse_time_string(time_str))
+
+
+@pytest.mark.parametrize(
+    'time_str',
+    [None, ['5s'], {'v': '5s'}, ('5s',), b'5s'],
+    ids=['none', 'list', 'dict', 'tuple', 'bytes'],
+)
+def test_parse_time_string_rejects_non_string_types(time_str):
+    """非字符串非数值类型须抛 ValueError 而非 AttributeError"""
+    with pytest.raises(ValueError):
+        parse_time_string(time_str)
+
+
+@pytest.mark.parametrize(
     'encoded',
     ['%2C', '%26', '%22', '%27', '%7D', '%5D'],
     ids=['comma', 'ampersand', 'double_quote', 'single_quote',
