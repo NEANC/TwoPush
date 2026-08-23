@@ -45,6 +45,15 @@ _HEX_DIGITS = '0123456789abcdefABCDEF'
 # 解码副本中控制字符的占位符（DEL），仅存在于检测副本中，不会写回原文
 _CONTROL_PLACEHOLDER = '\x7f'
 
+# 由 %HH 解码出的结构性终止字符集合
+# URL query 语义中真正的结构分隔符不会被百分号编码，输入里出现 %2C/%22/%27/
+# %7D/%5D 即表示该字符属于值本身；若解码副本中还原为 , " ' } ]，会让
+# _SENSITIVE_KEY_VALUE_RE 的 bare_value 组在此提前结束，值的后半段以原文残留，
+# 故在检测副本中一并以占位符替代，占位符只存在于检测副本，不会写回原文
+# 注意：& 不在本集合内，需保留在解码副本中交由 _QUERY_PARAM_BOUNDARY_RE
+# 判定其是否为 query 参数分隔符，以保留 & 之后的非敏感 query 参数
+_DECODED_LITERAL_CHARS = '"\'' + ",}]"
+
 def _percent_encoded_variant(ch):
     """单字符的可选百分号编码变体，返回正则片段
 
@@ -325,8 +334,12 @@ def _decode_once_with_spans(value):
                 index += 3
                 if bytes(raw) == target:
                     break
-            # 单字节空白或控制字符以占位符替代，避免干扰裸值匹配边界
-            if len(target) == 1 and (ch.isspace() or ord(ch) == 0x7F):
+            # 单字节空白、控制字符或结构性终止字符以占位符替代，避免干扰裸值匹配边界
+            if len(target) == 1 and (
+                ch.isspace()
+                or ord(ch) == 0x7F
+                or ch in _DECODED_LITERAL_CHARS
+            ):
                 decoded_chars.append(_CONTROL_PLACEHOLDER)
             else:
                 decoded_chars.append(ch)
@@ -398,15 +411,43 @@ def _rebuild_sensitive_replacement(original, spans, match):
         f'{_original_span_text(original, spans, match, "trailing_quote")}'
     )
     separator = _original_span_text(original, spans, match, 'separator')
-    if groups['double_open']:
-        close = _original_span_text(original, spans, match, 'double_close')
-        return f'{prefix}{separator}"***{close}'
-    if groups['single_open']:
-        close = _original_span_text(original, spans, match, 'single_close')
-        return f"{prefix}{separator}'***{close}"
+    if groups['double_open'] or groups['single_open']:
+        quote = '"' if groups['double_open'] else "'"
+        open_group = 'double_open' if groups['double_open'] else 'single_open'
+        close_group = 'double_close' if groups['double_open'] else 'single_close'
+        # 原文中该引号不是字面引号时，说明它由编码解出、属于被编码的值内容，
+        # 应整段替换为 ***，不再拼接闭合引号，与原文路径的行为保持一致
+        if _original_span_text(original, spans, match, open_group) != quote:
+            return f'{prefix}{separator}***'
+        close = _original_span_text(original, spans, match, close_group)
+        return f'{prefix}{separator}{quote}***{close}'
     if separator.lstrip().startswith('%'):
         return f'{prefix}{separator}***'
     return f'{prefix}=***'
+
+
+def _decoded_bare_value_end(decoded, start):
+    """在解码副本上确认裸敏感值的真实结尾位置
+
+    _SENSITIVE_KEY_VALUE_RE 的 bare_value 组排除了 &，正则本身只能匹配到
+    & 之前，需与原文路径的 _resolve_sensitive_key_value_match 一样从匹配
+    结尾继续向后扫描，否则解码副本中 & 之后的值会残留
+
+    Args:
+        decoded (str): 解码检测副本
+        start (int): 扫描起点，即解码副本上正则匹配的结尾位置
+
+    Returns:
+        int: 敏感值在解码副本上的真实结尾位置
+    """
+    index = start
+    while index < len(decoded) and decoded[index] not in '"\'\r\n\t ,}]':
+        # & 后紧跟“键名 + 分隔符”时视为 query 参数分隔符，敏感值到此结束；
+        # 否则 & 属于值本身，继续向后扫描
+        if decoded[index] == '&' and _QUERY_PARAM_BOUNDARY_RE.match(decoded, index):
+            break
+        index += 1
+    return index
 
 
 def _mask_decoded_variants(original, decoded, spans):
@@ -436,6 +477,9 @@ def _mask_decoded_variants(original, decoded, spans):
 
     for match in _SENSITIVE_KEY_VALUE_RE.finditer(decoded):
         start, end = match.span()
+        # 裸值分支需向后扫描补齐真实结尾，引号分支由正则的引号闭合规则决定
+        if match.group('bare_value'):
+            end = _decoded_bare_value_end(decoded, end)
         # 与 URL userinfo 重叠的键值对由 userinfo 规则优先，跳过
         if any(
             start < user_end and user_start < end
@@ -446,10 +490,19 @@ def _mask_decoded_variants(original, decoded, spans):
             (start, end, _rebuild_sensitive_replacement(original, spans, match))
         )
 
+    # 结尾扫描可能把后一个匹配的起点纳入前一个匹配的区间，仅按起点排序无法
+    # 发现这类区间重叠，倒序替换时会重复写入导致畸形输出；故先按起点升序做
+    # 重叠剔除，保留起点在前且覆盖范围更大的匹配，使剩余区间互不相交
+    planned = []
+    covered_end = 0
+    for start, end, text in sorted(plan):
+        if planned and start < covered_end:
+            continue
+        planned.append((start, end, text))
+        covered_end = max(covered_end, end)
+
     result = original
-    for start, end, text in sorted(
-        plan, key=lambda item: spans[item[0]][0], reverse=True
-    ):
+    for start, end, text in reversed(planned):
         orig_start = spans[start][0]
         orig_end = spans[end - 1][1]
         result = result[:orig_start] + text + result[orig_end:]
@@ -476,8 +529,12 @@ def mask_sensitive_fields(fields, sensitive_fields):
     同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
     键名中任意单个字符均允许以百分号编码形式出现（如 access_%74oken、
     %61ccess_token，hex 字母大小写均可匹配），脱敏时保留其编码形式
-    只替换值；双层编码的键名与分隔符由固定深度正则直接识别，不受
-    解码长度上限影响；其余检测会对不超过 4096 字符的值执行最多一层
+    只替换值；值内以百分号编码出现的结构性字符（如 %2C、%22、%27、%7D、
+    %5D、%26 及 %20 等空白）视为值本身的内容而非结构分隔符，敏感值会
+    整段脱敏，不会在此截断并残留后半段明文（如 access_token=abc%2Cdef
+    输出为 access_token=***，access_token=%22abc%22 输出为
+    access_token=***）；双层编码的键名与分隔符由固定深度正则直接识别，
+    不受解码长度上限影响；其余检测会对不超过 4096 字符的值执行最多一层
     受限百分号解码，以限制解码副本资源，三层及以上编码仍为已知边界；
     敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
     非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；

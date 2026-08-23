@@ -860,3 +860,84 @@ def test_parse_time_string_int_conversion_raises_value_error(time_str):
     """调用方 int(parse_time_string(...)) 形态须抛 ValueError 而非 OverflowError"""
     with pytest.raises(ValueError):
         int(parse_time_string(time_str))
+
+
+@pytest.mark.parametrize(
+    'encoded',
+    ['%2C', '%26', '%22', '%27', '%7D', '%5D'],
+    ids=['comma', 'ampersand', 'double_quote', 'single_quote',
+         'right_brace', 'right_bracket'],
+)
+def test_encoded_terminator_inside_sensitive_value_is_fully_masked(encoded):
+    """敏感值内编码的结构性终止字符不得截断脱敏，值须整段替换"""
+    result = mask_sensitive_fields(
+        {'reason': f'access_token=abc{encoded}def'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***'
+    assert 'def' not in result
+
+
+def test_encoded_quote_wrapped_sensitive_value_is_fully_masked():
+    """编码引号包裹的敏感值应整段脱敏，不残留编码引号也不错乱结构"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=%22abc%22'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***'
+
+
+def test_sensitive_value_starting_with_encoded_terminator_is_masked():
+    """敏感值以编码终止字符开头（token=%2Cabc）时仍须脱敏，不得整段漏过"""
+    result = mask_sensitive_fields({'reason': 'token=%2Cabc'}, {'reason'})['reason']
+
+    assert result == 'token=***'
+
+
+def test_double_encoded_terminator_inside_sensitive_value_is_masked():
+    """双层编码终止字符（token=a%252Cb）解码后不得残留值尾部字符"""
+    result = mask_sensitive_fields({'reason': 'token=a%252Cb'}, {'reason'})['reason']
+
+    assert 'b' not in result
+    assert '***' in result
+
+
+def test_encoded_terminator_value_keeps_non_sensitive_query_param():
+    """值内编码终止字符整段脱敏的同时，& 后的非敏感参数须原样保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=abc%2Cdef&name=value'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***&name=value'
+
+
+def test_overlapping_decoded_matches_do_not_produce_malformed_mask():
+    """解码路径结尾扫描造成区间重叠时不得重复写入产生畸形星号"""
+    result = mask_sensitive_fields(
+        {'reason': 'token=a&%2Csign=b'}, {'reason'}
+    )['reason']
+
+    assert result == 'token=***'
+    assert '*****' not in result
+
+
+@pytest.mark.parametrize(
+    'suffix',
+    [
+        'access_token=abc%2Cdef',
+        'access_token=abc%26def',
+        'access_token=%22abc%22',
+        'token=%2Cabc',
+        'access_token=abc%2Cdef&name=value',
+    ],
+    ids=['comma', 'ampersand', 'quote_wrapped', 'leading_comma', 'query_param'],
+)
+def test_decoded_and_raw_paths_mask_consistently(suffix):
+    """超过解码上限走原文路径时，尾部脱敏结果须与短输入解码路径一致"""
+    prefix = ('x' * 4097) + ' '
+    short_result = mask_sensitive_fields({'reason': suffix}, {'reason'})['reason']
+    long_result = mask_sensitive_fields(
+        {'reason': prefix + suffix}, {'reason'}
+    )['reason']
+
+    assert long_result == prefix + short_result
