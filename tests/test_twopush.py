@@ -377,6 +377,37 @@ def test_execute_push_invalid_template_syntax_returns_error(monkeypatch, title):
     assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
 
 
+@pytest.mark.parametrize('configured', [0, -5], ids=['zero', 'negative'])
+def test_execute_push_ini_retry_max_count_has_lower_bound(monkeypatch, configured):
+    """INI retry_max_count 配置为非正数时应钳制到至少一次重试"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    class LowCountConfig(FakeConfig):
+        """返回非正 retry_max_count 的配置对象"""
+
+        def get_attr_int(self, key, default=0):
+            """返回被测的非正重试次数"""
+            if key == 'retry_max_count':
+                return configured
+            return default
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_ini_retry_max_count_has_lower_bound')
+
+    assert TwoPush.execute_push('unused.json', LowCountConfig(), logger) == 0
+    assert captured['retry_settings']['max_count'] == 1
+
+
 def test_execute_push_logs_rendered_push_preview_before_send(monkeypatch, caplog):
     """execute_push 应在发送前记录渲染后的推送预览"""
     monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {

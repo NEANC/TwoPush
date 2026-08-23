@@ -13,7 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
-from urllib.parse import parse_qsl, quote_plus, unquote_plus, urlencode, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -195,11 +195,6 @@ def push_proxy_environment(proxy, logger):
             os.environ.pop('ALL_PROXY', None)
         else:
             os.environ['ALL_PROXY'] = old_all_proxy
-
-
-def _quote_proxy_query(value, safe, encoding, errors):
-    """urlencode 的 quote_via 回调：额外保留星号，空格编码为 +，保证脱敏值输出为 ***。"""
-    return quote_plus(value, safe=safe + '*', encoding=encoding, errors=errors)
 
 
 def _mask_proxy_query(query):
@@ -473,7 +468,7 @@ def execute_push(json_path, config, logger):
             retry_settings['interval'] = int(parse_time_string(interval_str))
         except (TypeError, ValueError):
             retry_settings['interval'] = 3
-        retry_settings['max_count'] = config.get_attr_int('retry_max_count', 3)
+        retry_settings['max_count'] = max(config.get_attr_int('retry_max_count', 3), 1)
 
     vars_ = render_template_vars()
     try:
