@@ -14,6 +14,7 @@ import string
 MOBILE_LENGTH = 11
 MOBILE_FIRST_DIGIT = '1'
 MOBILE_SECOND_DIGITS = '3456789'
+MAX_MOBILE_ATTEMPTS = 100
 
 
 def make_mobile_number(exclude=()):
@@ -27,9 +28,12 @@ def make_mobile_number(exclude=()):
 
     Returns:
         str: 11 位手机号样本
+
+    Raises:
+        RuntimeError: 达到尝试上限仍未生成不重复号码时抛出，避免无限循环
     """
     excluded = set(exclude)
-    while True:
+    for _ in range(MAX_MOBILE_ATTEMPTS):
         digits = [MOBILE_FIRST_DIGIT, random.choice(MOBILE_SECOND_DIGITS)]
         digits.extend(
             random.choice(string.digits) for _ in range(MOBILE_LENGTH - 2)
@@ -37,6 +41,9 @@ def make_mobile_number(exclude=()):
         mobile = ''.join(digits)
         if mobile not in excluded:
             return mobile
+    raise RuntimeError(
+        f'{MAX_MOBILE_ATTEMPTS} 次尝试内无法生成不重复的手机号样本'
+    )
 
 
 def mask_mobile_number(mobile):

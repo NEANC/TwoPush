@@ -85,11 +85,10 @@ class TestServerChanDataStructure:
         assert sc.data == {"text": "测试标题", "desp": "测试内容"}
 
     def test_content_only(self):
-        """仅 content 无 title 时使用 process_message 拼接"""
+        """仅 content 无 title 时 text 保持为 None，不做拼接"""
         sc = ServerChan()
-        sc._prepare_data(title="标题", content="内容")
-        assert sc.data["text"] == "标题"
-        assert sc.data["desp"] == "内容"
+        sc._prepare_data(title=None, content="内容")
+        assert sc.data == {"text": None, "desp": "内容"}
 
     def test_url_construction(self):
         """URL 使用旧版 API 端点 sc.ftqq.com"""

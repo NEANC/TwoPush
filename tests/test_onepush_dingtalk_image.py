@@ -532,7 +532,9 @@ class TestDingTalkMarkdownContentPassthrough:
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
         data = dingtalk.data
         # 表格语法会原样发送，但钉钉不会渲染为表格
-        assert "|" in data["markdown"]["text"]
+        assert data["msgtype"] == "markdown"
+        assert data["markdown"]["title"] == "不支持语法"
+        assert data["markdown"]["text"] == content
 
     def test_markdown_code_block_content_passthrough(self):
         """验证 markdown 请求体原样透传代码块语法文本（内容透传契约）
@@ -545,7 +547,9 @@ class TestDingTalkMarkdownContentPassthrough:
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
         data = dingtalk.data
         # 代码块语法会原样发送，但钉钉不会渲染为代码块
-        assert "```" in data["markdown"]["text"]
+        assert data["msgtype"] == "markdown"
+        assert data["markdown"]["title"] == "不支持语法"
+        assert data["markdown"]["text"] == content
 
 
 class TestOnePushHighLevelAPI:
@@ -810,14 +814,6 @@ class TestTwoPushDingTalkUrlBuilder:
                 "oapi.dingtalk.com/robot/send?access_token=abc123"
             )
 
-    def test_plain_token_still_works(self):
-        """纯裸 token 应正常拼接（守护既有行为）。"""
-        from modules.notification import _build_dingtalk_webhook_url
-
-        url = _build_dingtalk_webhook_url("abc123")
-
-        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
-
     def test_scheme_without_netloc_is_not_full_url(self):
         """仅有 scheme 而无 netloc 时不应视为完整 URL，且因含协议特征应抛出 ValueError。"""
         from modules.notification import _build_dingtalk_webhook_url, _is_full_url
@@ -902,16 +898,6 @@ class TestTwoPushDingTalkUrlBuilder:
                 secret="SECtest",
             )
 
-    def test_full_url_with_access_token_still_works(self):
-        """含 access_token 的完整 Webhook URL 应原样返回（守护既有行为）。"""
-        from modules.notification import _build_dingtalk_webhook_url
-
-        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(full_url)
-
-        assert url == full_url
-        assert url.count("access_token=") == 1
-
     def test_non_dingtalk_domain_full_url_raises_value_error(self):
         """非钉钉域名的完整 Webhook URL 应抛出 ValueError。"""
         from modules.notification import _build_dingtalk_webhook_url
@@ -930,16 +916,6 @@ class TestTwoPushDingTalkUrlBuilder:
                 "https://internal.local/robot/send?access_token=abc123",
                 secret="SECtest",
             )
-
-    def test_dingtalk_domain_full_url_still_works(self):
-        """钉钉官方域名的完整 Webhook URL 应原样返回（守护既有行为）。"""
-        from modules.notification import _build_dingtalk_webhook_url
-
-        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(full_url)
-
-        assert url == full_url
-        assert url.count("access_token=") == 1
 
     @pytest.mark.parametrize("hostname", ["oapi.dingtalk.com", "OAPI.DINGTALK.COM"])
     @pytest.mark.parametrize("port", ["", ":443"])
@@ -1039,16 +1015,6 @@ class TestTwoPushDingTalkUrlBuilder:
                 "https://oapi.dingtalk.com/robot/send/?access_token=abc123"
             )
 
-    def test_standard_path_full_url_still_works(self):
-        """完整 Webhook URL 使用标准路径 /robot/send 时应原样返回（守护既有行为）。"""
-        from modules.notification import _build_dingtalk_webhook_url
-
-        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(full_url)
-
-        assert url == full_url
-        assert url.count("access_token=") == 1
-
     def test_sign_is_encoded_exactly_once(self):
         """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
         import base64
@@ -1092,16 +1058,6 @@ class TestTwoPushDingTalkUrlBuilder:
             _build_dingtalk_webhook_url(
                 "https://oapi.dingtalk.com/robot/send?access_token=%20%20"
             )
-
-    def test_non_empty_access_token_still_works(self):
-        """access_token 值非空时完整 Webhook URL 应原样返回（守护既有行为）。"""
-        from modules.notification import _build_dingtalk_webhook_url
-
-        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
-        url = _build_dingtalk_webhook_url(full_url)
-
-        assert url == full_url
-        assert url.count("access_token=") == 1
 
     def test_multiple_access_tokens_one_non_empty_passes(self):
         """多个 access_token 参数中至少一个非空时应放行。"""
