@@ -54,6 +54,7 @@ _CONTROL_PLACEHOLDER = '\x7f'
 # 判定其是否为 query 参数分隔符，以保留 & 之后的非敏感 query 参数
 _DECODED_LITERAL_CHARS = '"\'' + ",}]"
 
+
 def _percent_encoded_variant(ch):
     """单字符的可选百分号编码变体，返回正则片段
 
@@ -107,10 +108,10 @@ _SENSITIVE_KEY_PATTERN = (
 _SENSITIVE_KEY_VALUE_RE = re.compile(
     rf'''
     (?<![A-Za-z0-9_])
-    (?P<leading_quote>["']?)
+    (?P<leading_quote>["'\x7f]?)
     (?P<key>{_SENSITIVE_KEY_PATTERN})
-    (?P<trailing_quote>["']?)
-    (?P<separator>\s*(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])\s*)
+    (?P<trailing_quote>["'\x7f]?)
+    (?P<separator>[\s\x7f]*(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])[\s\x7f]*)
     (?:
         (?P<double_open>")
         (?P<double_value>(?:[^"\\]|\\[\s\S])*\\?)
@@ -412,13 +413,10 @@ def _rebuild_sensitive_replacement(original, spans, match):
     )
     separator = _original_span_text(original, spans, match, 'separator')
     if groups['double_open'] or groups['single_open']:
+        # 编码引号在检测副本中已被替换为占位符，故这两个分组只会匹配到原文中
+        # 的字面引号，直接按字面引号形态重建
         quote = '"' if groups['double_open'] else "'"
-        open_group = 'double_open' if groups['double_open'] else 'single_open'
         close_group = 'double_close' if groups['double_open'] else 'single_close'
-        # 原文中该引号不是字面引号时，说明它由编码解出、属于被编码的值内容，
-        # 应整段替换为 ***，不再拼接闭合引号，与原文路径的行为保持一致
-        if _original_span_text(original, spans, match, open_group) != quote:
-            return f'{prefix}{separator}***'
         close = _original_span_text(original, spans, match, close_group)
         return f'{prefix}{separator}{quote}***{close}'
     if separator.lstrip().startswith('%'):
@@ -466,33 +464,27 @@ def _mask_decoded_variants(original, decoded, spans):
         str: 脱敏后的字符串
     """
     plan = []
-    userinfo_ranges = []
     for match in _URL_USERINFO_RE.finditer(decoded):
         if match.group('userinfo_end') != '@':
             continue
         start, end = match.span()
         scheme = _original_span_text(original, spans, match, 'scheme')
         plan.append((start, end, f'{scheme}***:***@'))
-        userinfo_ranges.append((start, end))
 
     for match in _SENSITIVE_KEY_VALUE_RE.finditer(decoded):
         start, end = match.span()
         # 裸值分支需向后扫描补齐真实结尾，引号分支由正则的引号闭合规则决定
         if match.group('bare_value'):
             end = _decoded_bare_value_end(decoded, end)
-        # 与 URL userinfo 重叠的键值对由 userinfo 规则优先，跳过
-        if any(
-            start < user_end and user_start < end
-            for user_start, user_end in userinfo_ranges
-        ):
-            continue
         plan.append(
             (start, end, _rebuild_sensitive_replacement(original, spans, match))
         )
 
     # 结尾扫描可能把后一个匹配的起点纳入前一个匹配的区间，仅按起点排序无法
     # 发现这类区间重叠，倒序替换时会重复写入导致畸形输出；故先按起点升序做
-    # 重叠剔除，保留起点在前且覆盖范围更大的匹配，使剩余区间互不相交
+    # 重叠剔除，保留起点在前且覆盖范围更大的匹配，使剩余区间互不相交。
+    # userinfo 与敏感键值对重叠时同样由此决定优先级：起点在前者胜出，
+    # 被剔除的一方所覆盖的凭据必然落在胜出者的替换区间内，不会明文残留
     planned = []
     covered_end = 0
     for start, end, text in sorted(plan):

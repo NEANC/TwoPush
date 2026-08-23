@@ -898,8 +898,7 @@ def test_double_encoded_terminator_inside_sensitive_value_is_masked():
     """双层编码终止字符（token=a%252Cb）解码后不得残留值尾部字符"""
     result = mask_sensitive_fields({'reason': 'token=a%252Cb'}, {'reason'})['reason']
 
-    assert 'b' not in result
-    assert '***' in result
+    assert result == 'token=***'
 
 
 def test_encoded_terminator_value_keeps_non_sensitive_query_param():
@@ -941,3 +940,51 @@ def test_decoded_and_raw_paths_mask_consistently(suffix):
     )['reason']
 
     assert long_result == prefix + short_result
+
+
+@pytest.mark.parametrize(
+    'original',
+    [
+        '%22access_token%22%3A%22SECRET123%22',
+        '%27token%27%3D%27SECRET123%27',
+        '%22token%22=SECRET123',
+        '%22password%22%3A%22SECRET123%22',
+    ],
+    ids=['encoded_double_quote', 'encoded_single_quote',
+         'encoded_key_plain_sep', 'encoded_password'],
+)
+def test_encoded_quoted_key_form_is_masked(original):
+    """键名被编码引号包裹时仍须脱敏
+
+    检测副本中编码引号会还原为占位符，键名、引号与分隔符相关的正则分组
+    须能匹配占位符，否则整条正则失配导致凭据明文原样输出
+    """
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert 'SECRET123' not in result
+    assert '***' in result
+
+
+def test_encoded_json_body_sensitive_value_is_masked():
+    """整段百分号编码的 JSON body 中敏感值须脱敏，不得原样输出"""
+    original = 'payload=%7B%22secret%22%3A%22SECRET123%22%2C%22ts%22%3A1%7D'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert 'SECRET123' not in result
+    assert '***' in result
+
+
+def test_encoded_terminator_value_followed_by_url_is_masked():
+    """敏感值含编码终止字符且后方紧跟带 userinfo 的 URL 时不得残留凭据
+
+    敏感值结尾扫描会把后方 URL 一并纳入区间，此时须由区间重叠剔除按
+    起点先后决定归属，不能整条丢弃敏感键值对
+    """
+    original = 'secret=LONGSECRET%2Chttp%3A%2F%2Fu%3Apw%40host'
+
+    result = mask_sensitive_fields({'reason': original}, {'reason'})['reason']
+
+    assert 'LONGSECRET' not in result
+    assert 'pw' not in result
+    assert '***' in result
