@@ -323,6 +323,29 @@ def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
     assert captured['retry_settings']['max_count'] == 3
 
 
+@pytest.mark.parametrize(
+    'title',
+    ['标题 {host_name', '标题 {0}', '标题 {host_name!z}', '标题 {host_name:>{width}}'],
+    ids=['unclosed_brace', 'positional_field', 'unknown_conversion', 'nested_field'],
+)
+def test_execute_push_invalid_template_syntax_returns_error(monkeypatch, title):
+    """模板占位符语法非法时应返回错误码而非抛出未捕获异常"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': title,
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """渲染失败时不应触达发送环节"""
+        raise AssertionError('模板渲染失败后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_invalid_template_syntax_returns_error')
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
 def test_execute_push_logs_rendered_push_preview_before_send(monkeypatch, caplog):
     """execute_push 应在发送前记录渲染后的推送预览"""
     monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
@@ -1127,6 +1150,64 @@ def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path, 
 
     assert exc_info.value.code == 0
     assert calls == [(fake_logger, TwoPush.VERSION)]
+
+
+def test_main_invalid_max_files_does_not_crash(monkeypatch, tmp_path, mock_cleanup_residue):
+    """max_files 配置为非整数时应回退默认值而非抛出 ValueError"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\n'
+        'proxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n'
+        '[Push]\n'
+        'retry_interval = 3s\n'
+        'retry_max_count = 3\n'
+        '\n'
+        '[Update]\n'
+        'auto_check = false\n'
+        'channel = stable\n'
+        '\n'
+        '[Logs]\n'
+        'save_enabled = true\n'
+        'max_files = abc\n',
+        encoding='utf-8',
+    )
+    captured = []
+
+    class FakeLogger:
+        def debug(self, message):
+            pass
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            pass
+
+        def error(self, message):
+            pass
+
+        def critical(self, message):
+            pass
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        return FakeLogger()
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-S', '-c', str(config_file)])
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda logger, **kwargs: None)
+    monkeypatch.setattr(
+        TwoPush,
+        'cleanup_old_logs',
+        lambda logger, max_files, **kwargs: captured.append(max_files),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert captured == [15]
 
 
 def test_main_drag_drop_executes_push_and_pauses(monkeypatch, tmp_path, mock_cleanup_residue):

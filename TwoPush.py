@@ -482,6 +482,11 @@ def execute_push(json_path, config, logger):
     except KeyError as e:
         logger.error(f"模板变量缺失: {e}")
         return 2
+    except (ValueError, IndexError) as e:
+        # 占位符语法非法（如括号未闭合、使用位置参数、未知转换符）时
+        # format 抛出 ValueError/IndexError，须与变量缺失一样给出友好提示
+        logger.error(f"模板占位符语法错误: {e}")
+        return 2
 
     proxy = resolve_proxy(template, config)
     preview = format_push_preview(
@@ -547,7 +552,7 @@ def main():
         sys.exit(2)
 
     if save_enabled:
-        max_files = int(config.get_attr('max_files', '15'))
+        max_files = config.get_attr_int('max_files', 15)
         if max_files > 0:
             cleanup_old_logs(logger, max_files, log_dir='logs', log_prefix='TwoPush')
 
