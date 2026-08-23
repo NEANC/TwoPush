@@ -86,12 +86,16 @@ def _sensitive_key_regex(name):
 
 
 # 敏感键名（access_token/token、sign、secret、password、api_key、webhook
-# 等常见凭据键）中任意单字符均允许以百分号编码形式出现，access_ 前缀可选，
-# 键名字母大小写由 IGNORECASE 折叠
+# 等常见凭据键，以及 OnePush 各渠道声明的专有凭据参数名）中任意单字符均允许
+# 以百分号编码形式出现，access_ 前缀可选，键名字母大小写由 IGNORECASE 折叠
+# 注意：device_key 等以 key 结尾的键名必须单独列出，因为正则前置的
+# (?<![A-Za-z0-9_]) 断言会让 key 分支在 device_key 中间位置失配；
+# lark 的 keyword 是安全校验关键词而非凭据，不在此名单内
 _SENSITIVE_KEY_PATTERN = (
     f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
     f'|{_sensitive_key_regex("sign")}'
     f'|{_sensitive_key_regex("secret")}'
+    f'|{_sensitive_key_regex("corpsecret")}'
     f'|{_sensitive_key_regex("password")}'
     f'|{_sensitive_key_regex("passwd")}'
     f'|{_sensitive_key_regex("api_key")}'
@@ -103,6 +107,13 @@ _SENSITIVE_KEY_PATTERN = (
     f'|{_sensitive_key_regex("credential")}'
     f'|{_sensitive_key_regex("accesskey")}'
     f'|{_sensitive_key_regex("access_key")}'
+    f'|{_sensitive_key_regex("sckey")}'
+    f'|{_sensitive_key_regex("sctkey")}'
+    f'|{_sensitive_key_regex("pushkey")}'
+    f'|{_sensitive_key_regex("cipherkey")}'
+    f'|{_sensitive_key_regex("device_keys")}'
+    f'|{_sensitive_key_regex("device_key")}'
+    f'|{_sensitive_key_regex("key")}'
 )
 
 _SENSITIVE_KEY_VALUE_RE = re.compile(

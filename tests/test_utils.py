@@ -225,6 +225,94 @@ def test_json_keys_with_sensitive_name_substrings_not_masked():
     assert result == '{"design":"keep","assign":"keep","mytoken":"keep"}'
 
 
+@pytest.mark.parametrize(
+    'key',
+    [
+        'sckey',
+        'sctkey',
+        'pushkey',
+        'key',
+        'corpsecret',
+        'device_key',
+        'device_keys',
+        'cipherkey',
+    ],
+    ids=[
+        'serverchan',
+        'serverchanturbo',
+        'pushdeer',
+        'qmsg_wechatworkbot',
+        'wechatworkapp',
+        'bark_single',
+        'bark_multi',
+        'bark_cipher',
+    ],
+)
+def test_channel_specific_credential_keys_are_masked(key):
+    """OnePush 各渠道声明的专有凭据参数名均须脱敏"""
+    result = mask_sensitive_fields({'reason': f'{key}=SECRETVALUE'}, {'reason'})
+
+    assert result['reason'] == f'{key}=***'
+
+
+@pytest.mark.parametrize(
+    'raw,expected',
+    [
+        ('{"sckey": "SECRETVALUE"}', '{"sckey": "***"}'),
+        ("{'device_key': 'SECRETVALUE'}", "{'device_key': '***'}"),
+        (
+            'provider=bark,device_key=SECRETVALUE&title=hi',
+            'provider=bark,device_key=***&title=hi',
+        ),
+        (
+            'corpid=ww123,corpsecret=SECRETVALUE',
+            'corpid=ww123,corpsecret=***',
+        ),
+    ],
+    ids=['json_double', 'json_single', 'query_with_tail', 'keeps_corpid'],
+)
+def test_channel_credential_keys_masked_in_structured_forms(raw, expected):
+    """渠道专有凭据键在 JSON 与 query 形态下同样完整脱敏"""
+    assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == expected
+
+
+def test_encoded_channel_credential_key_is_masked():
+    """百分号编码的渠道凭据键名同样须脱敏"""
+    result = mask_sensitive_fields(
+        {'reason': '%22sckey%22%3A%22SECRETVALUE%22'}, {'reason'}
+    )['reason']
+
+    assert 'SECRETVALUE' not in result
+
+
+@pytest.mark.parametrize(
+    'raw',
+    [
+        'keyword=hello',
+        'keys=abc',
+        'monkey=banana',
+        'lowkey=note',
+        'keyboard=qwerty',
+        'donkey=grey',
+        'corpid=ww123456',
+        'agentid=1000002',
+    ],
+    ids=[
+        'lark_keyword',
+        'keys',
+        'monkey',
+        'lowkey',
+        'keyboard',
+        'donkey',
+        'corpid',
+        'agentid',
+    ],
+)
+def test_key_suffixed_non_credential_names_not_masked(raw):
+    """含 key 子串但非凭据的键名不得误伤，lark 的 keyword 属安全关键词"""
+    assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == raw
+
+
 def test_json_value_with_escaped_quote_is_fully_masked():
     """JSON 引号形式的值内含转义引号时应完整脱敏，不残留引号后片段"""
     result = mask_sensitive_fields(
