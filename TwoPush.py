@@ -520,7 +520,7 @@ def main():
     if args.self_update_verify:
         handle_self_update_verify(args)
     if args.update_failed:
-        handle_update_failed(setup_logger())
+        handle_update_failed(setup_logger(console_enabled=not args.silent))
 
     if args.version:
         print(f"TwoPush {VERSION}")

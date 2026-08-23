@@ -168,6 +168,37 @@ def test_self_update_verify_runs_before_explicit_config_check(monkeypatch, tmp_p
     assert not config_file.exists()
 
 
+@pytest.mark.parametrize(
+    ('argv_extra', 'expected_console'),
+    [([], True), (['-S'], False)],
+    ids=['normal', 'silent'],
+)
+def test_main_update_failed_passes_silent_to_setup_logger(
+    monkeypatch, argv_extra, expected_console
+):
+    """--update-failed 分支的日志器应遵循静默标志"""
+    calls = []
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        """记录日志器创建时的控制台开关"""
+        calls.append(console_enabled)
+        return logging.getLogger('test_main_update_failed_passes_silent')
+
+    def fake_handle_update_failed(logger):
+        """模拟自更新失败处理会自行退出"""
+        raise SystemExit(1)
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--update-failed'] + argv_extra)
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+    monkeypatch.setattr(TwoPush, 'handle_update_failed', fake_handle_update_failed)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert calls == [expected_console]
+
+
 class FakeConfig:
     """用于测试代理解析的配置对象"""
 
