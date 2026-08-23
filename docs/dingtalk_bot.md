@@ -82,62 +82,12 @@ notify(
 
 **请求体片段（需配合已生成的 Webhook URL）：**
 
-以下代码展示请求体结构，并使用未加签 Webhook URL 占位。使用加签安全设置时，`webhook_url` 必须替换为已附加 `timestamp` 和 `sign` 查询参数的完整 Webhook URL；完整加签实现请参考「请求完整示例」。
+以下代码展示请求体结构，并使用未加签 Webhook URL 占位。使用加签安全设置时，`webhook_url` 必须替换为已附加 `timestamp` 和 `sign` 查询参数的完整 Webhook URL；`check_dingtalk_response` 的完整实现与加签实现均见「请求完整示例」。
 
 ```python
-import json
 import requests
 
-
-def check_dingtalk_response(response):
-    """检查钉钉 Webhook 的业务响应。"""
-    MAX_RESPONSE_BYTES = 1 * 1024 * 1024
-
-    try:
-        response.raise_for_status()
-    except requests.exceptions.RequestException:
-        raise RuntimeError("钉钉 Webhook HTTP 请求失败") from None
-
-    content_encoding = response.headers.get("Content-Encoding", "")
-    if content_encoding.strip().lower() not in ("", "identity"):
-        raise RuntimeError("钉钉 Webhook 返回了不支持的压缩响应")
-
-    content_length = response.headers.get("Content-Length")
-    if (
-        isinstance(content_length, str)
-        and content_length.isdigit()
-        and int(content_length) > MAX_RESPONSE_BYTES
-    ):
-        raise RuntimeError("钉钉 Webhook 响应体过大")
-
-    response.raw.decode_content = False
-    try:
-        body = response.raw.read(MAX_RESPONSE_BYTES + 1)
-    except Exception:
-        raise RuntimeError("钉钉 Webhook 响应读取失败") from None
-
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise RuntimeError("钉钉 Webhook 响应体过大")
-
-    try:
-        data = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        raise RuntimeError("钉钉 Webhook 返回了非 JSON 响应") from None
-
-    if not isinstance(data, dict) or "errcode" not in data:
-        raise RuntimeError("钉钉 Webhook 响应格式异常")
-
-    errcode = data["errcode"]
-    success = (
-        type(errcode) is int and errcode == 0
-    ) or (
-        isinstance(errcode, str) and errcode.strip() == "0"
-    )
-    if success:
-        return
-
-    raise RuntimeError("钉钉 Webhook 请求失败")
-
+# check_dingtalk_response 的完整实现见「请求完整示例」小节，此处直接复用
 
 webhook_url = "https://oapi.dingtalk.com/robot/send?access_token=xxx"
 body = {

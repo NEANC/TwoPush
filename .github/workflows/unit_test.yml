@@ -20,25 +20,8 @@ jobs:
       - name: Check-out repository
         uses: actions/checkout@v6
 
-      # 检查当前 Python 版本
-      - name: Check Python
-        id: check_python
-        shell: bash
-        run: |
-          # 检查 Python 版本
-          PYTHON_VERSION=$(python --version 2>&1 || python3 --version 2>&1)
-          echo "Detected Python version: $PYTHON_VERSION"
-          
-          if echo "$PYTHON_VERSION" | grep -i "python 3\.12"; then
-            echo "python_version=3.12" >> $GITHUB_OUTPUT
-            echo "skip_setup=true" >> $GITHUB_OUTPUT
-          else
-            echo "skip_setup=false" >> $GITHUB_OUTPUT
-          fi
-
-      # 设置 Python 环境（仅当版本不是 3.12 时）
+      # 设置 Python 环境，命中 runner 工具缓存时为快速路径，同时启用 pip 缓存
       - name: Setup Python
-        if: steps.check_python.outputs.skip_setup != 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.12'
@@ -49,6 +32,7 @@ jobs:
             requirements-dev.txt
 
       - name: Install Dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
@@ -71,6 +55,7 @@ jobs:
           fi
 
       - name: Run Unit Tests
+        shell: bash
         run: |
           python -m pytest tests/ -v --tb=short --color=yes --junitxml=test-results.xml --durations=10 -p no:cacheprovider
 
