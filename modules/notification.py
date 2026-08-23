@@ -26,6 +26,11 @@ request = requests.request
 
 LOGGER = logging.getLogger(__name__)
 
+# 重试间隔上限（秒），1 小时足以覆盖合理场景。超大有限值（如 1e308s）
+# 能通过 parse_time_string 的有限性检查，若原样交给 time.sleep 会在 C 层
+# 抛 OverflowError 穿透调用栈，故在此统一钳制
+MAX_RETRY_INTERVAL = 3600
+
 # 触发 TwoPush 钉钉直发增强路径的参数键（任一存在即走增强路径）
 DINGTALK_ENHANCED_KEYS = {
     'msgtype',
@@ -910,7 +915,9 @@ def send_notification(title, content, channels, retry_settings=None, logger=None
     """
     log = logger or LOGGER
     retry = retry_settings or {}
-    retry_interval = max(int(retry.get('interval', 3)), 0)
+    retry_interval = min(
+        max(int(retry.get('interval', 3)), 0), MAX_RETRY_INTERVAL
+    )
     max_count = max(int(retry.get('max_count', 3)), 1)
 
     if not channels:

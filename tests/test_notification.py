@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import os
 import sys
+import threading
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import pytest
@@ -347,6 +348,55 @@ def test_send_notification_positive_interval_keeps_retry_behavior(monkeypatch):
     assert sleep.call_count == 1
     assert sleep.call_args[0][0] == 2
     assert log.error.call_count == 2
+
+
+@pytest.mark.parametrize(
+    'configured',
+    [1e308, 3599999999996400.0, 3601],
+    ids=['huge_float', 'huge_hours', 'just_above_limit'],
+)
+def test_send_notification_clamps_oversized_interval(monkeypatch, configured):
+    """超大重试间隔应钳制到上限，避免 time.sleep 抛 OverflowError"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        """模拟发送始终失败以触发重试休眠"""
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    result = notification.send_notification(
+        title='标题',
+        content='正文',
+        channels=[{'provider': 'serverchan'}],
+        retry_settings={'interval': configured, 'max_count': 2},
+        logger=log,
+    )
+
+    assert result == [('serverchan', False)]
+    assert sleep.call_args[0][0] == notification.MAX_RETRY_INTERVAL
+
+
+def test_max_retry_interval_survives_c_layer_time_conversion():
+    """钳制上限须能通过 C 层时间转换，未钳制的超大原值则不能
+
+    threading.Lock.acquire 与 time.sleep 共用同一套 C 层超时转换，
+    且锁空闲时立即返回，故可在不真实等待的前提下验证时间值是否合法。
+    """
+    import modules.notification as notification
+
+    lock = threading.Lock()
+    assert lock.acquire(True, notification.MAX_RETRY_INTERVAL) is True
+    lock.release()
+
+    with pytest.raises(OverflowError):
+        threading.Lock().acquire(True, 1e308)
 
 
 def test_config_error_value_error_is_not_retried():
