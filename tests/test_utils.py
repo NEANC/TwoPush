@@ -988,6 +988,27 @@ def test_encoded_terminator_inside_sensitive_value_is_fully_masked(encoded):
     assert 'def' not in result
 
 
+def test_encoded_ampersand_before_param_acts_as_query_separator():
+    """%26 后紧跟键名与分隔符时按 query 参数边界处理，其后内容原样保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=abc%26plain%3Dvalue'}, {'reason'}
+    )['reason']
+
+    assert result == 'access_token=***%26plain%3Dvalue'
+
+
+def test_encoded_ampersand_query_separator_masks_each_credential():
+    """%26 分隔的多个参数中，每个敏感参数各自脱敏，非敏感参数保留"""
+    result = mask_sensitive_fields(
+        {'reason': 'access_token=T%26timestamp%3D1700000000000%26sign%3DS'},
+        {'reason'},
+    )['reason']
+
+    assert result == 'access_token=***%26timestamp%3D1700000000000%26sign%3D***'
+    assert 'T%26' not in result
+    assert '%3DS' not in result
+
+
 def test_encoded_quote_wrapped_sensitive_value_is_fully_masked():
     """编码引号包裹的敏感值应整段脱敏，不残留编码引号也不错乱结构"""
     result = mask_sensitive_fields(
