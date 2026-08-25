@@ -276,6 +276,74 @@ def test_channel_credential_keys_masked_in_structured_forms(raw, expected):
     assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == expected
 
 
+@pytest.mark.parametrize(
+    'key',
+    [
+        'secretkey',
+        'appkey',
+        'appsecret',
+        'accesstoken',
+        'refresh_token',
+        'privatekey',
+        'apitoken',
+        'authtoken',
+    ],
+    ids=[
+        'secretkey',
+        'appkey',
+        'appsecret',
+        'accesstoken',
+        'refresh_token',
+        'privatekey',
+        'apitoken',
+        'authtoken',
+    ],
+)
+def test_common_concatenated_credential_keys_are_masked(key):
+    """无分隔符拼写的常见凭据键名须脱敏，不得因 key 分支边界断言漏检"""
+    result = mask_sensitive_fields({'reason': f'{key}=SECRETVALUE'}, {'reason'})
+
+    assert result['reason'] == f'{key}=***'
+
+
+@pytest.mark.parametrize(
+    'raw',
+    [
+        'xappkey=keep',
+        'xsecretkey=keep',
+        'myaccesstoken=keep',
+        'notrefresh_token=keep',
+        'keyword=hello',
+        'monkey=banana',
+    ],
+    ids=[
+        'xappkey',
+        'xsecretkey',
+        'myaccesstoken',
+        'notrefresh_token',
+        'lark_keyword',
+        'monkey',
+    ],
+)
+def test_ascii_prefixed_concatenated_credential_keys_not_masked(raw):
+    """补全拼写键名后，ASCII 前缀拼接与非凭据词仍不得被误伤"""
+    assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == raw
+
+
+@pytest.mark.parametrize(
+    'raw,expected',
+    [
+        ('x-api-key: LEAKED', 'x-api-key=***'),
+        ('x-auth-token: LEAKED', 'x-auth-token=***'),
+        ('api-key=LEAKED', 'api-key=***'),
+    ],
+    ids=['x_api_key', 'x_auth_token', 'api_key'],
+)
+def test_hyphen_prefixed_header_credential_keys_are_masked(raw, expected):
+    """连字符拼写的 header 形态凭据键须脱敏，连字符不构成 ASCII 前缀边界"""
+    assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == expected
+
+
 def test_encoded_channel_credential_key_is_masked():
     """百分号编码的渠道凭据键名同样须脱敏"""
     result = mask_sensitive_fields(

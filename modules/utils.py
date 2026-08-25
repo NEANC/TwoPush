@@ -88,22 +88,35 @@ def _sensitive_key_regex(name):
 # 敏感键名（access_token/token、sign、secret、password、api_key、webhook
 # 等常见凭据键，以及 OnePush 各渠道声明的专有凭据参数名）中任意单字符均允许
 # 以百分号编码形式出现，access_ 前缀可选，键名字母大小写由 IGNORECASE 折叠
-# 注意：device_key 等以 key 结尾的键名必须单独列出，因为正则前置的
-# (?<![A-Za-z0-9_]) 断言会让 key 分支在 device_key 中间位置失配；
-# lark 的 keyword 是安全校验关键词而非凭据，不在此名单内
+# 注意：device_key/appkey 等以 key、secret、token 结尾的键名必须逐个列出，
+# 因为正则前置的 (?<![A-Za-z0-9_]) 断言会让 key/secret/token 分支在这类
+# 复合键名的中间位置失配；lark 的 keyword 是安全校验关键词而非凭据，
+# 不在此名单内；名单只收录完整凭据词，避免 xappkey 等 ASCII 前缀拼接被误伤
 _SENSITIVE_KEY_PATTERN = (
     f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
     f'|{_sensitive_key_regex("sign")}'
     f'|{_sensitive_key_regex("secret")}'
     f'|{_sensitive_key_regex("corpsecret")}'
+    f'|{_sensitive_key_regex("appsecret")}'
+    f'|{_sensitive_key_regex("app_secret")}'
     f'|{_sensitive_key_regex("password")}'
     f'|{_sensitive_key_regex("passwd")}'
     f'|{_sensitive_key_regex("api_key")}'
     f'|{_sensitive_key_regex("apikey")}'
+    f'|{_sensitive_key_regex("appkey")}'
+    f'|{_sensitive_key_regex("app_key")}'
     f'|{_sensitive_key_regex("webhook")}'
     f'|{_sensitive_key_regex("secret_key")}'
+    f'|{_sensitive_key_regex("secretkey")}'
+    f'|{_sensitive_key_regex("privatekey")}'
+    f'|{_sensitive_key_regex("private_key")}'
     f'|{_sensitive_key_regex("token_key")}'
     f'|{_sensitive_key_regex("auth")}'
+    f'|{_sensitive_key_regex("authtoken")}'
+    f'|{_sensitive_key_regex("apitoken")}'
+    f'|{_sensitive_key_regex("accesstoken")}'
+    f'|{_sensitive_key_regex("refresh_token")}'
+    f'|{_sensitive_key_regex("refreshtoken")}'
     f'|{_sensitive_key_regex("credential")}'
     f'|{_sensitive_key_regex("accesskey")}'
     f'|{_sensitive_key_regex("access_key")}'
