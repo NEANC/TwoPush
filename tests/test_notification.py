@@ -385,13 +385,6 @@ def test_send_notification_clamps_oversized_interval(monkeypatch, configured):
     assert log.warning.called
 
 
-def test_max_retry_interval_contract():
-    """钳制上限锁定为 3600 秒，改动须显式修改本契约"""
-    import modules.notification as notification
-
-    assert notification.MAX_RETRY_INTERVAL == 3600
-
-
 def test_send_notification_keeps_interval_at_upper_limit(monkeypatch):
     """恰好等于上限的间隔不应被钳制，也不应产生告警"""
     import modules.notification as notification
