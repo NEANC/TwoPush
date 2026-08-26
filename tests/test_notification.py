@@ -385,6 +385,41 @@ def test_send_notification_clamps_oversized_interval(monkeypatch, configured):
     assert log.warning.called
 
 
+@pytest.mark.parametrize(
+    'configured,expected_clamped',
+    [(3599, False), (3601, True)],
+    ids=['just_below_limit', 'just_above_limit'],
+)
+def test_send_notification_clamp_boundary_pins_upper_limit(
+    monkeypatch, configured, expected_clamped
+):
+    """钳制边界须落在 3599 与 3601 之间，上限被改动时本用例失败"""
+    import modules.notification as notification
+    from unittest import mock
+
+    def fail_notify(*args, **kwargs):
+        """模拟发送始终失败以触发重试休眠"""
+        raise RuntimeError('boom')
+
+    monkeypatch.setattr(notification, 'get_notifier', lambda provider: type(
+        'Notifier', (), {'notify': fail_notify}
+    )())
+    sleep = mock.MagicMock()
+    monkeypatch.setattr(notification.time, 'sleep', sleep)
+    log = mock.MagicMock()
+
+    notification.send_notification(
+        title='标题',
+        content='正文',
+        channels=[{'provider': 'serverchan'}],
+        retry_settings={'interval': configured, 'max_count': 2},
+        logger=log,
+    )
+
+    assert (sleep.call_args[0][0] != configured) is expected_clamped
+    assert log.warning.called is expected_clamped
+
+
 def test_send_notification_keeps_interval_at_upper_limit(monkeypatch):
     """恰好等于上限的间隔不应被钳制，也不应产生告警"""
     import modules.notification as notification
