@@ -557,8 +557,10 @@ def mask_sensitive_fields(fields, sensitive_fields):
     深度正则直接识别，不受解码长度上限影响；其余检测会对不超过 4096
     字符的值执行最多一层受限百分号解码，以限制解码副本资源，三层及以上
     编码仍为已知边界；
-    敏感键名前使用 ASCII 字母数字下划线边界断言，键名前缀为中文等
-    非 ASCII 字符时同样脱敏，而 xaccess_token 等 ASCII 前缀拼接不脱敏；
+    敏感键名前使用 ASCII 字母数字下划线边界断言，仅这三类字符构成边界：
+    xaccess_token、9access_token、_access_token 等拼接不脱敏，而前缀为
+    中文等非 ASCII 字符或连字符、点号等 ASCII 标点时仍脱敏
+    （如 x-api-key、x.access_token 均脱敏，故 header 形态凭据可被覆盖）；
     未声明字段与 None 值原样保留
 
     Args:
