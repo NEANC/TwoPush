@@ -91,7 +91,8 @@ def _sensitive_key_regex(name):
 # 注意：device_key/appkey 等以 key、secret、token 结尾的键名必须逐个列出，
 # 因为正则前置的 (?<![A-Za-z0-9_]) 断言会让 key/secret/token 分支在这类
 # 复合键名的中间位置失配；lark 的 keyword 是安全校验关键词而非凭据，
-# 不在此名单内；名单只收录完整凭据词，避免 xappkey 等 ASCII 前缀拼接被误伤
+# 不在此名单内；名单只收录完整凭据词，使 xappkey 这类紧邻字母数字下划线的
+# 拼接不被误伤，而 x.appkey、x-api-key 等以其他标点分隔的形态仍会命中
 _SENSITIVE_KEY_PATTERN = (
     f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
     f'|{_sensitive_key_regex("sign")}'

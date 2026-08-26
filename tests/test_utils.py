@@ -326,7 +326,7 @@ def test_common_concatenated_credential_keys_are_masked(key):
     ],
 )
 def test_ascii_prefixed_concatenated_credential_keys_not_masked(raw):
-    """补全拼写键名后，ASCII 前缀拼接与非凭据词仍不得被误伤"""
+    """补全拼写键名后，紧邻字母数字下划线的拼接与非凭据词仍不得被误伤"""
     assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == raw
 
 
@@ -336,11 +336,13 @@ def test_ascii_prefixed_concatenated_credential_keys_not_masked(raw):
         ('x-api-key: LEAKED', 'x-api-key=***'),
         ('x-auth-token: LEAKED', 'x-auth-token=***'),
         ('api-key=LEAKED', 'api-key=***'),
+        ('x.appkey=LEAKED', 'x.appkey=***'),
+        ('x.access_token=LEAKED', 'x.access_token=***'),
     ],
-    ids=['x_api_key', 'x_auth_token', 'api_key'],
+    ids=['x_api_key', 'x_auth_token', 'api_key', 'dot_appkey', 'dot_access_token'],
 )
-def test_hyphen_prefixed_header_credential_keys_are_masked(raw, expected):
-    """连字符拼写的 header 形态凭据键须脱敏，连字符不构成 ASCII 前缀边界"""
+def test_punctuation_prefixed_header_credential_keys_are_masked(raw, expected):
+    """连字符、点号拼写的 header 形态凭据键须脱敏，标点不属于字母数字下划线边界"""
     assert mask_sensitive_fields({'reason': raw}, {'reason'})['reason'] == expected
 
 
