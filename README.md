@@ -22,6 +22,39 @@
 
 TwoPush 是基于 [OnePush](https://github.com/y1ndan/onepush) 再封装的命令行通知推送程序，适合在脚本、计划任务、自动化流程中调用。
 
+## 快速开始
+
+### 使用已发布的 Windows 程序
+
+1. 将 `TwoPush.exe` 放到一个独立目录。
+2. 在该目录运行一次程序，自动生成 `config.ini` 和 `TwoPush.templates.json`。
+3. 编辑生成的 JSON 文件，填写推送标题、内容和通道密钥。
+4. 执行推送：
+
+```powershell
+.\TwoPush.exe -p .\TwoPush.templates.json
+```
+
+首次运行如果检测到配置文件不存在，程序只生成示例文件并退出；请完成配置后再次运行。
+
+### 使用 Python 源码运行
+
+项目需要 Python 3.12 或更高版本。建议在 Windows PowerShell 中使用虚拟环境：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python TwoPush.py -p .\report.json
+```
+
+如果 PowerShell 阻止脚本执行，可以直接使用虚拟环境中的 Python：
+
+```powershell
+.\.venv\Scripts\python.exe TwoPush.py -p .\report.json
+```
+
 ---
 
 ## 功能特性
@@ -32,6 +65,7 @@ TwoPush 是基于 [OnePush](https://github.com/y1ndan/onepush) 再封装的命�
 - 一个 JSON 文件对应一次推送任务
 - JSON 级代理配置与 INI 全局代理配置
 - 命令行调用指定 JSON 推送文件
+- 钉钉内置增强推送路径，支持 `text`、`markdown` 和提醒配置
 
 ---
 
@@ -104,15 +138,15 @@ max_files = 15
 
 可以通过命令行参数生成示例 JSON：
 
-```bash
+```powershell
 # 在当前目录生成默认模板
-./TwoPush.exe --template
+.\TwoPush.exe --template
 
-# 在指定目录生成默认模板
-./TwoPush.exe -T C:\custom.json
+# 在指定路径生成模板
+.\TwoPush.exe -T C:\custom.json
 
-# 使用默认模版覆盖已有文件
-./TwoPush.exe --template-force C:\custom.json
+# 允许覆盖已有文件
+.\TwoPush.exe --template-force C:\custom.json
 ```
 
 ### JSON 字段说明
@@ -132,6 +166,35 @@ max_files = 15
 | `{host_name}`          | 当前主机名                             |
 | `{current_time}`       | 当前时间，格式为 `YYYY/MM/DD HH:MM:SS` |
 | `{short_current_time}` | 当前时间，格式为 `HH:MM:SS`            |
+
+### JSON 配置规则与示例
+
+配置规则：
+
+- `config.ini` 保存全局配置，例如默认重试、日志和代理设置；不要在其中保存具体通道密钥。
+- JSON 文件保存一次任务的标题、内容、推送通道和可选的任务级代理、重试配置。
+- JSON 中显式设置 `proxy` 时优先使用 JSON 代理；未设置时，仅当 `enable_proxy_for_push = true` 才使用 INI 代理。
+- `retry.interval` 支持秒、分钟和小时，例如 `30s`、`5m`、`1h`；重试次数至少为 1，间隔最大为 3600 秒。
+- 多个通道会并发发送；推送完成后程序根据整体结果返回退出码。
+
+### 钉钉增强推送
+
+钉钉仅填写 `provider`、`token`、`secret` 时使用 OnePush 路径。需要 `markdown`、`atMobiles` 或 `isAtAll` 等增强字段时，使用 TwoPush 内置 Webhook 路径：
+
+```json
+{
+  "provider": "dingtalk",
+  "token": "你的 access_token",
+  "secret": "你的加签密钥",
+  "msgtype": "markdown",
+  "atMobiles": ["13800138000"],
+  "isAtAll": false
+}
+```
+
+内置路径支持 `text` 和 `markdown`，并会根据提醒配置补齐正文中的手机号或 `@所有人`。Webhook、消息类型和提醒规则详见 [钉钉机器人说明](./docs/dingtalk_bot.md)。
+
+> 安全提示：钉钉 `token`、`secret`、SMTP 密码、代理认证信息等均属于敏感信息。建议限制配置文件访问权限，并使用 `.gitignore` 排除本地配置文件。
 
 ---
 
@@ -160,18 +223,55 @@ max_files = 15
 
 如果同时使用 `-p` 参数，以 `-p` 指定的文件为准，且不会停顿等待按键。
 
+### 退出码
+
+| 退出码 | 含义                         |
+| ------ | ---------------------------- |
+| `0`    | 所有推送通道均发送成功       |
+| `1`    | 至少一个推送通道发送失败     |
+| `2`    | 输入、模板或配置存在错误     |
+
+### 日志与故障排查
+
+默认情况下，日志保存在当前目录的 `logs` 文件夹中。推送失败时，优先检查：
+
+1. JSON 文件是否为有效 JSON，且 `title`、`content`、`channels` 字段类型正确。
+2. 通道名称和密钥是否填写正确，钉钉机器人是否已配置对应的 IP 白名单。
+3. 代理地址是否可访问；JSON 中的 `proxy` 会覆盖 INI 中的代理配置。
+4. `logs` 目录中的最新日志，日志会自动隐藏常见密钥、密码和手机号。
+
+### 常见问题
+
+**为什么第一次运行没有发送通知？**
+
+默认配置文件不存在时，程序会先生成 `config.ini` 和 `TwoPush.templates.json`，并在完成初始化后退出。填写通道配置后再次执行即可。
+
+**为什么钉钉的 @ 没有生效？**
+
+使用钉钉内置增强路径时，只需在通道配置中设置 `atMobiles` 或 `isAtAll`；如果正文缺少对应的 `@手机号` 或 `@所有人`，程序会自动补齐。OnePush 路径不处理这些增强字段，需要使用提醒功能时请改用内置增强路径。详细规则见 [钉钉机器人说明](./docs/dingtalk_bot.md)。
+
+**推送失败会重试几次？**
+
+默认使用 `config.ini` 中的 `retry_interval` 和 `retry_max_count`。也可以在 JSON 的 `retry` 字段中为单次任务覆盖默认值。
+
 ---
 
 ## 开发与测试
 
 建议使用虚拟环境安装依赖并运行测试：
 
-```bash
+```powershell
 python -m venv .venv
-.venv/bin/activate
+.\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r requirements-dev.txt
 python -m pytest tests -v
+```
+
+如果 PowerShell 不允许激活脚本，可直接执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests -v
 ```
 
 ---
