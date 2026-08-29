@@ -13,7 +13,7 @@ import os
 import sys
 
 from contextlib import contextmanager
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -22,8 +22,12 @@ from modules.logger_manager import (
     raw_read_save_enabled,
     setup_logger,
 )
-from modules.notification import render_template_vars, send_notification
-from modules.utils import parse_push_channels, parse_time_string
+from modules.notification import (
+    describe_channel_routes,
+    render_template_vars,
+    send_notification,
+)
+from modules.utils import mask_sensitive_fields, parse_push_channels, parse_time_string
 from modules.json_manager import (
     DEFAULT_TEMPLATE_FILE,
     ensure_default_template_on_first_run,
@@ -33,6 +37,12 @@ from modules.json_manager import (
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
+
+_PROXY_SENSITIVE_QUERY_KEYS = frozenset({
+    'password', 'passwd', 'token', 'access_token', 'accesskey',
+    'access_key', 'sign', 'secret', 'key', 'api_key', 'apikey',
+    'auth', 'credential', 'token_key', 'secret_key',
+})
 
 
 def parse_args():
@@ -139,9 +149,16 @@ def resolve_proxy(json_template, config):
 
     Returns:
         str | None: 代理地址，不使用代理时返回 None
+
+    Raises:
+        ValueError: JSON 模板中的 proxy 不是字符串时抛出。
     """
     json_proxy = json_template.get('proxy')
     if json_proxy:
+        if not isinstance(json_proxy, str):
+            # 非字符串代理值会在 urlsplit 处抛 AttributeError/TypeError，
+            # 在此提前拦下并转为可被调用方友好处理的 ValueError
+            raise ValueError('JSON 模板中的 proxy 必须是字符串')
         return json_proxy
     if config.get_attr_bool('enable_proxy_for_push', False):
         return config.get_attr('proxy', '') or None
@@ -187,8 +204,44 @@ def push_proxy_environment(proxy, logger):
             os.environ['ALL_PROXY'] = old_all_proxy
 
 
+def _mask_proxy_query(query):
+    """脱敏 query 中敏感键的值；无敏感键时原样返回，不规范化。
+
+    Args:
+        query: URL 的 query 字符串。
+
+    Returns:
+        str: 脱敏后的 query 字符串。
+    """
+    if not query:
+        return query
+    masked_parts = []
+    has_sensitive_key = False
+    for part in query.split('&'):
+        key, separator, value = part.partition('=')
+        decoded_key = key
+        decode_count = 0
+        for _ in range(2):
+            next_key = unquote_plus(decoded_key)
+            if next_key == decoded_key:
+                break
+            decoded_key = next_key
+            decode_count += 1
+        if decoded_key.strip().lower() in _PROXY_SENSITIVE_QUERY_KEYS:
+            has_sensitive_key = True
+            output_key = decoded_key if decode_count == 1 else key
+            masked_parts.append(
+                f'{output_key}{separator}***' if separator else f'{output_key}=***'
+            )
+        else:
+            masked_parts.append(part)
+    if not has_sensitive_key:
+        return query
+    return '&'.join(masked_parts)
+
+
 def mask_proxy_authentication(proxy):
-    """脱敏代理 URL 中的认证信息。
+    """脱敏代理 URL 中的认证信息、敏感 query 参数并移除 fragment。
 
     Args:
         proxy: 代理地址。
@@ -198,23 +251,40 @@ def mask_proxy_authentication(proxy):
     """
     if not proxy:
         return proxy
+    if not isinstance(proxy, str):
+        # 脱敏是安全边界，非字符串输入宁可返回占位符也不能让
+        # urlsplit 抛 AttributeError/TypeError 使原值随异常暴露
+        return '***'
 
-    parsed = urlsplit(proxy)
-    if not parsed.username and parsed.password is None:
+    try:
+        parsed = urlsplit(proxy)
+    except ValueError:
+        return '***'
+    has_auth = bool(parsed.username) or parsed.password is not None
+    masked_query = _mask_proxy_query(parsed.query)
+    if not has_auth and masked_query == parsed.query and not parsed.fragment:
         return proxy
 
-    host = parsed.hostname or ''
-    if ':' in host and not host.startswith('['):
-        host = f'[{host}]'
-    if parsed.port is not None:
-        host = f'{host}:{parsed.port}'
-    netloc = f'***:***@{host}'
+    if has_auth:
+        try:
+            port = parsed.port
+        except ValueError:
+            # 畸形端口（非数字）无法安全重建 URL，返回固定脱敏占位符
+            return '***'
+        host = parsed.hostname or ''
+        if ':' in host and not host.startswith('['):
+            host = f'[{host}]'
+        if port is not None:
+            host = f'{host}:{port}'
+        netloc = f'***:***@{host}'
+    else:
+        netloc = parsed.netloc
     return urlunsplit((
         parsed.scheme,
         netloc,
         parsed.path,
-        parsed.query,
-        parsed.fragment,
+        masked_query,
+        '',
     ))
 
 
@@ -231,15 +301,27 @@ def format_push_preview(title, content, proxy, retry_settings, channels):
     Returns:
         str: 无最外层大括号的 5 行 JSON 风格预览。
     """
-    channel_names = [channel.get('provider', '?') for channel in channels]
+    channel_names = describe_channel_routes(channels)
     retry_preview = {
         'interval': retry_settings.get('interval'),
         'max_count': retry_settings.get('max_count'),
     }
     proxy_preview = mask_proxy_authentication(proxy)
+    # 仅对字符串类型的 title/content 脱敏，避免预览日志泄露敏感信息；
+    # 非字符串值原样保留，不被 str() 转换
+    masked_title = (
+        mask_sensitive_fields({'title': title}, {'title'})['title']
+        if isinstance(title, str)
+        else title
+    )
+    masked_content = (
+        mask_sensitive_fields({'content': content}, {'content'})['content']
+        if isinstance(content, str)
+        else content
+    )
     return '\n'.join([
-        f'"title": {json.dumps(title, ensure_ascii=False)},',
-        f'"content": {json.dumps(content, ensure_ascii=False)},',
+        f'"title": {json.dumps(masked_title, ensure_ascii=False)},',
+        f'"content": {json.dumps(masked_content, ensure_ascii=False)},',
         f'"proxy": {json.dumps(proxy_preview, ensure_ascii=False)},',
         f'"retry": {json.dumps(retry_preview, ensure_ascii=False)},',
         f'"channels": {json.dumps(channel_names, ensure_ascii=False)}',
@@ -381,6 +463,11 @@ def execute_push(json_path, config, logger):
 
     retry_settings = {}
     json_retry = template.get('retry')
+    if json_retry and not isinstance(json_retry, dict):
+        # JSON 模板不校验 retry 类型，字符串/列表/数字等真值没有 get 方法，
+        # 直接取值会抛 AttributeError 穿透调用栈
+        logger.error("模板字段 retry 必须是对象")
+        return 2
     if json_retry:
         interval_str = json_retry.get('interval', '3s')
         try:
@@ -397,17 +484,34 @@ def execute_push(json_path, config, logger):
             retry_settings['interval'] = int(parse_time_string(interval_str))
         except (TypeError, ValueError):
             retry_settings['interval'] = 3
-        retry_settings['max_count'] = config.get_attr_int('retry_max_count', 3)
+        retry_settings['max_count'] = max(config.get_attr_int('retry_max_count', 3), 1)
 
     vars_ = render_template_vars()
+    for field in ('title', 'content'):
+        if not isinstance(template.get(field), str):
+            # JSON 模板只做真值校验，数字/列表/字典等非字符串值能通过校验，
+            # 但没有 str.format 方法，直接调用会抛 AttributeError 穿透调用栈
+            logger.error(f"模板字段 {field} 必须是字符串")
+            return 2
+
     try:
         title = template['title'].format(**vars_)
         content = template['content'].format(**vars_)
     except KeyError as e:
         logger.error(f"模板变量缺失: {e}")
         return 2
+    except (ValueError, IndexError) as e:
+        # 占位符语法非法（如括号未闭合、使用位置参数、未知转换符）时
+        # format 抛出 ValueError/IndexError，须与变量缺失一样给出友好提示
+        logger.error(f"模板占位符语法错误: {e}")
+        return 2
 
-    proxy = resolve_proxy(template, config)
+    try:
+        proxy = resolve_proxy(template, config)
+    except ValueError as e:
+        logger.error(f"代理配置无效: {e}")
+        return 2
+
     preview = format_push_preview(
         title=title,
         content=content,
@@ -439,7 +543,7 @@ def main():
     if args.self_update_verify:
         handle_self_update_verify(args)
     if args.update_failed:
-        handle_update_failed(setup_logger())
+        handle_update_failed(setup_logger(console_enabled=not args.silent))
 
     if args.version:
         print(f"TwoPush {VERSION}")
@@ -471,7 +575,7 @@ def main():
         sys.exit(2)
 
     if save_enabled:
-        max_files = int(config.get_attr('max_files', '15'))
+        max_files = config.get_attr_int('max_files', 15)
         if max_files > 0:
             cleanup_old_logs(logger, max_files, log_dir='logs', log_prefix='TwoPush')
 

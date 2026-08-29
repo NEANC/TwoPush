@@ -85,11 +85,10 @@ class TestServerChanDataStructure:
         assert sc.data == {"text": "测试标题", "desp": "测试内容"}
 
     def test_content_only(self):
-        """仅 content 无 title 时使用 process_message 拼接"""
+        """仅 content 无 title 时 text 保持为 None，不做拼接"""
         sc = ServerChan()
-        sc._prepare_data(title="标题", content="内容")
-        assert sc.data["text"] == "标题"
-        assert sc.data["desp"] == "内容"
+        sc._prepare_data(title=None, content="内容")
+        assert sc.data == {"text": None, "desp": "内容"}
 
     def test_url_construction(self):
         """URL 使用旧版 API 端点 sc.ftqq.com"""
@@ -327,47 +326,6 @@ class TestServerChanDingTalkChannel:
     此测试类不实际发送请求，而是基于 API 文档和实测结论，对比「直接调用钉钉」
     与「通过 Server酱 中转」的能力差异。
     """
-
-    def test_channel_dingtalk_value(self):
-        """钉钉群机器人在 Server酱 中的 channel 值为 2"""
-        dingtalk_channel = 2
-        assert dingtalk_channel == 2
-
-    def test_capability_comparison(self):
-        """能力对比：直接钉钉 vs Server酱 中转
-
-        实测结果：
-
-        +------------------+------------+----------------+-----------------------+
-        | 能力              | 直接钉钉   | Server酱 → 钉钉 | 说明                   |
-        +------------------+------------+----------------+-----------------------+
-        | 文本推送           | ✅          | ✅ 实测         |                       |
-        | Markdown 推送      | ✅          | ✅ 实测         | desp 支持 MD           |
-        | Markdown 图片      | ✅          | ✅ 实测         | ![img](url)            |
-        | 加签安全设置        | ✅          | ❌              | ServerChan 不支持 secret|
-        | @所有人            | ✅          | ❌ 实测(3次)    | API 无 at 字段         |
-        | @指定人(手机号)     | ✅          | ❌ 实测(1次)    | 同上                  |
-        +------------------+------------+----------------+-----------------------+
-        """
-        capabilities = {
-            "文本推送": {"direct": True, "via_serverchan": True},
-            "Markdown 推送": {"direct": True, "via_serverchan": True},
-            "Markdown 图片": {"direct": True, "via_serverchan": True},
-            "加签安全设置": {"direct": True, "via_serverchan": False},
-            "@所有人": {"direct": True, "via_serverchan": False},
-            "@指定人(手机号)": {"direct": True, "via_serverchan": False},
-            "@指定人(userId)": {"direct": "待实测", "via_serverchan": False},
-            "link 消息": {"direct": True, "via_serverchan": False},
-            "feedCard": {"direct": True, "via_serverchan": False},
-            "actionCard": {"direct": True, "via_serverchan": False},
-            "DING": {"direct": False, "via_serverchan": False},
-        }
-
-        # 验证 @ 功能在 Server酱 通道不可用
-        for at_key in ["@所有人", "@指定人(手机号)", "@指定人(userId)"]:
-            assert capabilities[at_key]["via_serverchan"] is False, (
-                f"Server酱 API 无 at 字段，{at_key} 不可用"
-            )
 
     def test_serverchan_adds_convenience_but_loses_advanced_features(self):
         """Server酱 提供多通道统一入口，但牺牲了各通道的高级特性

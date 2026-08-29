@@ -23,8 +23,15 @@ import pytest
 from onepush import get_notifier
 from onepush.providers.dingtalk import DingTalk
 
+from tests import make_mobile_number, mask_mobile_number
+
 # 测试用的图片 URL（公开可访问的示例图片）
 TEST_IMAGE_URL = "https://img.alicdn.com/tfs/TB1NwmBEL9TBuNjy1zbXXXpepXa-2400-1218.png"
+
+# 手机号样本在导入时随机生成，避免仓库内出现完整号码字面量
+MOBILE = make_mobile_number()
+MOBILE_ALT = make_mobile_number(exclude=(MOBILE,))
+MOBILE_MASKED = mask_mobile_number(MOBILE)
 
 
 class TestDingTalkProviderParams:
@@ -105,8 +112,12 @@ class TestDingTalkMarkdownMessageData:
         assert dingtalk.data["markdown"]["title"] == "Markdown 标题"
         assert "# Hello" in dingtalk.data["markdown"]["text"]
 
-    def test_markdown_with_image_syntax(self):
-        """Markdown 消息中可嵌入图片语法（变通方案）"""
+    def test_image_payload_preserves_content(self):
+        """验证 OnePush 构造的 markdown 请求体原样透传图片语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         markdown_content = (
             f"## 图片推送测试\n\n"
@@ -239,21 +250,20 @@ class TestDingTalkNotifyFlow:
         assert "markdown" not in captured_data["json"]
 
 
-class TestWebhookImageMessageLimitation:
-    """验证钉钉 Webhook 方式不支持 image 消息类型的说明"""
+class TestDingTalkImagePayloadContract:
+    """验证 OnePush 构造的钉钉图片相关请求体结构（内容透传契约）
 
-    def test_webhook_does_not_support_image_msgtype(self):
-        """钉钉 Webhook 方式不支持 msgtype: 'image' 的消息类型
+    本类用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+    实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+    """
 
-        这是钉钉 API 自身的限制，不是 OnePush 的问题。
-        参考文档: https://open.dingtalk.com/document/development/robot-message-type
+    def test_image_payload_does_not_emit_image_field(self):
+        """验证 OnePush 构造的钉钉请求体不会产生 msgtype 为 image 的字段
 
-        消息类型对比:
-        - text:    Webhook ✅ | 接口 ✅
-        - markdown: Webhook ✅ | 接口 ✅
-        - image:   Webhook ❌ | 接口 ✅
-        - link:    Webhook ✅ | 接口 ✅
-        - feedCard: Webhook ✅ | 接口 ❌
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档
+        (https://open.dingtalk.com/document/development/robot-message-type)
+        或可追溯人工验证为准。
         """
         dingtalk = DingTalk()
         # 确认 OnePush 的 DingTalk 提供者仅支持 text 和 markdown
@@ -341,198 +351,22 @@ class TestAtMentionDataStructure:
             "OnePush 当前不支持 at 字段，@ 功能需直接构造请求"
         )
 
-    def test_text_at_all_data_structure(self):
-        """text 消息 @所有人 的正确数据结构"""
-        body = {
-            "msgtype": "text",
-            "text": {
-                "content": "【通知】@所有人 请查看测试结果。"
-            },
-            "at": {
-                "isAtAll": True
-            }
-        }
-        assert body["msgtype"] == "text"
-        assert "@所有人" in body["text"]["content"]
-        assert body["at"]["isAtAll"] is True
 
-    def test_text_at_user_by_userid_data_structure(self):
-        """text 消息 @指定人(userId) 需使用企业通讯录中的真实 userId
+class TestDingTalkMarkdownContentPassthrough:
+    """验证 OnePush 构造的 markdown 请求体对各类语法内容的内容透传
 
-        注意：atUserIds 必须使用企业通讯录 API 返回的真实 userId
-        （如 052345678901），昵称（如 NEANC）无效。
-        实际测试中 @NEANC 不会触发红点通知。
-        """
-        body = {
-            "msgtype": "text",
-            "text": {
-                "content": "【提醒】@052345678901 请查收。"
-            },
-            "at": {
-                "atUserIds": ["052345678901"],
-                "isAtAll": False
-            }
-        }
-        assert body["msgtype"] == "text"
-        # userId 是数字格式，不是昵称
-        assert body["at"]["atUserIds"][0].isdigit(), (
-            "atUserIds 必须是企业通讯录中的真实数字 userId，昵称无效"
-        )
-        assert body["at"]["isAtAll"] is False
-
-    def test_text_at_user_by_mobile_data_structure(self):
-        """text 消息 @指定人(手机号) 的正确数据结构"""
-        body = {
-            "msgtype": "text",
-            "text": {
-                "content": "【提醒】@13800138000 请查收。"
-            },
-            "at": {
-                "atMobiles": ["13800138000"],
-                "isAtAll": False
-            }
-        }
-        assert body["msgtype"] == "text"
-        assert "@13800138000" in body["text"]["content"]
-        assert "13800138000" in body["at"]["atMobiles"]
-        assert body["at"]["isAtAll"] is False
-
-    def test_text_at_multiple_users_data_structure(self):
-        """text 消息 @多人 的正确数据结构"""
-        body = {
-            "msgtype": "text",
-            "text": {
-                "content": "@user1 @user2 请查看。"
-            },
-            "at": {
-                "atUserIds": ["user1", "user2"],
-                "isAtAll": False
-            }
-        }
-        assert len(body["at"]["atUserIds"]) == 2
-        assert "user1" in body["at"]["atUserIds"]
-        assert "user2" in body["at"]["atUserIds"]
-
-    def test_markdown_at_all_data_structure(self):
-        """markdown 消息 @所有人 的正确数据结构"""
-        body = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": "通知标题",
-                "text": "## 通知\n\n@所有人 请查看以下内容。\n\n> 重要通知"
-            },
-            "at": {
-                "isAtAll": True
-            }
-        }
-        assert body["msgtype"] == "markdown"
-        assert "@所有人" in body["markdown"]["text"]
-        assert body["at"]["isAtAll"] is True
-
-    def test_markdown_at_user_by_userid_data_structure(self):
-        """markdown 消息 @指定人(userId) 需使用真实数字 userId"""
-        body = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": "提醒",
-                "text": "## 提醒\n\n@052345678901 请查看测试结果。\n\n> 来自 OnePush"
-            },
-            "at": {
-                "atUserIds": ["052345678901"],
-                "isAtAll": False
-            }
-        }
-        assert body["msgtype"] == "markdown"
-        assert body["at"]["atUserIds"] == ["052345678901"]
-        assert body["at"]["isAtAll"] is False
-
-    def test_text_at_user_by_mobile_effective_approach(self):
-        """text 消息 @指定人推荐使用 atMobiles 手机号方式（最可靠）
-
-        对于自定义 Webhook 机器人，atMobiles 方式不需要额外 API 调用获取 userId，
-        只需知道用户的钉钉绑定手机号即可，是最简单的 @指定人方式。
-
-        实际验证：使用 atMobiles=['1**********'] 发送成功，状态码 200。
-        """
-        body = {
-            "msgtype": "text",
-            "text": {
-                "content": "【提醒】@1********** 请查收。"
-            },
-            "at": {
-                "atMobiles": ["1**********"],
-                "isAtAll": False
-            }
-        }
-        assert body["msgtype"] == "text"
-        assert "@1**********" in body["text"]["content"]
-        assert body["at"]["atMobiles"] == ["1**********"]
-        assert body["at"]["isAtAll"] is False
-
-    def test_markdown_at_user_by_mobile_data_structure(self):
-        """markdown 消息 @指定人(手机号) 的正确数据结构
-
-        实测验证：Markdown 消息的 atMobiles @指定人也有效，
-        包括开头纯 @、## 标题后 @、引用+列表混合 等多种样式。
-        """
-        body = {
-            "msgtype": "markdown",
-            "markdown": {
-                "title": "提醒",
-                "text": "## 通知\n\n@1********** 请查收。\n\n> 引用\n\n- 列表项"
-            },
-            "at": {
-                "atMobiles": ["1**********"],
-                "isAtAll": False
-            }
-        }
-        assert body["msgtype"] == "markdown"
-        assert "@1**********" in body["markdown"]["text"]
-        assert body["at"]["atMobiles"] == ["1**********"]
-        assert body["at"]["isAtAll"] is False
-
-    def test_at_requires_both_content_and_at_field(self):
-        """@ 功能必须同时满足两个条件：content 中有 @文本 且 at 字段正确设置
-
-        参考文档：https://open.dingtalk.com/document/development/custom-robots-send-group-messages
-        """
-        # 只在 content 中写 @所有人，但 at 字段不设置 → 不会真正 @
-        body_no_at = {
-            "msgtype": "text",
-            "text": {"content": "@所有人 测试"},
-        }
-        assert "at" not in body_no_at
-
-        # 正确方式：content 中有 @所有人 + at.isAtAll = True
-        body_with_at = {
-            "msgtype": "text",
-            "text": {"content": "@所有人 测试"},
-            "at": {"isAtAll": True},
-        }
-        assert "at" in body_with_at
-        assert "@所有人" in body_with_at["text"]["content"]
-        assert body_with_at["at"]["isAtAll"] is True
-
-
-class TestDingTalkMarkdownFullSyntax:
-    """测试钉钉 Markdown 支持的全部语法
-
-    钉钉 Markdown 支持以下语法（参考官方文档）：
-    - 标题（# ~ ######）
-    - 引用（>）
-    - 加粗（**text**）、斜体（*text*）
-    - 链接（[text](url)）
-    - 图片（![alt](url)）
-    - 无序列表（- 或 *）
-    - 有序列表（1. 2. 3.）
-
-    不支持：表格、代码块、删除线、任务列表等。
+    本类用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+    实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
     """
 
     IMG = "https://example.com/test.png"
 
-    def test_all_headings(self):
-        """所有六级标题语法"""
+    def test_headings_content_passthrough(self):
+        """验证 markdown 请求体原样透传六级标题语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "# 一级标题\n\n"
@@ -548,8 +382,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "## 二级标题" in data["markdown"]["text"]
         assert "###### 六级标题" in data["markdown"]["text"]
 
-    def test_bold_and_italic(self):
-        """加粗和斜体语法"""
+    def test_bold_italic_content_passthrough(self):
+        """验证 markdown 请求体原样透传加粗与斜体语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "**加粗文字** 和 *斜体文字* 以及 **加粗 *嵌套斜体* 文字**"
         dingtalk._prepare_data(title="文字效果", content=content, markdown=True)
@@ -558,8 +396,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "*斜体文字*" in data["markdown"]["text"]
         assert "**加粗 *嵌套斜体* 文字**" in data["markdown"]["text"]
 
-    def test_quote(self):
-        """引用语法"""
+    def test_quote_content_passthrough(self):
+        """验证 markdown 请求体原样透传引用语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "> 这是一段引用文字。\n> 引用可以有多行。"
         dingtalk._prepare_data(title="引用测试", content=content, markdown=True)
@@ -567,8 +409,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "> 这是一段引用文字。" in data["markdown"]["text"]
         assert "> 引用可以有多行。" in data["markdown"]["text"]
 
-    def test_link(self):
-        """链接语法"""
+    def test_link_content_passthrough(self):
+        """验证 markdown 请求体原样透传链接语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "请访问 [OnePush](https://github.com/y1ndan/onepush) 了解更多。\n"
@@ -579,16 +425,24 @@ class TestDingTalkMarkdownFullSyntax:
         assert "[OnePush](https://github.com/y1ndan/onepush)" in data["markdown"]["text"]
         assert "[钉钉文档](https://open.dingtalk.com/)" in data["markdown"]["text"]
 
-    def test_image(self):
-        """图片语法"""
+    def test_image_content_passthrough(self):
+        """验证 markdown 请求体原样透传图片语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = f"![示例图片]({self.IMG})"
         dingtalk._prepare_data(title="图片测试", content=content, markdown=True)
         data = dingtalk.data
         assert f"![示例图片]({self.IMG})" in data["markdown"]["text"]
 
-    def test_unordered_list(self):
-        """无序列表语法（- 和 *）"""
+    def test_unordered_list_content_passthrough(self):
+        """验证 markdown 请求体原样透传无序列表语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "- 第一项\n"
@@ -603,8 +457,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "- 第三项" in data["markdown"]["text"]
         assert "* 星号列表项1" in data["markdown"]["text"]
 
-    def test_ordered_list(self):
-        """有序列表语法"""
+    def test_ordered_list_content_passthrough(self):
+        """验证 markdown 请求体原样透传有序列表语法内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "1. 第一步：安装依赖\n"
@@ -617,8 +475,12 @@ class TestDingTalkMarkdownFullSyntax:
         assert "1. 第一步" in data["markdown"]["text"]
         assert "4. 第四步" in data["markdown"]["text"]
 
-    def test_full_syntax_combined(self):
-        """全语法组合测试：标题 + 引用 + 加粗斜体 + 链接 + 图片 + 列表 + @"""
+    def test_combined_syntax_content_passthrough(self):
+        """验证 markdown 请求体原样透传多语法组合内容
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = (
             "# OnePush 推送能力测试\n\n"
@@ -659,23 +521,35 @@ class TestDingTalkMarkdownFullSyntax:
         assert "1. 获取 Webhook" in data["markdown"]["text"]
         assert "###### 测试完成" in data["markdown"]["text"]
 
-    def test_unsupported_syntax_table(self):
-        """钉钉 Markdown 不支持表格语法（已知限制）"""
+    def test_markdown_table_content_passthrough(self):
+        """验证 markdown 请求体原样透传表格语法文本（内容透传契约）
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "| 列1 | 列2 |\n| --- | --- |\n| A | B |"
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
         data = dingtalk.data
         # 表格语法会原样发送，但钉钉不会渲染为表格
-        assert "|" in data["markdown"]["text"]
+        assert data["msgtype"] == "markdown"
+        assert data["markdown"]["title"] == "不支持语法"
+        assert data["markdown"]["text"] == content
 
-    def test_unsupported_syntax_code_block(self):
-        """钉钉 Markdown 不支持代码块语法（已知限制）"""
+    def test_markdown_code_block_content_passthrough(self):
+        """验证 markdown 请求体原样透传代码块语法文本（内容透传契约）
+
+        本用例仅验证 TwoPush/OnePush 构造的请求体结构，不代表钉钉平台的
+        实际渲染/拒绝行为；平台能力结论以官方文档或可追溯人工验证为准。
+        """
         dingtalk = DingTalk()
         content = "```python\nprint('hello')\n```"
         dingtalk._prepare_data(title="不支持语法", content=content, markdown=True)
         data = dingtalk.data
         # 代码块语法会原样发送，但钉钉不会渲染为代码块
-        assert "```" in data["markdown"]["text"]
+        assert data["msgtype"] == "markdown"
+        assert data["markdown"]["title"] == "不支持语法"
+        assert data["markdown"]["text"] == content
 
 
 class TestOnePushHighLevelAPI:
@@ -718,3 +592,1935 @@ class TestOnePushHighLevelAPI:
         )
         assert response is not None
         assert response.text == '{"errcode": 0, "errmsg": "ok"}'
+
+
+class TestTwoPushDingTalkRouting:
+    """测试 TwoPush 钉钉增强路径与 OnePush 原路径互斥。"""
+
+    def test_dingtalk_without_enhanced_params_uses_onepush(self, monkeypatch):
+        """未携带增强参数时应继续调用 OnePush。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        class FakeNotifier:
+            def request(self, *args, **kwargs):
+                """占位请求函数，满足安全注入契约。"""
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+            def notify(self, **kwargs):
+                calls["onepush"] += 1
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+        def fake_get_notifier(provider):
+            assert provider == "dingtalk"
+            return FakeNotifier()
+
+        def fake_direct(*args, **kwargs):
+            calls["direct"] += 1
+            return unittest.mock.MagicMock()
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        result = notification._notify_single_channel(
+            {"provider": "dingtalk", "token": "token-only"},
+            "标题",
+            "内容",
+            0,
+            1,
+            unittest.mock.MagicMock(),
+        )
+
+        assert result is True
+        assert calls == {"onepush": 1, "direct": 0}
+
+    def test_dingtalk_with_enhanced_params_uses_direct_once(self, monkeypatch):
+        """携带增强参数时应只调用 TwoPush 直发路径一次。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        def fake_get_notifier(provider):
+            calls["onepush"] += 1
+            raise AssertionError("增强钉钉通道不应调用 OnePush")
+
+        def fake_direct(channel, title, content, validated_url=None):
+            """记录增强路由收到的预构造 URL。"""
+            assert validated_url == (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=token-only"
+            )
+            calls["direct"] += 1
+            response = unittest.mock.MagicMock()
+            response.status_code = 200
+            response.text = '{"errcode": 0, "errmsg": "ok"}'
+            response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            return response
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        result = notification._notify_single_channel(
+            {
+                "provider": "dingtalk",
+                "token": "token-only",
+                "msgtype": "markdown",
+                "at": [MOBILE],
+            },
+            "标题",
+            "内容",
+            0,
+            1,
+            unittest.mock.MagicMock(),
+        )
+
+        assert result is True
+        assert calls == {"onepush": 0, "direct": 1}
+
+
+class TestIsEnhancedDingtalkChannel:
+    """测试 _is_enhanced_dingtalk_channel 的增强路径判定。"""
+
+    def test_at_null_does_not_trigger_enhanced_path(self):
+        """显式 at 为 None 时不应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel("dingtalk", {"at": None}) is False
+
+    def test_none_value_keys_do_not_trigger_enhanced_path(self):
+        """多个增强键值均为 None 时不应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"at": None, "isAtAll": None}
+        ) is False
+
+    def test_non_none_enhanced_values_still_trigger(self):
+        """增强键存在且值非 None 时应触发钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"at": [MOBILE]}
+        ) is True
+        assert _is_enhanced_dingtalk_channel(
+            "dingtalk", {"msgtype": "markdown"}
+        ) is True
+
+    def test_non_dingtalk_provider_never_enhanced(self):
+        """非钉钉渠道即使携带增强键也不应走钉钉直发增强路径。"""
+        from modules.notification import _is_enhanced_dingtalk_channel
+
+        assert _is_enhanced_dingtalk_channel(
+            "serverchan", {"at": [MOBILE]}
+        ) is False
+
+
+class TestTwoPushDingTalkUrlBuilder:
+    """测试 TwoPush 钉钉 Webhook URL 构造。"""
+
+    def test_token_only_builds_webhook_url(self):
+        """仅传 access token 时应拼接钉钉 Webhook URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123")
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+
+    def test_full_webhook_url_is_reused(self):
+        """完整 Webhook URL 不应重复追加 access_token。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+        assert url.count("access_token=") == 1
+
+    def test_token_with_secret_adds_sign(self):
+        """token + secret 应生成 timestamp 与 sign。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123", secret="SECtest")
+
+        assert "access_token=abc123" in url
+        assert "timestamp=" in url
+        assert "sign=" in url
+
+    def test_full_url_with_secret_does_not_duplicate_access_token(self):
+        """完整 URL 加签时不应重复追加 access_token。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(full_url, secret="SECtest")
+
+        assert url.count("access_token=") == 1
+        assert "timestamp=" in url
+        assert "sign=" in url
+
+    def test_existing_sign_params_are_replaced(self):
+        """已有 timestamp/sign 时应以本次生成值覆盖，避免重复参数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "access_token=abc123&timestamp=old&sign=old"
+        )
+        url = _build_dingtalk_webhook_url(full_url, secret="SECtest")
+
+        assert url.count("timestamp=") == 1
+        assert url.count("sign=") == 1
+        assert "timestamp=old" not in url
+        assert "sign=old" not in url
+
+    @pytest.mark.parametrize(
+        "full_url",
+        [
+            "http://oapi.dingtalk.com/robot/send?access_token=abc123",
+            "HTTP://oapi.dingtalk.com/robot/send?access_token=abc123",
+            "http://oapi.dingtalk.com:80/robot/send?access_token=abc123",
+        ],
+    )
+    def test_http_full_webhook_url_raises_value_error(self, full_url):
+        """HTTP 完整 Webhook URL 应因未使用 HTTPS 而被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="HTTPS"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_non_http_scheme_is_treated_as_token(self):
+        """非 http(s) scheme 的地址不应被静默当作裸 token，应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        token = "ftp://example.com/robot/send?access_token=abc123"
+
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url(token)
+
+    def test_schemeless_query_string_raises_value_error(self):
+        """无 scheme 但含 query（=）特征时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url(
+                "oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+    def test_scheme_without_netloc_is_not_full_url(self):
+        """仅有 scheme 而无 netloc 时不应视为完整 URL，且因含协议特征应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url, _is_full_url
+
+        assert _is_full_url("https://") is False
+        assert _is_full_url("http://") is False
+
+        with pytest.raises(ValueError, match="URL"):
+            _build_dingtalk_webhook_url("http://")
+
+    def test_http_scheme_case_insensitive(self):
+        """大写 http(s) scheme 应同样被识别为完整 URL。"""
+        from modules.notification import _is_full_url
+
+        assert _is_full_url(
+            "HTTPS://oapi.dingtalk.com/robot/send?access_token=abc123"
+        ) is True
+        assert _is_full_url(
+            "HTTP://oapi.dingtalk.com/robot/send?access_token=abc123"
+        ) is True
+
+    @pytest.mark.parametrize("control_code", [*range(32), 127])
+    def test_full_url_with_ascii_control_character_raises_value_error(
+        self, control_code
+    ):
+        """完整 URL 包含 ASCII C0 或 DEL 时应抛出明确配置错误。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            f"ht{chr(control_code)}tps://oapi.dingtalk.com/robot/send?"
+            "access_token=abc123"
+        )
+
+        with pytest.raises(ValueError, match="控制字符"):
+            _build_dingtalk_webhook_url(full_url)
+
+    @pytest.mark.parametrize("control_character", ["\n", "\t", "\r", "\x00", "\x7f"])
+    @pytest.mark.parametrize("position", ["prefix", "suffix"])
+    def test_full_url_with_edge_control_character_raises_value_error(
+        self, control_character, position
+    ):
+        """原始完整 URL 首尾控制字符不得被 strip 静默移除。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        value = (
+            f"{control_character}{full_url}"
+            if position == "prefix"
+            else f"{full_url}{control_character}"
+        )
+
+        with pytest.raises(ValueError, match="控制字符"):
+            _build_dingtalk_webhook_url(value)
+
+    @pytest.mark.parametrize("scheme", ["https", "HTTPS", "HtTpS"])
+    def test_full_url_normalizes_https_scheme(self, scheme):
+        """完整 URL 应接受大小写不敏感的 HTTPS 并输出小写 scheme。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            f"{scheme}://oapi.dingtalk.com/robot/send?access_token=abc123"
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        )
+
+    def test_full_url_without_access_token_raises_value_error(self):
+        """完整 Webhook URL 缺少 access_token 参数时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url("https://oapi.dingtalk.com/robot/send")
+
+    def test_full_url_without_access_token_with_secret_raises_value_error(self):
+        """完整 Webhook URL 缺少 access_token 时即使加签也应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send",
+                secret="SECtest",
+            )
+
+    def test_non_dingtalk_domain_full_url_raises_value_error(self):
+        """非钉钉域名的完整 Webhook URL 应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="oapi.dingtalk.com"):
+            _build_dingtalk_webhook_url(
+                "https://example.com/robot/send?access_token=abc123"
+            )
+
+    def test_non_dingtalk_domain_with_secret_raises_value_error(self):
+        """非钉钉域名（如内网地址）即使加签也应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="oapi.dingtalk.com"):
+            _build_dingtalk_webhook_url(
+                "https://internal.local/robot/send?access_token=abc123",
+                secret="SECtest",
+            )
+
+    @pytest.mark.parametrize("hostname", ["oapi.dingtalk.com", "OAPI.DINGTALK.COM"])
+    @pytest.mark.parametrize("port", ["", ":443"])
+    def test_full_url_normalizes_hostname_and_default_port(self, hostname, port):
+        """官方域名应输出小写并移除显式默认端口。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            f"https://{hostname}{port}/robot/send?access_token=abc123"
+        )
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+
+    @pytest.mark.parametrize(
+        "userinfo",
+        [
+            "user@",
+            "user:@",
+            "user:password@",
+            "%75ser@",
+            "user:%70assword@",
+        ],
+    )
+    def test_full_url_with_userinfo_raises_value_error(self, userinfo):
+        """完整 URL authority 包含任意 userinfo 时应拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="用户信息"):
+            _build_dingtalk_webhook_url(
+                f"https://{userinfo}oapi.dingtalk.com/robot/send?"
+                "access_token=abc123"
+            )
+
+    @pytest.mark.parametrize("port", [444, 8443])
+    def test_full_url_with_non_standard_numeric_port_raises_value_error(self, port):
+        """完整 URL 仅允许省略端口或显式使用 443。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="443"):
+            _build_dingtalk_webhook_url(
+                f"https://oapi.dingtalk.com:{port}/robot/send?access_token=abc123"
+            )
+
+    @pytest.mark.parametrize("port", ["bad", "99999"])
+    def test_full_url_with_invalid_port_raises_configuration_value_error(self, port):
+        """非法或越界端口应转换为明确的配置 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="端口"):
+            _build_dingtalk_webhook_url(
+                f"https://oapi.dingtalk.com:{port}/robot/send?access_token=abc123"
+            )
+
+    @pytest.mark.parametrize("port", ["", "00443", "+443"])
+    def test_full_url_rejects_noncanonical_raw_port(self, port):
+        """完整 URL 应拒绝空端口和非规范的 443 原始拼写。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="端口"):
+            _build_dingtalk_webhook_url(
+                f"https://oapi.dingtalk.com:{port}/robot/send?access_token=abc123"
+            )
+
+    @pytest.mark.parametrize(
+        "full_url",
+        [
+            "https://evil.example:444/robot/send?access_token=abc123",
+            "https://[::1]:444/robot/send?access_token=abc123",
+        ],
+    )
+    def test_invalid_host_error_precedes_port_error(self, full_url):
+        """其他域名和 IPv6 应先按非官方域名拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError) as exc:
+            _build_dingtalk_webhook_url(full_url)
+
+        assert "域名" in str(exc.value)
+        assert "端口" not in str(exc.value)
+
+    def test_non_standard_path_full_url_raises_value_error(self):
+        """完整 Webhook URL 使用非标准路径时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="robot/send"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/other/path?access_token=abc123"
+            )
+
+    def test_trailing_slash_path_raises_value_error(self):
+        """完整 Webhook URL 路径带尾部斜杠（非标准路径）时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="robot/send"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send/?access_token=abc123"
+            )
+
+    def test_sign_is_encoded_exactly_once(self):
+        """sign 在最终 URL 中应只被 URL 编码一次，可正确解码回原始字节。"""
+        import base64
+        import hashlib
+        import hmac
+        import time
+        from urllib.parse import parse_qsl, urlsplit
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("abc123", secret="SECtest")
+
+        query = dict(parse_qsl(urlsplit(url).query))
+        assert "%25" not in url, "sign 不应被双重 URL 编码"
+
+        timestamp = query["timestamp"]
+        string_to_sign = f"{timestamp}\nSECtest"
+        expected = base64.b64encode(
+            hmac.new(
+                b"SECtest",
+                string_to_sign.encode("utf-8"),
+                digestmod=hashlib.sha256,
+            ).digest()
+        ).decode("utf-8")
+
+        assert query["sign"] == expected
+
+    def test_empty_access_token_value_raises_value_error(self):
+        """完整 Webhook URL 的 access_token 值为空时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token="
+            )
+
+    def test_blank_access_token_value_raises_value_error(self):
+        """完整 Webhook URL 的 access_token 值为空白时应抛出 ValueError。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="access_token"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=%20%20"
+            )
+
+    def test_multiple_access_tokens_one_non_empty_passes(self):
+        """多个 access_token 参数中至少一个非空时应放行。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=&access_token=abc"
+        )
+        url = _build_dingtalk_webhook_url(full_url)
+
+        assert url == full_url
+
+    def test_full_url_normalizes_query_encoding_and_preserves_pairs(self):
+        """完整 URL query 应规范编码并保留重复键、空值与顺序。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "x=&access%5ftoken=abc&x=1&access_token="
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == (
+            "https://oapi.dingtalk.com/robot/send?"
+            "x=&access_token=abc&x=1&access_token="
+        )
+
+    @pytest.mark.parametrize("extra_length", [0, 1])
+    def test_full_url_length_limit(self, extra_length):
+        """完整 Webhook URL 正好达到上限时接受，超过一个字符时拒绝。"""
+        from modules.notification import (
+            DINGTALK_WEBHOOK_MAX_URL_LENGTH,
+            _build_dingtalk_webhook_url,
+        )
+
+        prefix = "https://oapi.dingtalk.com/robot/send?access_token="
+        full_url = prefix + "a" * (
+            DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix) + extra_length
+        )
+
+        if extra_length == 0:
+            assert _build_dingtalk_webhook_url(full_url) == full_url
+            return
+
+        with pytest.raises(ValueError, match="长度|8192"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_full_url_rejects_normalized_url_over_length_limit(self):
+        """完整 URL 规范编码后超过长度上限时应拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token="
+            + "中" * 1000
+        )
+
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_secret_signing_can_push_final_url_over_length_limit(
+        self, monkeypatch
+    ):
+        """未加签可用的边界 URL 在追加固定签名后超限应拒绝。"""
+        import modules.notification as notification
+
+        prefix = "https://oapi.dingtalk.com/robot/send?access_token="
+        full_url = prefix + "a" * (
+            notification.DINGTALK_WEBHOOK_MAX_URL_LENGTH - len(prefix)
+        )
+        monkeypatch.setattr(
+            notification,
+            "_make_dingtalk_sign",
+            lambda secret: ("1", "s" * 44),
+        )
+
+        assert notification._build_dingtalk_webhook_url(full_url) == full_url
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            notification._build_dingtalk_webhook_url(
+                full_url,
+                secret="SECtest",
+            )
+
+    @pytest.mark.parametrize("parameter_count", [100, 101])
+    def test_full_url_query_parameter_limit(self, parameter_count):
+        """完整 URL query 接受 100 个参数并拒绝 101 个参数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        pairs = ["access_token=abc123"]
+        pairs.extend(f"x={index}" for index in range(parameter_count - 1))
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+        )
+
+        if parameter_count == 100:
+            assert _build_dingtalk_webhook_url(full_url) == full_url
+            return
+
+        with pytest.raises(ValueError, match="参数|100"):
+            _build_dingtalk_webhook_url(full_url)
+
+    @pytest.mark.parametrize("invalid_utf8", ["%FF", "%E4%B8"])
+    def test_full_url_query_rejects_invalid_utf8(self, invalid_utf8):
+        """query 中非法或截断的 UTF-8 百分号字节序列应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123&x="
+            f"{invalid_utf8}"
+        )
+
+        with pytest.raises(ValueError, match="合法 UTF-8") as exc_info:
+            _build_dingtalk_webhook_url(full_url)
+
+        assert "参数不得超过" not in str(exc_info.value)
+
+    def test_full_url_query_field_limit_has_dedicated_message(self):
+        """超过 100 个用户 query 参数时应返回独立数量错误。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        pairs = ["access_token=abc123"]
+        pairs.extend(f"x={index}" for index in range(100))
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?" + "&".join(pairs)
+        )
+
+        with pytest.raises(ValueError, match="参数不得超过 100") as exc_info:
+            _build_dingtalk_webhook_url(full_url)
+
+        assert "合法 UTF-8" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        ("suffix", "accepted"),
+        [
+            ("&" * 99, True),
+            ("&" * 102, False),
+            ("&x=" + "&" * 98, True),
+            ("&x=" + "&" * 101, False),
+        ],
+    )
+    def test_query_field_limit_counts_blank_and_consecutive_fields(
+        self, suffix, accepted
+    ):
+        """空字段与连续分隔符应按 max_num_fields 的字段语义计数。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            f"{suffix}"
+        )
+
+        if accepted:
+            assert "access_token=abc123" in _build_dingtalk_webhook_url(
+                full_url
+            )
+            return
+
+        with pytest.raises(ValueError, match="参数总数（含签名字段）不得超过 102"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_query_field_limit_is_checked_before_parse_qsl(self, monkeypatch):
+        """字段超限应在解析前确定，不依赖解析器异常文本。"""
+        import modules.notification as notification
+
+        parse_calls = []
+
+        def fail_parse(*args, **kwargs):
+            """记录不应发生的解析调用。"""
+            parse_calls.append((args, kwargs))
+            raise ValueError("本地化字段数量错误")
+
+        monkeypatch.setattr(notification, "parse_qsl", fail_parse)
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            + "&".join(["access_token=abc123"] + ["x="] * 102)
+        )
+
+        with pytest.raises(ValueError, match="参数总数（含签名字段）不得超过 102"):
+            notification._build_dingtalk_webhook_url(full_url)
+
+        assert parse_calls == []
+
+    def test_empty_query_has_zero_fields_before_parse(self, monkeypatch):
+        """空 query 应按零字段处理并继续交给解析器。"""
+        import modules.notification as notification
+
+        parse_calls = []
+
+        def record_parse(query, **kwargs):
+            """记录空 query 解析并返回空字段列表。"""
+            parse_calls.append((query, kwargs))
+            return []
+
+        monkeypatch.setattr(notification, "parse_qsl", record_parse)
+
+        assert notification._parse_dingtalk_query("", "测试 URL") == []
+        assert len(parse_calls) == 1
+        assert parse_calls[0][0] == ""
+
+    def test_other_query_value_error_uses_generic_parse_message(
+        self, monkeypatch
+    ):
+        """非字段数量类 ValueError 应归入通用 query 解析错误。"""
+        import modules.notification as notification
+
+        def fail_parse(*args, **kwargs):
+            raise ValueError("conversion failed")
+
+        monkeypatch.setattr(notification, "parse_qsl", fail_parse)
+
+        with pytest.raises(ValueError, match="query 解析失败") as exc_info:
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+        message = str(exc_info.value)
+        assert "合法 UTF-8" not in message
+        assert "参数不得超过" not in message
+
+    def test_full_url_query_accepts_valid_encoded_chinese(self):
+        """query 中合法 UTF-8 中文百分号编码应正常解码并规范化。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?"
+            "access_token=abc123&name=%E4%B8%AD%E6%96%87"
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == full_url
+
+    @pytest.mark.parametrize("invalid_percent", ["%", "%2", "%ZZ", "%2Z"])
+    def test_full_url_query_rejects_invalid_percent_escape(self, invalid_percent):
+        """query 中所有非合法 %HH 转义均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc123&x="
+            f"{invalid_percent}"
+        )
+
+        with pytest.raises(ValueError, match="百分号|percent|%HH"):
+            _build_dingtalk_webhook_url(full_url)
+
+    @pytest.mark.parametrize("suffix", ["#", "?#", "#section"])
+    def test_full_url_with_fragment_delimiter_raises_value_error(self, suffix):
+        """完整 URL 只要存在 fragment 分隔符就应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="fragment|片段"):
+            _build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?"
+                f"access_token=abc123{suffix}"
+            )
+
+    def test_plain_token_with_hash_remains_url_encoded(self):
+        """含井号的裸 token 不应被误判为完整 URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        assert _build_dingtalk_webhook_url("abc#section") == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc%23section"
+        )
+
+    @pytest.mark.parametrize(
+        "encoded_character",
+        [
+            "%00",
+            "%0A",
+            "%0a",
+            "%09",
+            "%C2%85",
+            "%c2%85",
+            "%E2%80%8B",
+            "%e2%80%8b",
+        ],
+    )
+    @pytest.mark.parametrize("position", ["key", "value"])
+    def test_decoded_query_control_or_format_character_raises_value_error(
+        self, encoded_character, position
+    ):
+        """query 键值解码后出现 Unicode Cc/Cf 字符均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        hidden_pair = (
+            f"x{encoded_character}=safe"
+            if position == "key"
+            else f"access_token=safe{encoded_character}"
+        )
+        suffix = "&access_token=abc123" if position == "key" else ""
+        full_url = "https://oapi.dingtalk.com/robot/send?" f"{hidden_pair}{suffix}"
+
+        with pytest.raises(ValueError, match="控制|格式"):
+            _build_dingtalk_webhook_url(full_url)
+
+    def test_double_encoded_query_control_sequence_is_accepted(self):
+        """双编码控制字符按一次 URL 解码语义应保留为字面量。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = (
+            "https://oapi.dingtalk.com/robot/send?access_token=%2500&x=%250A"
+        )
+
+        assert _build_dingtalk_webhook_url(full_url) == full_url
+
+    def test_domain_error_prioritized_over_missing_access_token(self):
+        """域名错误应优先于缺失 access_token 报错。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError) as exc:
+            _build_dingtalk_webhook_url("https://evil.com/robot/send")
+
+        assert "域名" in str(exc.value)
+        assert "access_token" not in str(exc.value)
+
+    def test_path_error_prioritized_over_missing_access_token(self):
+        """路径错误应优先于缺失 access_token 报错。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError) as exc:
+            _build_dingtalk_webhook_url("https://oapi.dingtalk.com/other/path")
+
+        assert "路径" in str(exc.value)
+        assert "access_token" not in str(exc.value)
+
+    def test_whitespace_padded_token_is_stripped(self):
+        """带首尾空白的裸 token 应先 strip 再拼接 Webhook URL。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        url = _build_dingtalk_webhook_url("  abc123  ")
+
+        assert url == "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+
+    def test_whitespace_padded_full_url_is_stripped(self):
+        """带首尾空白的完整 Webhook URL 应先 strip 再原样复用。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        full_url = "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+        url = _build_dingtalk_webhook_url(f"  {full_url}  ")
+
+        assert url == full_url
+
+    @pytest.mark.parametrize("edge_character", ["\u00a0", "\u3000", "\u2028"])
+    @pytest.mark.parametrize("position", ["prefix", "suffix"])
+    def test_non_ascii_edge_whitespace_raises_value_error(
+        self, edge_character, position
+    ):
+        """原始 token 首尾非普通空格的空白字符应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        token = "abc123"
+        value = (
+            f"{edge_character}{token}"
+            if position == "prefix"
+            else f"{token}{edge_character}"
+        )
+
+        with pytest.raises(ValueError, match="空白"):
+            _build_dingtalk_webhook_url(value)
+
+    @pytest.mark.parametrize(
+        "value_template",
+        [
+            "abc{character}123",
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "x{character}=safe&access_token=abc123"
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=abc{character}123"
+            ),
+        ],
+        ids=["token", "url-key", "url-value"],
+    )
+    @pytest.mark.parametrize(
+        "hidden_character",
+        ["\u0085", "\u200b", "\u2060"],
+        ids=["U+0085", "U+200B", "U+2060"],
+    )
+    def test_unicode_control_or_format_character_raises_value_error(
+        self, value_template, hidden_character
+    ):
+        """裸 token 与完整 URL 中的 Unicode Cc/Cf 字符均应被拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        value = value_template.format(character=hidden_character)
+
+        with pytest.raises(ValueError, match="控制|格式"):
+            _build_dingtalk_webhook_url(value)
+
+    @pytest.mark.parametrize(
+        "value_template",
+        [
+            "abc{character}123",
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "x{character}=safe&access_token=abc123"
+            ),
+            (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=abc{character}123"
+            ),
+        ],
+        ids=["token", "url-key", "url-value"],
+    )
+    @pytest.mark.parametrize(
+        "surrogate",
+        ["\ud800", "\udbff", "\udc00", "\udfff"],
+        ids=["U+D800", "U+DBFF", "U+DC00", "U+DFFF"],
+    )
+    def test_literal_unicode_surrogate_raises_plain_value_error(
+        self, value_template, surrogate
+    ):
+        """裸 token 与完整 URL 原文中的 Unicode Cs 字符应明确拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        value = value_template.format(character=surrogate)
+
+        with pytest.raises(ValueError, match="代理字符") as exc_info:
+            _build_dingtalk_webhook_url(value)
+
+        assert type(exc_info.value) is ValueError
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+    @pytest.mark.parametrize("position", ["key", "value"])
+    def test_parsed_query_unicode_surrogate_raises_plain_value_error(
+        self, monkeypatch, surrogate, position
+    ):
+        """parse_qsl 后 query 键值中的 Unicode Cs 字符应明确拒绝。"""
+        import modules.notification as notification
+
+        query_pairs = (
+            [(f"x{surrogate}", "safe"), ("access_token", "abc123")]
+            if position == "key"
+            else [("access_token", f"abc{surrogate}123")]
+        )
+        monkeypatch.setattr(
+            notification,
+            "parse_qsl",
+            lambda *args, **kwargs: query_pairs,
+        )
+
+        with pytest.raises(ValueError, match="代理字符") as exc_info:
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+        assert type(exc_info.value) is ValueError
+
+    def test_plain_token_remains_url_encoded(self):
+        """裸 token 应继续通过 urlencode 编码。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        assert _build_dingtalk_webhook_url("abc+/?") == (
+            "https://oapi.dingtalk.com/robot/send?access_token=abc%2B%2F%3F"
+        )
+
+    def test_plain_token_rejects_encoded_url_over_length_limit(self):
+        """裸 token 编码后的完整 URL 超过长度上限时应拒绝。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="编码后.*长度|8192"):
+            _build_dingtalk_webhook_url("中" * 1000)
+
+    def test_non_ascii_final_url_raises_value_error(self, monkeypatch):
+        """最终 URL 意外包含 Unicode 时应安全转换为 ValueError。"""
+        import modules.notification as notification
+
+        monkeypatch.setattr(
+            notification,
+            "urlunsplit",
+            lambda parts: "https://oapi.dingtalk.com/robot/send?access_token=中文",
+        )
+
+        with pytest.raises(ValueError, match="ASCII"):
+            notification._build_dingtalk_webhook_url(
+                "https://oapi.dingtalk.com/robot/send?access_token=abc123"
+            )
+
+    @pytest.mark.parametrize("extra_length", [0, 1])
+    def test_plain_token_length_limit(self, extra_length):
+        """裸 token 正好达到上限时接受，超过一个字符时拒绝。"""
+        from modules.notification import (
+            DINGTALK_TOKEN_MAX_LENGTH,
+            _build_dingtalk_webhook_url,
+        )
+
+        token = "a" * (DINGTALK_TOKEN_MAX_LENGTH + extra_length)
+
+        if extra_length == 0:
+            assert _build_dingtalk_webhook_url(token).endswith(token)
+            return
+
+        with pytest.raises(ValueError, match="token.*长度|4096"):
+            _build_dingtalk_webhook_url(token)
+
+    def test_blank_token_still_rejected(self):
+        """strip 后为空的 token 应抛出 ValueError（守护守卫）。"""
+        from modules.notification import _build_dingtalk_webhook_url
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            _build_dingtalk_webhook_url("   ")
+
+
+class TestTwoPushDingTalkAt:
+    """测试 TwoPush 钉钉手机号 @ 处理。"""
+
+    def test_string_at_normalizes_to_mobile_list(self):
+        """字符串 at 应归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": MOBILE})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_list_at_normalizes_to_mobile_list(self):
+        """数组 at 应归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": [MOBILE, MOBILE_ALT]})
+
+        assert at == {
+            "atMobiles": [MOBILE, MOBILE_ALT],
+            "isAtAll": False,
+        }
+
+    def test_country_code_prefixed_mobiles_are_normalized(self):
+        """带 +86/86 前缀的手机号应归一化为纯号段进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": [f"+86{MOBILE}"]})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+        at = _normalize_dingtalk_at({"at": [f"86{MOBILE}", MOBILE_ALT]})
+
+        assert at["atMobiles"] == [MOBILE, MOBILE_ALT]
+
+    def test_dict_at_mobiles_is_supported(self):
+        """字典 at.atMobiles 应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": {"atMobiles": [MOBILE]}})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_at_mobiles_alias_is_supported(self):
+        """at_mobiles 别名应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at_mobiles": [MOBILE]})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_numeric_at_normalizes_to_mobile_list(self):
+        """数字 at 应转字符串归一为 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": int(MOBILE)})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_numeric_at_mobiles_alias_works(self):
+        """数字 at_mobiles 别名应转字符串生效。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at_mobiles": int(MOBILE)})
+
+        assert at["atMobiles"] == [MOBILE]
+
+    def test_non_mobile_numeric_at_is_filtered(self):
+        """非手机号数字 at 应被过滤，不进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": 12345})
+
+        assert "atMobiles" not in at
+
+    def test_boolean_at_is_not_converted(self):
+        """布尔 at 不应转字符串进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": True})
+
+        assert "atMobiles" not in at
+
+    def test_append_missing_mobile_mentions(self):
+        """正文缺少 @手机号 时应自动补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions("通知内容", [MOBILE])
+
+        assert text == f"通知内容\n\n@{MOBILE}"
+
+    def test_existing_mobile_mentions_are_not_duplicated(self):
+        """正文已有 @手机号 时不应重复补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions(
+            f"通知内容\n\n@{MOBILE}",
+            [MOBILE],
+        )
+
+        assert text.count(f"@{MOBILE}") == 1
+
+    @pytest.mark.parametrize(
+        "format_character",
+        [
+            "\u200c",
+            "\u200d",
+            "\u200e",
+            "\u200f",
+            "\u202a",
+            "\u202b",
+            "\u202c",
+            "\u202d",
+            "\u202e",
+            "\u2066",
+            "\u2067",
+            "\u2068",
+            "\u2069",
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("mention", "mobiles", "is_at_all"),
+        [
+            (f"@{MOBILE}", [MOBILE], False),
+            ("@所有人", [], True),
+        ],
+    )
+    def test_mention_followed_by_format_character_is_not_independent(
+        self, format_character, mention, mobiles, is_at_all
+    ):
+        """提醒后紧跟 Unicode 格式字符时应补齐独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 {mention}{format_character}后缀"
+        text = _append_missing_dingtalk_mentions(
+            content, mobiles, is_at_all=is_at_all
+        )
+
+        assert text == f"{content}\n\n{mention}"
+
+    @pytest.mark.parametrize(
+        "prefix",
+        ["x", "9", "_", "中", "@", "\\"],
+    )
+    @pytest.mark.parametrize(
+        ("mention", "mobiles", "is_at_all"),
+        [
+            (f"@{MOBILE}", [MOBILE], False),
+            ("@所有人", [], True),
+        ],
+    )
+    def test_mention_with_non_independent_prefix_is_appended(
+        self, prefix, mention, mobiles, is_at_all
+    ):
+        """单词字符、额外 @ 与反斜杠前缀后的提醒不应视为独立。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 {prefix}{mention}"
+        text = _append_missing_dingtalk_mentions(
+            content, mobiles, is_at_all=is_at_all
+        )
+
+        assert text == f"{content}\n\n{mention}"
+
+    @pytest.mark.parametrize(
+        "suffix",
+        ["1", "abc", "_", "１", "é", "中", "\u0301"],
+    )
+    def test_mobile_mention_followed_by_unicode_word_is_not_independent(self, suffix):
+        """手机号提醒后紧跟 Unicode 单词字符或组合符时应补齐独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 @{MOBILE}{suffix}"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
+
+        assert text == f"{content}\n\n@{MOBILE}"
+
+    @pytest.mark.parametrize(
+        "template",
+        [
+            "通知内容 @{mobile}，已发送",
+            "通知内容 @{mobile} 已发送",
+            "通知内容\n@{mobile}",
+            "@{mobile} 通知内容",
+            "通知内容 @{mobile}\r\n下一行",
+            "通知内容 @{mobile}😀已发送",
+        ],
+    )
+    def test_mobile_mention_with_independent_boundary_is_not_duplicated(self, template):
+        """手机号提醒位于文本边界或后接分隔字符时不应重复补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = template.format(mobile=MOBILE)
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
+
+        assert text == content
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "通知内容 @所有人员",
+            "通知内容 @所有人abc",
+            "通知内容 @所有人_",
+            "通知内容 @所有人１",
+            "通知内容 @所有人é",
+            "通知内容 @所有人\u0301",
+        ],
+    )
+    def test_at_everyone_followed_by_word_character_is_not_independent(self, content):
+        """全员提醒后紧跟中文或 ASCII 单词字符时应补齐独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions(content, [], is_at_all=True)
+
+        assert text == f"{content}\n\n@所有人"
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            "通知内容 @所有人，已发送",
+            "通知内容 @所有人 已发送",
+            "通知内容\n@所有人",
+            "@所有人 通知内容",
+            "通知内容 @所有人\r\n下一行",
+            "通知内容 @所有人😀已发送",
+        ],
+    )
+    def test_at_everyone_with_independent_boundary_is_not_duplicated(self, content):
+        """全员提醒后接标点、空白或行尾时不应重复补齐。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions(content, [], is_at_all=True)
+
+        assert text == content
+
+    def test_multiple_mobile_mentions_only_append_missing_independent_tokens(self):
+        """多个手机号只应补齐缺少独立提醒的号码。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        text = _append_missing_dingtalk_mentions(
+            f"通知内容 @{MOBILE}，关联 @{MOBILE_ALT}abc",
+            [MOBILE, MOBILE_ALT],
+        )
+
+        assert text == f"通知内容 @{MOBILE}，关联 @{MOBILE_ALT}abc\n\n@{MOBILE_ALT}"
+
+    def test_later_independent_mention_is_found_after_invalid_candidate(self):
+        """先出现无效候选时仍应识别后续独立提醒。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 @{MOBILE}\u200d后缀，随后 @{MOBILE}。"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
+
+        assert text == content
+
+    @pytest.mark.parametrize("surrogate", ["\ud800", "\udfff"])
+    def test_isolated_surrogate_boundary_does_not_crash(self, surrogate):
+        """孤立代理字符作为边界时扫描不应崩溃。"""
+        from modules.notification import _append_missing_dingtalk_mentions
+
+        content = f"通知内容 @{MOBILE}{surrogate}"
+        text = _append_missing_dingtalk_mentions(content, [MOBILE])
+
+        assert text == content
+
+    def test_duplicate_mobiles_are_deduplicated(self):
+        """重复手机号应去重且保持顺序。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": [MOBILE, MOBILE_ALT, MOBILE]})
+
+        assert at["atMobiles"] == [MOBILE, MOBILE_ALT]
+
+    def test_at_mobiles_camel_case_alias_is_supported(self):
+        """atMobiles 驼峰别名应被支持。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"atMobiles": [MOBILE]})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_is_at_all_flags_are_passed_through(self):
+        """is_at_all 与 isAtAll 应传递到 at 结构。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": True})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"isAtAll": True})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"at": [MOBILE]})["isAtAll"] is False
+
+    def test_non_mobile_values_are_filtered_out(self):
+        """非手机号值应被过滤，不进入 atMobiles。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at({"at": [MOBILE, "alice", "userId123"]})
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": False}
+
+    def test_is_at_all_string_false_is_parsed_as_false(self):
+        """字符串形式的 false 不应被判定为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": "false"})["isAtAll"] is False
+        assert _normalize_dingtalk_at({"isAtAll": "False"})["isAtAll"] is False
+
+    def test_is_at_all_string_truthy_values_are_parsed_as_true(self):
+        """字符串形式的真值应被解析为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"is_at_all": "TRUE"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "1"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "yes"})["isAtAll"] is True
+        assert _normalize_dingtalk_at({"is_at_all": "on"})["isAtAll"] is True
+
+    def test_dict_at_is_at_all_inside_dict_is_honored(self):
+        """at 字典内部的 isAtAll 应被识别为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        at = _normalize_dingtalk_at(
+            {"at": {"atMobiles": [MOBILE], "isAtAll": True}}
+        )
+
+        assert at == {"atMobiles": [MOBILE], "isAtAll": True}
+        assert _normalize_dingtalk_at({"at": {"isAtAll": True}})["isAtAll"] is True
+
+    def test_dict_at_is_at_all_merges_with_top_level(self):
+        """at 字典内部与顶层的 isAtAll 应取 or 合并。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at(
+            {"at": {"isAtAll": True}, "isAtAll": False}
+        )["isAtAll"] is True
+        assert _normalize_dingtalk_at(
+            {"at": {"isAtAll": "false"}, "is_at_all": "on"}
+        )["isAtAll"] is True
+
+    def test_dict_at_is_at_all_string_false_is_parsed_as_false(self):
+        """at 字典内部字符串形式的 false 不应被判定为 @全员。"""
+        from modules.notification import _normalize_dingtalk_at
+
+        assert _normalize_dingtalk_at({"at": {"isAtAll": "false"}})["isAtAll"] is False
+
+
+class TestTwoPushDingTalkPayload:
+    """测试 TwoPush 钉钉请求体构造。"""
+
+    def test_build_markdown_payload_with_at(self):
+        """markdown 请求体应包含 markdown 与 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": [MOBILE]},
+            "通知标题",
+            "## 通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
+        assert "## 通知内容" in payload["markdown"]["text"]
+        assert f"@{MOBILE}" in payload["markdown"]["text"]
+        assert payload["at"] == {
+            "atMobiles": [MOBILE],
+            "isAtAll": False,
+        }
+
+    def test_build_text_payload_with_at(self):
+        """text 请求体应包含 text 与 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": [MOBILE]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "text"
+        assert "通知标题" in payload["text"]["content"]
+        assert "通知内容" in payload["text"]["content"]
+        assert f"@{MOBILE}" in payload["text"]["content"]
+        assert payload["at"]["atMobiles"] == [MOBILE]
+
+    @pytest.mark.parametrize(
+        ("msgtype", "body_key"),
+        [("text", "text"), ("markdown", "markdown")],
+    )
+    def test_payload_mention_collision_is_appended_for_each_message_type(
+        self, msgtype, body_key
+    ):
+        """text 与 markdown 正文中的手机号子串碰撞均应补齐独立提醒。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": msgtype, "at": [MOBILE]},
+            "通知标题",
+            f"通知内容 @{MOBILE}1",
+        )
+
+        body_field = "content" if msgtype == "text" else "text"
+        assert payload[body_key][body_field].endswith(f"\n\n@{MOBILE}")
+
+    @pytest.mark.parametrize("backslash_count", [1, 2, 3])
+    @pytest.mark.parametrize(
+        ("msgtype", "body_key", "body_field"),
+        [
+            ("text", "text", "content"),
+            ("markdown", "markdown", "text"),
+        ],
+    )
+    def test_payload_escaped_mention_is_appended_for_each_message_type(
+        self, msgtype, body_key, body_field, backslash_count
+    ):
+        """text 与 markdown 均保守拒绝反斜杠紧邻的提醒。"""
+        from modules.notification import _build_dingtalk_payload
+
+        escaped_mention = f"{'\\' * backslash_count}@{MOBILE}"
+        payload = _build_dingtalk_payload(
+            {"msgtype": msgtype, "at": [MOBILE]},
+            "通知标题",
+            f"通知内容 {escaped_mention}",
+        )
+
+        assert payload[body_key][body_field].endswith(f"\n\n@{MOBILE}")
+
+    def test_markdown_inline_code_is_checked_only_by_text_boundary(self):
+        """markdown 行内代码中的独立提醒按普通文本处理且不重复。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": [MOBILE]},
+            "通知标题",
+            f"示例 `@{MOBILE}`",
+        )
+
+        assert payload["markdown"]["text"] == f"示例 `@{MOBILE}`"
+
+    def test_country_code_mobile_checks_normalized_mention_in_body(self):
+        """国家码手机号应使用归一化号码检查正文中的独立提醒。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": [f"+86{MOBILE}"]},
+            "通知标题",
+            f"通知内容 @{MOBILE}",
+        )
+
+        assert payload["markdown"]["text"] == f"通知内容 @{MOBILE}"
+        assert payload["at"]["atMobiles"] == [MOBILE]
+
+    @pytest.mark.parametrize(
+        ("msgtype", "body_key", "body_field"),
+        [
+            ("text", "text", "content"),
+            ("markdown", "markdown", "text"),
+        ],
+    )
+    def test_empty_body_appends_mobile_mention(self, msgtype, body_key, body_field):
+        """text 与 markdown 空正文均应正常补齐手机号提醒。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": msgtype, "at": [MOBILE]},
+            "",
+            "",
+        )
+
+        assert payload[body_key][body_field] == f"@{MOBILE}"
+
+    def test_build_text_payload_joins_title_and_content_with_double_newline(self):
+        """text 请求体应以双换行分隔 title 与 content，与 onepush 行为一致。"""
+        from modules.notification import _build_dingtalk_payload
+        from onepush.core import Provider
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text"},
+            "标题",
+            "内容",
+        )
+
+        content = payload["text"]["content"]
+
+        assert "标题\n\n内容" in content
+        assert "标题\n内容" not in content
+        assert content == Provider.process_message("标题", "内容")
+
+    def test_default_msgtype_is_markdown_for_enhanced_path(self):
+        """增强路径未指定 msgtype 但携带 at 时默认使用 markdown。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"at": [MOBILE]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
+
+    def test_invalid_msgtype_falls_back_to_markdown(self):
+        """非法 msgtype 应兜底为 markdown。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "image", "at": [MOBILE]},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["msgtype"] == "markdown"
+        assert payload["markdown"]["title"] == "通知标题"
+
+    def test_no_at_means_no_at_field(self):
+        """无 at 时不附加 at 字段。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown"},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "at" not in payload
+
+    def test_is_at_all_appends_at_field_without_mobiles(self):
+        """isAtAll=True 时附加 at 字段（仅含 isAtAll）。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "is_at_all": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert payload["at"] == {"isAtAll": True}
+        assert "atMobiles" not in payload["at"]
+
+    def test_text_is_at_all_appends_at_everyone(self):
+        """text 消息 isAtAll=True 时正文应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["text"]["content"]
+        assert payload["at"] == {"isAtAll": True}
+
+    def test_markdown_is_at_all_appends_at_everyone(self):
+        """markdown 消息 isAtAll=True 时 text 应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["markdown"]["text"]
+        assert payload["at"] == {"isAtAll": True}
+
+    def test_text_is_at_all_existing_at_everyone_not_duplicated(self):
+        """text 消息正文已有 @所有人 时不应重复补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "isAtAll": True},
+            "通知标题",
+            "通知内容 @所有人",
+        )
+
+        assert payload["text"]["content"].count("@所有人") == 1
+
+    def test_markdown_is_at_all_existing_at_everyone_not_duplicated(self):
+        """markdown 消息正文已有 @所有人 时不应重复补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "isAtAll": True},
+            "通知标题",
+            "通知内容 @所有人",
+        )
+
+        assert payload["markdown"]["text"].count("@所有人") == 1
+
+    def test_text_is_at_all_with_mobiles_appends_both(self):
+        """text 消息同时配置手机号与 isAtAll=True 时两者都应补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": [MOBILE], "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        content = payload["text"]["content"]
+        assert f"@{MOBILE}" in content
+        assert "@所有人" in content
+        assert payload["at"]["atMobiles"] == [MOBILE]
+        assert payload["at"]["isAtAll"] is True
+
+    def test_markdown_is_at_all_with_mobiles_appends_both(self):
+        """markdown 消息同时配置手机号与 isAtAll=True 时两者都应补齐。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "markdown", "at": [MOBILE], "isAtAll": True},
+            "通知标题",
+            "通知内容",
+        )
+
+        text = payload["markdown"]["text"]
+        assert f"@{MOBILE}" in text
+        assert "@所有人" in text
+        assert payload["at"]["atMobiles"] == [MOBILE]
+        assert payload["at"]["isAtAll"] is True
+
+    def test_is_at_all_dict_nested_flag_appends_at_everyone(self):
+        """at 字典内部 isAtAll=True 时正文也应自动补齐 @所有人。"""
+        from modules.notification import _build_dingtalk_payload
+
+        payload = _build_dingtalk_payload(
+            {"msgtype": "text", "at": {"isAtAll": True}},
+            "通知标题",
+            "通知内容",
+        )
+
+        assert "@所有人" in payload["text"]["content"]
+        assert payload["at"] == {"isAtAll": True}
+
+
+class TestTwoPushDingTalkDirectSend:
+    """测试 TwoPush 钉钉直发请求。"""
+
+    def test_send_dingtalk_webhook_posts_json(self, monkeypatch):
+        """钉钉直发应 POST JSON 请求体。"""
+        from modules import notification
+
+        captured = {}
+        fake_response = unittest.mock.MagicMock()
+        fake_response.status_code = 200
+        fake_response.text = '{"errcode": 0, "errmsg": "ok"}'
+        fake_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+
+        def fake_request(method, url, **kwargs):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = kwargs.get("json")
+            captured["headers"] = kwargs.get("headers")
+            captured["timeout"] = kwargs.get("timeout")
+            return fake_response
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        response = notification._send_dingtalk_webhook(
+            {
+                "token": "abc123",
+                "msgtype": "markdown",
+                "at": [MOBILE],
+            },
+            "通知标题",
+            "通知内容",
+        )
+
+        assert response is fake_response
+        assert captured["method"] == "post"
+        assert "access_token=abc123" in captured["url"]
+        assert captured["headers"] == {"Content-Type": "application/json"}
+        assert captured["timeout"] == 10
+        assert captured["json"]["msgtype"] == "markdown"
+        assert captured["json"]["at"]["atMobiles"] == [MOBILE]
+
+    def test_send_dingtalk_webhook_without_token_raises_value_error(self, monkeypatch):
+        """缺少 token 时应抛出 ValueError。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("缺少 token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            notification._send_dingtalk_webhook({}, "通知标题", "通知内容")
+
+    def test_send_dingtalk_webhook_blank_token_raises(self, monkeypatch):
+        """纯空白 token 应抛出 ValueError，不发起请求。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("空白 token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="缺少 token"):
+            notification._send_dingtalk_webhook(
+                {"token": "   ", "msgtype": "markdown"},
+                "通知标题",
+                "通知内容",
+            )
+
+    def test_send_dingtalk_webhook_full_url_without_token_raises(self, monkeypatch):
+        """完整 Webhook URL 缺少 access_token 时发送前应抛出 ValueError。"""
+        from modules import notification
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("缺少 access_token 时不应发起请求")
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        with pytest.raises(ValueError, match="access_token"):
+            notification._send_dingtalk_webhook(
+                {"token": "https://oapi.dingtalk.com/robot/send"},
+                "通知标题",
+                "通知内容",
+            )
+
+
+class TestTwoPushDingTalkMasking:
+    """测试钉钉日志脱敏与通用脱敏工具。"""
+
+    def test_mask_mobile(self):
+        """手机号应脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields({'text': f'通知 @{MOBILE}'}, {'text'})['text']
+
+        assert MOBILE not in text
+        assert MOBILE_MASKED in text
+
+    def test_mask_webhook_query(self):
+        """Webhook URL query 中的敏感参数应脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields(
+            {'text': "https://oapi.dingtalk.com/robot/send?access_token=abc&sign=xyz"},
+            {'text'},
+        )['text']
+
+        assert "access_token=abc" not in text
+        assert "sign=xyz" not in text
+        assert "access_token=***" in text
+        # & 后紧跟 key= 形态时按 query 参数分隔符处理，sign 作为独立参数各自脱敏
+        assert text == "https://oapi.dingtalk.com/robot/send?access_token=***&sign=***"
+
+    def test_failure_reason_is_masked(self):
+        """失败原因日志不得泄露手机号或 token。"""
+        from modules.notification import _handle_attempt_failure
+
+        log = unittest.mock.MagicMock()
+        _handle_attempt_failure(
+            "dingtalk(onepush)",
+            1,
+            1,
+            f"手机号 {MOBILE} access_token=abc sign=xyz",
+            0,
+            log,
+        )
+
+        messages = "\n".join(call.args[0] for call in log.error.call_args_list)
+        assert MOBILE not in messages
+        assert "access_token=abc" not in messages
+        assert "sign=xyz" not in messages
+
+    def test_mask_secret_and_case_insensitive(self):
+        """secret 应脱敏，且 access_token/sign/secret 大小写不敏感。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields(
+            {'text': "secret=SECabc ACCESS_TOKEN=abc SIGN=xyz"},
+            {'text'},
+        )['text']
+
+        assert "SECabc" not in text
+        assert "ACCESS_TOKEN=abc" not in text
+        assert "SIGN=xyz" not in text
+        assert "secret=***" in text
+        assert "ACCESS_TOKEN=***" in text
+        assert "SIGN=***" in text
+
+    def test_mask_does_not_break_plain_words(self):
+        """普通单词（如 design）不应被误脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields({'text': "design=good assign=bad"}, {'text'})['text']
+
+        assert "design=good" in text
+        assert "assign=bad" in text
+
+    def test_mask_none_returns_none(self):
+        """None 输入应原样返回。"""
+        from modules.utils import mask_sensitive_fields
+
+        assert mask_sensitive_fields({'text': None}, {'text'})['text'] is None
+
+    def test_mask_does_not_break_prefixed_token_words(self):
+        """带前缀的 access_token（如 xaccess_token）不应被误脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields(
+            {'text': "xaccess_token=abc ?access_token=xyz"},
+            {'text'},
+        )['text']
+
+        assert "xaccess_token=abc" in text
+        assert "?access_token=xyz" not in text
+        assert "?access_token=***" in text
+
+    def test_mask_bare_token_param(self):
+        """裸 token= 参数应脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields(
+            {'text': "https://sctapi.ftqq.com/SCTabc.send?token=xyz"},
+            {'text'},
+        )['text']
+
+        assert "token=xyz" not in text
+        assert "token=***" in text
+
+    def test_success_log_does_not_log_title(self, monkeypatch):
+        """成功路径不应输出标题相关日志。"""
+        from modules import notification
+
+        log = unittest.mock.MagicMock()
+        fake_response = unittest.mock.MagicMock()
+        fake_response.status_code = 200
+        fake_response.text = '{"errcode": 0, "errmsg": "ok"}'
+        fake_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+
+        def fake_request(method, url, **kwargs):
+            return fake_response
+
+        monkeypatch.setattr(notification, "request", fake_request)
+
+        result = notification._notify_single_channel(
+            {
+                "provider": "dingtalk",
+                "token": "abc123",
+                "msgtype": "markdown",
+            },
+            f"通知 {MOBILE}",
+            "内容",
+            0,
+            1,
+            log,
+        )
+
+        assert result is True
+        assert log.info.call_args_list == []
+
+    def test_send_notification_does_not_log_title(self, monkeypatch):
+        """send_notification 不应输出标题相关日志。"""
+        from modules import notification
+
+        log = unittest.mock.MagicMock()
+
+        def fake_request(method, url, **kwargs):
+            raise AssertionError("不应发起真实请求")
+
+        fake_response = unittest.mock.MagicMock()
+        fake_response.status_code = 200
+        fake_response.text = '{"errcode": 0, "errmsg": "ok"}'
+        fake_response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+
+        monkeypatch.setattr(notification, "request", fake_request)
+        monkeypatch.setattr(
+            notification, "_send_dingtalk_webhook",
+            lambda channel, title, content, validated_url=None: fake_response,
+        )
+
+        result = notification.send_notification(
+            f"标题 {MOBILE}",
+            "内容",
+            [
+                {
+                    "provider": "dingtalk",
+                    "token": "abc123",
+                    "msgtype": "markdown",
+                }
+            ],
+            retry_settings={"interval": 0, "max_count": 1},
+            logger=log,
+        )
+
+        assert result == [("dingtalk", True)]
+        messages = "\n".join(call.args[0] for call in log.info.call_args_list)
+        assert MOBILE not in messages
+        assert "通知标题" not in messages
+
+    def test_mask_does_not_touch_unrelated_params(self):
+        """无关参数形式不应被误脱敏。"""
+        from modules.utils import mask_sensitive_fields
+
+        text = mask_sensitive_fields(
+            {'text': "design=good assign=bad xaccess_token=abc"},
+            {'text'},
+        )['text']
+
+        assert "design=good" in text
+        assert "assign=bad" in text
+        assert "xaccess_token=abc" in text
+
+
+class TestTwoPushDingTalkMultipleChannels:
+    """测试多通道中普通钉钉与增强钉钉并存。"""
+
+    def test_plain_and_enhanced_dingtalk_can_coexist(self, monkeypatch):
+        """普通钉钉走 OnePush，增强钉钉走直发，二者各发送一次。"""
+        from modules import notification
+
+        calls = {"onepush": 0, "direct": 0}
+
+        class FakeNotifier:
+            def request(self, *args, **kwargs):
+                """占位请求函数，满足安全注入契约。"""
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+            def notify(self, **kwargs):
+                calls["onepush"] += 1
+                response = unittest.mock.MagicMock()
+                response.status_code = 200
+                response.text = '{"errcode": 0, "errmsg": "ok"}'
+                response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+                return response
+
+        def fake_get_notifier(provider):
+            assert provider == "dingtalk"
+            return FakeNotifier()
+
+        def fake_direct(channel, title, content, validated_url=None):
+            """记录增强通道收到的预构造 URL。"""
+            assert validated_url == (
+                "https://oapi.dingtalk.com/robot/send?"
+                "access_token=enhanced-token"
+            )
+            calls["direct"] += 1
+            response = unittest.mock.MagicMock()
+            response.status_code = 200
+            response.text = '{"errcode": 0, "errmsg": "ok"}'
+            response.json.return_value = {"errcode": 0, "errmsg": "ok"}
+            return response
+
+        monkeypatch.setattr(notification, "get_notifier", fake_get_notifier)
+        monkeypatch.setattr(notification, "_send_dingtalk_webhook", fake_direct)
+
+        results = notification.send_notification(
+            "标题",
+            "内容",
+            [
+                {"provider": "dingtalk", "token": "plain-token"},
+                {
+                    "provider": "dingtalk",
+                    "token": "enhanced-token",
+                    "msgtype": "markdown",
+                    "at": [MOBILE],
+                },
+            ],
+            retry_settings={"interval": 0, "max_count": 1},
+            logger=unittest.mock.MagicMock(),
+        )
+
+        assert results == [("dingtalk", True), ("dingtalk", True)]
+        assert calls == {"onepush": 1, "direct": 1}

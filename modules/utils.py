@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import math
+import re
+import urllib.parse
 
 from onepush import all_providers, get_notifier
 
@@ -28,6 +31,582 @@ CHANNEL_KEY_ALIASES = {
     'serverchanturbo': {'key': 'sctkey'},
     'pushdeer': {'key': 'pushkey'},
 }
+
+# 受限解码的输入长度上限：超过该长度不再做解码检测，直接按原文脱敏
+_MAX_DECODE_LENGTH = 4096
+
+# 正则扫描窗口与重叠长度，重叠区用于覆盖窗口边界上的键名和值
+_MAX_SCAN_WINDOW = 4096
+_SCAN_OVERLAP = 256
+
+# 合法十六进制字符集合，用于识别严格的 %HH 编码序列
+_HEX_DIGITS = '0123456789abcdefABCDEF'
+
+# 解码副本中控制字符的占位符（DEL），仅存在于检测副本中，不会写回原文
+_CONTROL_PLACEHOLDER = '\x7f'
+
+# 由 %HH 解码出的结构性终止字符集合
+# URL query 语义中真正的结构分隔符不会被百分号编码，输入里出现 %2C/%22/%27/
+# %7D/%5D 即表示该字符属于值本身；若解码副本中还原为 , " ' } ]，会让
+# _SENSITIVE_KEY_VALUE_RE 的 bare_value 组在此提前结束，值的后半段以原文残留，
+# 故在检测副本中一并以占位符替代，占位符只存在于检测副本，不会写回原文
+# 注意：& 不在本集合内，需保留在解码副本中交由 _QUERY_PARAM_BOUNDARY_RE
+# 判定其是否为 query 参数分隔符，以保留 & 之后的非敏感 query 参数
+_DECODED_LITERAL_CHARS = '"\'' + ",}]"
+
+
+def _percent_encoded_variant(ch):
+    """单字符的可选百分号编码变体，返回正则片段
+
+    敏感键名中的任意单个字符允许以明文或大写十六进制百分号编码
+    （如 %74）形式出现，下划线另支持 %5F；配合 re.IGNORECASE，
+    hex 字母大小写（如 %6B 与 %6b）均可匹配
+
+    Args:
+        ch (str): 单个字符
+
+    Returns:
+        str: 匹配该字符明文或百分号编码形式的正则片段
+    """
+    if ch == '_':
+        return r'(?:_|%5F|%255F)'
+    return rf'(?:{re.escape(ch)}|%{ord(ch):02X}|%25{ord(ch):02X})'
+
+
+def _sensitive_key_regex(name):
+    """将敏感键名字符串编译为支持任意单字符百分号编码的正则
+
+    Args:
+        name (str): 敏感键名，如 access_token
+
+    Returns:
+        str: 键名各字符明文或百分号编码变体拼接而成的正则片段
+    """
+    return ''.join(_percent_encoded_variant(ch) for ch in name)
+
+
+# 敏感键名（access_token/token、sign、secret、password、api_key、webhook
+# 等常见凭据键，以及 OnePush 各渠道声明的专有凭据参数名）中任意单字符均允许
+# 以百分号编码形式出现，access_ 前缀可选，键名字母大小写由 IGNORECASE 折叠
+# 注意：device_key/appkey 等以 key、secret、token 结尾的键名必须逐个列出，
+# 因为正则前置的 (?<![A-Za-z0-9_]) 断言会让 key/secret/token 分支在这类
+# 复合键名的中间位置失配；lark 的 keyword 是安全校验关键词而非凭据，
+# 不在此名单内；名单只收录完整凭据词，避免 xappkey 等 ASCII 前缀拼接被误伤
+_SENSITIVE_KEY_PATTERN = (
+    f'(?:{_sensitive_key_regex("access_")})?{_sensitive_key_regex("token")}'
+    f'|{_sensitive_key_regex("sign")}'
+    f'|{_sensitive_key_regex("secret")}'
+    f'|{_sensitive_key_regex("corpsecret")}'
+    f'|{_sensitive_key_regex("appsecret")}'
+    f'|{_sensitive_key_regex("app_secret")}'
+    f'|{_sensitive_key_regex("password")}'
+    f'|{_sensitive_key_regex("passwd")}'
+    f'|{_sensitive_key_regex("api_key")}'
+    f'|{_sensitive_key_regex("apikey")}'
+    f'|{_sensitive_key_regex("appkey")}'
+    f'|{_sensitive_key_regex("app_key")}'
+    f'|{_sensitive_key_regex("webhook")}'
+    f'|{_sensitive_key_regex("secret_key")}'
+    f'|{_sensitive_key_regex("secretkey")}'
+    f'|{_sensitive_key_regex("privatekey")}'
+    f'|{_sensitive_key_regex("private_key")}'
+    f'|{_sensitive_key_regex("token_key")}'
+    f'|{_sensitive_key_regex("auth")}'
+    f'|{_sensitive_key_regex("authtoken")}'
+    f'|{_sensitive_key_regex("apitoken")}'
+    f'|{_sensitive_key_regex("accesstoken")}'
+    f'|{_sensitive_key_regex("refresh_token")}'
+    f'|{_sensitive_key_regex("refreshtoken")}'
+    f'|{_sensitive_key_regex("credential")}'
+    f'|{_sensitive_key_regex("accesskey")}'
+    f'|{_sensitive_key_regex("access_key")}'
+    f'|{_sensitive_key_regex("sckey")}'
+    f'|{_sensitive_key_regex("sctkey")}'
+    f'|{_sensitive_key_regex("pushkey")}'
+    f'|{_sensitive_key_regex("cipherkey")}'
+    f'|{_sensitive_key_regex("device_keys")}'
+    f'|{_sensitive_key_regex("device_key")}'
+    f'|{_sensitive_key_regex("key")}'
+)
+
+_SENSITIVE_KEY_VALUE_RE = re.compile(
+    rf'''
+    (?<![A-Za-z0-9_])
+    (?P<leading_quote>["'\x7f]?)
+    (?P<key>{_SENSITIVE_KEY_PATTERN})
+    (?P<trailing_quote>["'\x7f]?)
+    (?P<separator>[\s\x7f]*(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])[\s\x7f]*)
+    (?:
+        (?P<double_open>")
+        (?P<double_value>(?:[^"\\]|\\[\s\S])*\\?)
+        (?P<double_close>"|$)
+        |
+        (?P<single_open>')
+        (?P<single_value>(?:[^'\\]|\\[\s\S])*\\?)
+        (?P<single_close>'|$)
+        |
+        (?P<bare_value>[^"'\s,&}}\]]+)
+    )
+    ''',
+    flags=re.IGNORECASE | re.VERBOSE,
+)
+
+
+# query 串中的 & 参数分隔符：& 之后紧跟“键名 + 分隔符”形态（键名字符为
+# 字母数字、下划线、百分号、点、连字符，分隔符为 = / : 或其百分号编码）
+# _SENSITIVE_KEY_VALUE_RE 的 bare_value 组已排除 &，正则本身只能匹配到 & 之前；
+# 而结尾扫描会继续向后吞字符以覆盖“值内自带 &”的情形（如 secret=abc&def），
+# 故需靠本正则区分两类 &：命中即视为参数分隔符，敏感值到 & 之前结束，
+# & 及其后的非敏感参数（如 &timestamp=...）原样保留；未命中则 & 属于值本身
+_QUERY_PARAM_BOUNDARY_RE = re.compile(
+    r'&[A-Za-z0-9_%.\-]+(?:=|:|%3[Dd]|%3[Aa]|%253[Dd]|%253[Aa])',
+)
+
+
+# scheme://user:pass@host 形式的 URL userinfo，脱敏为 ***:***@
+# scheme 须以 :// 结尾，故 mailto:、纯文本邮箱（无 scheme 前缀）与
+# 路径中的 @ 均不会被误伤
+_URL_USERINFO_RE = re.compile(
+    r'(?i)(?P<scheme>[a-z][a-z0-9+.-]*://)'
+    r'(?P<userinfo>[^/\s:@]+(?::[^/\s@]*)?)(?P<userinfo_end>@|$)',
+)
+
+
+def _replace_url_userinfo(match):
+    """将 URL userinfo 替换为 ***:***@，保留 scheme 与 @ 之后的 host 等部分。"""
+    return f'{match.group("scheme")}***:***@'
+
+
+def _replace_sensitive_key_value(match):
+    """将匹配到的敏感键值对替换为脱敏形式，引号形式保留原有结构。"""
+    groups = match.groupdict()
+    prefix = (
+        f'{groups["leading_quote"]}{groups["key"]}'
+        f'{groups["trailing_quote"]}'
+    )
+    if groups['double_open']:
+        return f'{prefix}{groups["separator"]}"***{groups["double_close"]}'
+    if groups['single_open']:
+        return f"{prefix}{groups['separator']}'***{groups['single_close']}"
+    separator = groups['separator']
+    if separator.lstrip().startswith('%'):
+        return f'{prefix}{separator}***'
+    return f'{prefix}=***'
+
+
+def _resolve_url_userinfo_match(value, window_start, window_end, match):
+    """确认 URL userinfo 的真实结尾，并返回跨窗口替换计划。"""
+    absolute_end = window_start + match.end()
+    if match.group('userinfo_end') == '@':
+        return absolute_end, _replace_url_userinfo(match)
+
+    index = absolute_end
+    while index < len(value) and value[index] not in '/\r\n\t ':
+        if value[index] == '@':
+            return index + 1, _replace_url_userinfo(match)
+        index += 1
+    return None
+
+
+def _resolve_sensitive_key_value_match(value, window_start, window_end, match):
+    """确认敏感值的真实结尾，并生成覆盖完整跨窗口值的替换文本。"""
+    absolute_end = window_start + match.end()
+    groups = match.groupdict()
+    quote = None
+    open_group = None
+    if groups['double_open']:
+        quote = '"'
+        open_group = 'double_open'
+    elif groups['single_open']:
+        quote = "'"
+        open_group = 'single_open'
+
+    if quote is not None:
+        if groups[f'{"double" if quote == chr(34) else "single"}_close']:
+            return absolute_end, _replace_sensitive_key_value(match)
+        index = window_start + match.start(open_group) + 1
+        while index < len(value):
+            if value[index] == '\\':
+                index += 2
+                continue
+            if value[index] == quote:
+                return index + 1, f'{_replace_sensitive_key_value(match)}{quote}'
+            index += 1
+        return len(value), _replace_sensitive_key_value(match)
+
+    index = absolute_end
+    while index < len(value) and value[index] not in '"\'\r\n\t ,}]':
+        # & 后紧跟“键名 + 分隔符”时视为 query 参数分隔符，敏感值到此结束，
+        # 保留 & 及其后的非敏感参数；否则 & 属于值本身，继续向后扫描
+        if value[index] == '&' and _QUERY_PARAM_BOUNDARY_RE.match(value, index):
+            break
+        index += 1
+    return index, _replace_sensitive_key_value(match)
+
+
+def _bounded_sub(pattern, replacement, value, resolver=None):
+    """在受控窗口内执行正则替换，并合并窗口重叠区的重复匹配。"""
+    if len(value) <= _MAX_SCAN_WINDOW and resolver is None:
+        return pattern.sub(replacement, value)
+
+    matches = {}
+    step = _MAX_SCAN_WINDOW - _SCAN_OVERLAP
+    for window_start in range(0, len(value), step):
+        window_end = min(window_start + _MAX_SCAN_WINDOW, len(value))
+        window = value[window_start:window_end]
+        core_end = window_end
+        if window_end < len(value):
+            core_end -= _SCAN_OVERLAP
+        for match in pattern.finditer(window):
+            start, end = match.span()
+            absolute_start = window_start + start
+            absolute_end = window_start + end
+            if window_start <= absolute_start < core_end:
+                replacement_text = replacement(match)
+                if resolver is not None:
+                    resolved = resolver(value, window_start, window_end, match)
+                    if resolved is None:
+                        continue
+                    absolute_end, replacement_text = resolved
+                previous = matches.get(absolute_start)
+                if previous is None or absolute_end > previous[0]:
+                    matches[absolute_start] = (absolute_end, replacement_text)
+
+    # 结尾扫描可能把后一个匹配的起点纳入前一个匹配的区间（如敏感值内含 &
+    # 时继续吞掉后续敏感键值对），仅按起点去重无法发现这类区间重叠，倒序
+    # 替换时会重复写入导致畸形输出；故先按起点升序做重叠剔除，保留起点在前
+    # 且覆盖范围更大的匹配，使剩余区间互不相交后再倒序替换
+    planned = []
+    covered_end = 0
+    for start in sorted(matches):
+        end, replacement_text = matches[start]
+        if planned and start < covered_end:
+            continue
+        planned.append((start, end, replacement_text))
+        covered_end = max(covered_end, end)
+
+    result = value
+    for start, end, replacement_text in reversed(planned):
+        result = result[:start] + replacement_text + result[end:]
+    return result
+
+
+def _percent_decode_once(value):
+    """对字符串执行最多一层的受限百分号解码
+
+    仅解码严格合法的 %HH 序列（HH 为大写或小写 hex），非法 %（如
+    %ZZ、孤立 %）保持原样；解码结果仅用于正则检测，不替换回原文，
+    也不会把解码字节解释为控制字符；输入长度超过 _MAX_DECODE_LENGTH
+    或解码无法构成合法 UTF-8 时返回原文，不做解码检测
+
+    Args:
+        value (str): 待解码的字符串
+
+    Returns:
+        str: 单层解码结果；无法安全解码时返回原字符串
+    """
+    if len(value) > _MAX_DECODE_LENGTH:
+        return value
+    try:
+        return urllib.parse.unquote(value, errors='strict')
+    except (ValueError, KeyError):
+        return value
+
+
+def _decode_once_with_spans(value):
+    """单层受限解码，并记录检测副本各字符对应的原文区间
+
+    解码副本与原文长度可能不一致（%HH 三字符压缩为一字符），记录每个
+    解码字符对应的原文区间，用于将解码副本上命中的敏感片段映射回原文；
+    由 %HH 解码产生的控制字符（如 %0A 换行）以占位符替代，避免裸值
+    匹配因换行等提前终止，占位符仅存在于检测副本中，不会写回原文
+
+    Args:
+        value (str): 待解码的字符串
+
+    Returns:
+        tuple: (decoded, spans)；decoded 为单层解码检测副本，spans 为
+            长度等于 len(decoded) 的区间列表，spans[i] = (start, end)
+            表示 decoded[i] 对应原文 value[start:end]；解码无变化
+            或无法解码时返回 (value, None)
+    """
+    decoded = _percent_decode_once(value)
+    if decoded == value:
+        return value, None
+
+    spans = []
+    decoded_chars = []
+    index = 0
+    length = len(value)
+    for ch in decoded:
+        if (
+            index + 2 < length
+            and value[index] == '%'
+            and value[index + 1] in _HEX_DIGITS
+            and value[index + 2] in _HEX_DIGITS
+        ):
+            # 合法 %HH 序列：可能是单字节 ASCII，也可能是多字节 UTF-8 字符
+            start = index
+            raw = bytearray()
+            target = ch.encode('utf-8')
+            while (
+                index + 2 < length
+                and value[index] == '%'
+                and value[index + 1] in _HEX_DIGITS
+                and value[index + 2] in _HEX_DIGITS
+            ):
+                raw.append(int(value[index + 1:index + 3], 16))
+                index += 3
+                if bytes(raw) == target:
+                    break
+            # 单字节空白、控制字符或结构性终止字符以占位符替代，避免干扰裸值匹配边界
+            if len(target) == 1 and (
+                ch.isspace()
+                or ord(ch) == 0x7F
+                or ch in _DECODED_LITERAL_CHARS
+            ):
+                decoded_chars.append(_CONTROL_PLACEHOLDER)
+            else:
+                decoded_chars.append(ch)
+            spans.append((start, index))
+        else:
+            # 普通字符或非法 %：解码前后 1:1 对应
+            decoded_chars.append(ch)
+            spans.append((index, index + 1))
+            index += 1
+    return ''.join(decoded_chars), spans
+
+
+def _decode_limited_with_spans(value, max_depth=2):
+    """执行有限层级百分号解码，并保留解码副本到原文的区间映射。"""
+    decoded = value
+    spans = [(index, index + 1) for index in range(len(value))]
+    changed = False
+
+    for _ in range(max_depth):
+        next_decoded, next_spans = _decode_once_with_spans(decoded)
+        if next_spans is None:
+            break
+        spans = [
+            (spans[start][0], spans[end - 1][1])
+            for start, end in next_spans
+        ]
+        decoded = next_decoded
+        changed = True
+
+    return decoded, spans if changed else None
+
+
+def _original_span_text(original, spans, match, group_name):
+    """取解码副本正则匹配分组对应的原文文本片段
+
+    Args:
+        original (str): 原文
+        spans (list): 解码副本字符到原文区间的映射
+        match: 解码副本上的正则匹配对象
+        group_name (str): 分组名
+
+    Returns:
+        str: 分组对应原文的文本片段；分组未参与匹配时返回空字符串
+    """
+    start, end = match.span(group_name)
+    if start < 0 or end <= start:
+        return ''
+    return original[spans[start][0]:spans[end - 1][1]]
+
+
+def _rebuild_sensitive_replacement(original, spans, match):
+    """重建解码副本匹配对应的原文形态脱敏文本
+
+    保留键名、引号与分隔符在原文中的编码形态，仅将敏感值替换为
+    ***，与 _replace_sensitive_key_value 的替换语义保持一致
+
+    Args:
+        original (str): 原文
+        spans (list): 解码副本字符到原文区间的映射
+        match: 解码副本上 _SENSITIVE_KEY_VALUE_RE 的匹配对象
+
+    Returns:
+        str: 原文形态的脱敏文本
+    """
+    groups = match.groupdict()
+    prefix = (
+        f'{_original_span_text(original, spans, match, "leading_quote")}'
+        f'{_original_span_text(original, spans, match, "key")}'
+        f'{_original_span_text(original, spans, match, "trailing_quote")}'
+    )
+    separator = _original_span_text(original, spans, match, 'separator')
+    if groups['double_open'] or groups['single_open']:
+        # 编码引号在检测副本中已被替换为占位符，故这两个分组只会匹配到原文中
+        # 的字面引号，直接按字面引号形态重建
+        quote = '"' if groups['double_open'] else "'"
+        close_group = 'double_close' if groups['double_open'] else 'single_close'
+        close = _original_span_text(original, spans, match, close_group)
+        return f'{prefix}{separator}{quote}***{close}'
+    if separator.lstrip().startswith('%'):
+        return f'{prefix}{separator}***'
+    return f'{prefix}=***'
+
+
+def _decoded_bare_value_end(decoded, start):
+    """在解码副本上确认裸敏感值的真实结尾位置
+
+    _SENSITIVE_KEY_VALUE_RE 的 bare_value 组排除了 &，正则本身只能匹配到
+    & 之前，需与原文路径的 _resolve_sensitive_key_value_match 一样从匹配
+    结尾继续向后扫描，否则解码副本中 & 之后的值会残留
+
+    Args:
+        decoded (str): 解码检测副本
+        start (int): 扫描起点，即解码副本上正则匹配的结尾位置
+
+    Returns:
+        int: 敏感值在解码副本上的真实结尾位置
+    """
+    index = start
+    while index < len(decoded) and decoded[index] not in '"\'\r\n\t ,}]':
+        # & 后紧跟“键名 + 分隔符”时视为 query 参数分隔符，敏感值到此结束；
+        # 否则 & 属于值本身，继续向后扫描
+        if decoded[index] == '&' and _QUERY_PARAM_BOUNDARY_RE.match(decoded, index):
+            break
+        index += 1
+    return index
+
+
+def _mask_decoded_variants(original, decoded, spans):
+    """在解码副本上检测敏感片段，并按原文形态替换回原文
+
+    解码副本与原文长度不一致，无法直接在原文上执行正则替换，故先在
+    解码副本上定位敏感片段（URL userinfo 与敏感键值对），映射回原文
+    区间后从后往前替换；与 userinfo 重叠的键值对由 userinfo 规则优先
+
+    Args:
+        original (str): 原文
+        decoded (str): 单层解码副本
+        spans (list): 解码副本字符到原文区间的映射
+
+    Returns:
+        str: 脱敏后的字符串
+    """
+    plan = []
+    for match in _URL_USERINFO_RE.finditer(decoded):
+        if match.group('userinfo_end') != '@':
+            continue
+        start, end = match.span()
+        scheme = _original_span_text(original, spans, match, 'scheme')
+        plan.append((start, end, f'{scheme}***:***@'))
+
+    for match in _SENSITIVE_KEY_VALUE_RE.finditer(decoded):
+        start, end = match.span()
+        # 裸值分支需向后扫描补齐真实结尾，引号分支由正则的引号闭合规则决定
+        if match.group('bare_value'):
+            end = _decoded_bare_value_end(decoded, end)
+        plan.append(
+            (start, end, _rebuild_sensitive_replacement(original, spans, match))
+        )
+
+    # 结尾扫描可能把后一个匹配的起点纳入前一个匹配的区间，仅按起点排序无法
+    # 发现这类区间重叠，倒序替换时会重复写入导致畸形输出；故先按起点升序做
+    # 重叠剔除，保留起点在前且覆盖范围更大的匹配，使剩余区间互不相交。
+    # userinfo 与敏感键值对重叠时同样由此决定优先级：起点在前者胜出，
+    # 被剔除的一方所覆盖的凭据必然落在胜出者的替换区间内，不会明文残留
+    planned = []
+    covered_end = 0
+    for start, end, text in sorted(plan):
+        if planned and start < covered_end:
+            continue
+        planned.append((start, end, text))
+        covered_end = max(covered_end, end)
+
+    result = original
+    for start, end, text in reversed(planned):
+        orig_start = spans[start][0]
+        orig_end = spans[end - 1][1]
+        result = result[:orig_start] + text + result[orig_end:]
+    return result
+
+
+def mask_sensitive_fields(fields, sensitive_fields):
+    """仅对调用方声明的字段执行敏感片段脱敏
+
+    在字段字典的副本上进行处理：11 位手机号（1[3-9] 开头号段，允许带
+    可选 +86/86 国家码前缀）保留前 3 位与后 4 位；scheme://user:pass@
+    形式的 URL userinfo 脱敏为 ***:***@（保留 scheme/host/port 等）；
+    access_token/token、sign、secret、password、api_key、webhook 等
+    常见凭据键值对的值替换为 ***
+    （支持 key=value、key: value、单双引号键值形式；值侧优先按
+    带转义处理的引号字符串匹配到明确闭合引号或字符串末尾，否则取到
+    空白、引号、逗号或右括号为止，故值内含转义引号、逗号或 & 等连接符
+    时均能完整脱敏，未闭合的引号值不会凭空补充闭合引号；
+    其中 & 后紧跟“键名 + = / : 或其百分号编码”形态时按 query 参数分隔符
+    处理，敏感值到该 & 之前结束，& 及其后的非敏感参数（如
+    &timestamp=1700000000000）原样保留，后续敏感参数各自单独脱敏；
+    引号形式脱敏后保留原有结构，如 'access_token': 'abc123' 输出为
+    'access_token': '***'，裸值形式输出为 access_token=***）；
+    同时支持百分号编码的键名与分隔符（如 access%5Ftoken、%3D、%3A），
+    键名中任意单个字符均允许以百分号编码形式出现（如 access_%74oken、
+    %61ccess_token，hex 字母大小写均可匹配），脱敏时保留其编码形式
+    只替换值；值内以百分号编码出现的结构性字符（如 %2C、%22、%27、%7D、
+    %5D 及 %20 等空白）视为值本身的内容而非结构分隔符，敏感值会
+    整段脱敏，不会在此截断并残留后半段明文（如 access_token=abc%2Cdef
+    输出为 access_token=***，access_token=%22abc%22 输出为
+    access_token=***）；%26 例外，与未编码的 & 适用同一条 query 参数
+    分隔符规则：其后紧跟“键名 + = / : 或其百分号编码”时敏感值到该 %26
+    之前结束，%26 及其后内容原样保留（如 access_token=abc%26plain%3Dv
+    输出为 access_token=***%26plain%3Dv），不构成该形态时（如
+    access_token=abc%26def）才整段脱敏；双层编码的键名与分隔符由固定
+    深度正则直接识别，不受解码长度上限影响；其余检测会对不超过 4096
+    字符的值执行最多一层受限百分号解码，以限制解码副本资源，三层及以上
+    编码仍为已知边界；
+    敏感键名前使用 ASCII 字母数字下划线边界断言，仅这三类字符构成边界：
+    xaccess_token、9access_token、_access_token 等拼接不脱敏，而前缀为
+    中文等非 ASCII 字符或连字符、点号等 ASCII 标点时仍脱敏
+    （如 x-api-key、x.access_token 均脱敏，故 header 形态凭据可被覆盖）；
+    未声明字段与 None 值原样保留
+
+    Args:
+        fields (dict): 原始字段字典，不会被修改
+        sensitive_fields (set | list | tuple): 需要脱敏的字段名集合
+
+    Returns:
+        dict: 脱敏后的新字典
+
+    Raises:
+        TypeError: fields 不是 dict，或 sensitive_fields 不是
+            set/list/tuple 时抛出
+    """
+    if not isinstance(fields, dict):
+        raise TypeError('fields 必须是 dict')
+    if not isinstance(sensitive_fields, (set, list, tuple)):
+        raise TypeError('sensitive_fields 必须是 set、list 或 tuple')
+
+    result = dict(fields)
+    for field in sensitive_fields:
+        if field not in result or result[field] is None:
+            continue
+        value = str(result[field])
+        value = _bounded_sub(
+            re.compile(r'(?<!\d)(?:\+?86)?(1[3-9]\d)\d{4}(\d{4})(?!\d)'),
+            lambda match: f'{match.group(1)}****{match.group(2)}',
+            value,
+        )
+        decoded, spans = _decode_limited_with_spans(value)
+        if spans is None:
+            value = _bounded_sub(
+                _URL_USERINFO_RE,
+                _replace_url_userinfo,
+                value,
+                _resolve_url_userinfo_match,
+            )
+            value = _bounded_sub(
+                _SENSITIVE_KEY_VALUE_RE,
+                _replace_sensitive_key_value,
+                value,
+                _resolve_sensitive_key_value_match,
+            )
+        else:
+            value = _mask_decoded_variants(value, decoded, spans)
+        result[field] = value
+    return result
 
 
 def strip_wrapping_quotes(value):
@@ -422,12 +1001,20 @@ def parse_time_string(time_str):
         float: 转换后的秒数
 
     Raises:
-        ValueError: 如果时间字符串格式无效
+        ValueError: 如果时间字符串格式无效、类型不是字符串或数值，或解析出的
+            数值为非有限值（inf / -inf / nan）
     """
     LOGGER.info(f"解析时间字符串: {time_str}")
     # 兼容负值输入：自动去除前缀减号，保持时间语义为正数
     if isinstance(time_str, (int, float)):
         time_str = str(time_str)
+    if not isinstance(time_str, str):
+        # None/列表/字典等类型没有 strip 方法，直接调用会抛 AttributeError
+        # 穿透调用方的 except (TypeError, ValueError)，故在此收敛为 ValueError
+        LOGGER.error(f"时间配置必须是字符串或数值: {type(time_str).__name__}")
+        raise ValueError(
+            f"时间配置必须是字符串或数值: {type(time_str).__name__}"
+        )
     time_str = time_str.strip().lower()
     if not time_str:
         LOGGER.error("时间字符串不能为空")
@@ -451,6 +1038,16 @@ def parse_time_string(time_str):
         value = float(time_str[:-1])
         unit = time_str[-1]
         seconds = value * units[unit]
+        # float() 接受 inf/1e400/nan 等字面量，且有限值乘以单位系数后仍可能
+        # 静默溢出为 inf（如 1e308h），非有限值会让调用方的 int() 抛
+        # OverflowError 穿透，故在乘法之后统一收敛为 ValueError
+        if not math.isfinite(seconds):
+            LOGGER.error(
+                f"无效的时间数值: {time_str}，请使用 '1h', '15m', '30s'"
+            )
+            raise ValueError(
+                f"无效的时间数值: {time_str}，请使用 '1h', '15m', '30s'"
+            )
         LOGGER.info(f"解析结果: {seconds} 秒")
         return seconds
     else:

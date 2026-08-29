@@ -16,6 +16,7 @@ import TwoPush
 import modules.json_manager as json_manager
 from modules.json_manager import build_default_json_template
 from modules.utils import parse_push_channels
+from tests import make_mobile_number, mask_mobile_number
 
 
 @pytest.fixture
@@ -165,6 +166,37 @@ def test_self_update_verify_runs_before_explicit_config_check(monkeypatch, tmp_p
     assert exc_info.value.code == 7
     assert called == {'verify': True}
     assert not config_file.exists()
+
+
+@pytest.mark.parametrize(
+    ('argv_extra', 'expected_console'),
+    [([], True), (['-S'], False)],
+    ids=['normal', 'silent'],
+)
+def test_main_update_failed_passes_silent_to_setup_logger(
+    monkeypatch, argv_extra, expected_console
+):
+    """--update-failed 分支的日志器应遵循静默标志"""
+    calls = []
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        """记录日志器创建时的控制台开关"""
+        calls.append(console_enabled)
+        return logging.getLogger('test_main_update_failed_passes_silent')
+
+    def fake_handle_update_failed(logger):
+        """模拟自更新失败处理会自行退出"""
+        raise SystemExit(1)
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--update-failed'] + argv_extra)
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+    monkeypatch.setattr(TwoPush, 'handle_update_failed', fake_handle_update_failed)
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 1
+    assert calls == [expected_console]
 
 
 class FakeConfig:
@@ -322,6 +354,228 @@ def test_execute_push_invalid_json_retry_max_count_falls_back(monkeypatch):
     assert captured['retry_settings']['max_count'] == 3
 
 
+@pytest.mark.parametrize(
+    'title',
+    ['标题 {host_name', '标题 {0}', '标题 {host_name!z}', '标题 {host_name:>{width}}'],
+    ids=['unclosed_brace', 'positional_field', 'unknown_conversion', 'nested_field'],
+)
+def test_execute_push_invalid_template_syntax_returns_error(monkeypatch, title):
+    """模板占位符语法非法时应返回错误码而非抛出未捕获异常"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': title,
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """渲染失败时不应触达发送环节"""
+        raise AssertionError('模板渲染失败后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_invalid_template_syntax_returns_error')
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'field,value',
+    [
+        ('title', 123),
+        ('title', ['标题']),
+        ('content', 123),
+        ('content', {'text': '内容'}),
+    ],
+    ids=['title_int', 'title_list', 'content_int', 'content_dict'],
+)
+def test_execute_push_non_string_template_field_returns_error(
+    monkeypatch, field, value
+):
+    """title/content 为非字符串时应返回错误码而非抛出 AttributeError"""
+    template = {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    }
+    template[field] = value
+    monkeypatch.setattr(
+        TwoPush, 'load_json_template', lambda path, logger: template
+    )
+
+    def fake_send_notification(**kwargs):
+        """字段类型非法时不应触达发送环节"""
+        raise AssertionError('模板字段类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_non_string_template_field_returns_error'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [123, True, {'http': 'http://127.0.0.1:7890'}, ['http://127.0.0.1:7890']],
+    ids=['int', 'bool', 'dict', 'list'],
+)
+def test_execute_push_non_string_proxy_returns_error(monkeypatch, value):
+    """JSON proxy 为非字符串时应返回错误码而非抛出 AttributeError/TypeError"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'proxy': value,
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """代理类型非法时不应触达发送环节"""
+        raise AssertionError('代理类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_non_string_proxy_returns_error'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    [123, True, {'http': 'http://u:pw@host'}, ['http://u:pw@host']],
+    ids=['int', 'bool', 'dict', 'list'],
+)
+def test_mask_proxy_authentication_non_string_returns_placeholder(value):
+    """脱敏函数收到非字符串时返回占位符，不得抛异常或回显原值"""
+    assert TwoPush.mask_proxy_authentication(value) == '***'
+
+
+@pytest.mark.parametrize(
+    'value',
+    ['5s', ['5s'], 5, 5.5],
+    ids=['str', 'list', 'int', 'float'],
+)
+def test_execute_push_non_dict_retry_returns_error(monkeypatch, value):
+    """JSON retry 为非对象真值时应返回错误码而非抛出 AttributeError"""
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'retry': value,
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """retry 类型非法时不应触达发送环节"""
+        raise AssertionError('retry 类型非法后不应调用发送逻辑')
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_non_dict_retry_returns_error')
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 2
+
+
+@pytest.mark.parametrize(
+    'value',
+    ['1e308h', '1e308m', None, ['5s'], {'v': '5s'}],
+    ids=['overflow_hour', 'overflow_minute', 'none', 'list', 'dict'],
+)
+def test_execute_push_invalid_json_retry_interval_falls_back(
+    monkeypatch, value
+):
+    """JSON retry.interval 溢出或类型非法时应回退默认间隔而非崩溃"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'retry': {'interval': value, 'max_count': 2},
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_invalid_json_retry_interval_falls_back'
+    )
+
+    assert TwoPush.execute_push('unused.json', FakeConfig(), logger) == 0
+    assert captured['retry_settings']['interval'] == 3
+
+
+@pytest.mark.parametrize(
+    'configured',
+    ['1e308h', '1e308m', '5e304h'],
+    ids=['overflow_hour', 'overflow_minute', 'threshold_hour'],
+)
+def test_execute_push_ini_retry_interval_overflow_falls_back(
+    monkeypatch, configured
+):
+    """INI retry_interval 乘以单位系数溢出时应回退默认间隔而非崩溃"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    class OverflowIntervalConfig(FakeConfig):
+        """返回溢出 retry_interval 的配置对象"""
+
+        def get_attr(self, key, default=''):
+            """返回被测的溢出重试间隔"""
+            if key == 'retry_interval':
+                return configured
+            return super().get_attr(key, default)
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger(
+        'test_execute_push_ini_retry_interval_overflow_falls_back'
+    )
+
+    assert TwoPush.execute_push(
+        'unused.json', OverflowIntervalConfig(), logger
+    ) == 0
+    assert captured['retry_settings']['interval'] == 3
+
+
+@pytest.mark.parametrize('configured', [0, -5], ids=['zero', 'negative'])
+def test_execute_push_ini_retry_max_count_has_lower_bound(monkeypatch, configured):
+    """INI retry_max_count 配置为非正数时应钳制到至少一次重试"""
+    captured = {}
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': '标题 {host_name}',
+        'content': '内容 {current_time}',
+        'channels': [{'provider': 'serverchan', 'sckey': 'SCTxxxx'}],
+    })
+
+    class LowCountConfig(FakeConfig):
+        """返回非正 retry_max_count 的配置对象"""
+
+        def get_attr_int(self, key, default=0):
+            """返回被测的非正重试次数"""
+            if key == 'retry_max_count':
+                return configured
+            return default
+
+    def fake_send_notification(**kwargs):
+        """捕获重试设置并模拟发送成功"""
+        captured.update(kwargs)
+        return [('serverchan', True)]
+
+    monkeypatch.setattr(TwoPush, 'send_notification', fake_send_notification)
+    logger = logging.getLogger('test_execute_push_ini_retry_max_count_has_lower_bound')
+
+    assert TwoPush.execute_push('unused.json', LowCountConfig(), logger) == 0
+    assert captured['retry_settings']['max_count'] == 1
+
+
 def test_execute_push_logs_rendered_push_preview_before_send(monkeypatch, caplog):
     """execute_push 应在发送前记录渲染后的推送预览"""
     monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
@@ -404,6 +658,172 @@ def test_format_push_preview_masks_proxy_authentication():
     assert 'socks5://user:password@127.0.0.1:7890' not in preview
 
 
+def test_mask_proxy_authentication_malformed_port_returns_placeholder():
+    """代理端口非数字时应返回固定占位符而不抛异常"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:secret@proxy.test:notaport'
+    ) == '***'
+
+
+def test_mask_proxy_authentication_malformed_ipv6_returns_placeholder():
+    """代理 IPv6 地址畸形时应返回固定占位符而不抛异常"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:secret@[2001:db8::1'
+    ) == '***'
+
+
+def test_format_push_preview_masks_proxy_malformed_port():
+    """推送预览对端口非数字的代理应输出占位符且不抛异常"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://alice:secret@proxy.test:notaport',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "***"' in preview
+    assert 'notaport' not in preview
+    assert 'alice:secret' not in preview
+
+
+def test_mask_proxy_authentication_keeps_wellformed_proxy_variants():
+    """合法代理（含端口、无端口、IPv6、无认证）脱敏行为应保持不变"""
+    assert TwoPush.mask_proxy_authentication(
+        'socks5://user:password@127.0.0.1:7890'
+    ) == 'socks5://***:***@127.0.0.1:7890'
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:pass@proxy.test'
+    ) == 'http://***:***@proxy.test'
+    assert TwoPush.mask_proxy_authentication(
+        'http://alice:pass@[::1]:8080'
+    ) == 'http://***:***@[::1]:8080'
+    assert TwoPush.mask_proxy_authentication(
+        'http://proxy.test:notaport'
+    ) == 'http://proxy.test:notaport'
+
+
+def test_format_push_preview_masks_proxy_query_sensitive_key():
+    """推送预览应脱敏代理 URL query 中的敏感键值"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080?access_token=QUERY',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'access_token=***' in preview
+    assert 'QUERY' not in preview
+
+
+def test_mask_proxy_authentication_masks_double_encoded_sensitive_query_key():
+    """代理 URL query 键名双层编码时也应脱敏敏感值"""
+    assert TwoPush.mask_proxy_authentication(
+        'http://proxy.test:8080?access%255Ftoken=QUERY&name=value'
+    ) == 'http://proxy.test:8080?access%255Ftoken=***&name=value'
+
+
+def test_format_push_preview_masks_proxy_query_sensitive_key_case_insensitive():
+    """代理 URL query 敏感键匹配应大小写不敏感"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080?PASSWORD=SECRETVALUE',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'PASSWORD=***' in preview
+    assert 'SECRETVALUE' not in preview
+
+
+def test_format_push_preview_masks_proxy_query_preserves_plus_for_space():
+    """代理 URL query 中的空格 + 在脱敏重组后应保持 + 而非 %20"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?a=b+c&access_token=Q',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'a=b+c&access_token=***' in preview
+    assert 'b%20c' not in preview
+    assert 'Q' not in preview
+
+
+def test_format_push_preview_masks_proxy_query_empty_sensitive_value():
+    """代理 URL query 中敏感键为空值时应脱敏为空值标记 ***"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?password=',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'password=***' in preview
+
+
+def test_format_push_preview_masks_proxy_query_percent_encoded_key():
+    """代理 URL query 中百分号编码的敏感键名应被解码识别并脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test/x?access%5Ftoken=Q',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert 'access_token=***' in preview
+    assert 'access%5Ftoken=Q' not in preview
+
+
+def test_format_push_preview_removes_proxy_fragment():
+    """推送预览应移除代理 URL 的 fragment"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://proxy.test:8080#secret=FRAG',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "http://proxy.test:8080"' in preview
+    assert 'FRAG' not in preview
+
+
+def test_format_push_preview_masks_proxy_combined_credentials_query_fragment():
+    """代理 URL 同时含认证、敏感 query 与 fragment 时应全部脱敏"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy='http://alice:pass@proxy.test:8080?password=QUERY#token=F',
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'serverchan'}],
+    )
+
+    assert '"proxy": "http://***:***@proxy.test:8080?password=***"' in preview
+    assert 'alice:pass' not in preview
+    assert 'QUERY' not in preview
+    assert 'token=F' not in preview
+
+
+def test_format_push_preview_keeps_proxy_without_credentials():
+    """无认证、无敏感 query 且无 fragment 的代理应原样返回"""
+    for proxy in ('http://127.0.0.1:7890', 'http://proxy.test:8080?x=1'):
+        preview = TwoPush.format_push_preview(
+            title='标题',
+            content='内容',
+            proxy=proxy,
+            retry_settings={'interval': 3, 'max_count': 3},
+            channels=[{'provider': 'serverchan'}],
+        )
+
+        assert f'"proxy": "{proxy}"' in preview
+
+
 def test_format_push_preview_keeps_retry_order_with_reversed_settings():
     """推送预览应固定 retry 字段顺序，不受传入字典顺序影响"""
     preview = TwoPush.format_push_preview(
@@ -449,6 +869,24 @@ def test_format_push_preview_hides_channel_parameters():
             'https://example.test/webhook', 'secret-password',
             'mail-password'):
         assert forbidden_value not in preview
+
+
+def test_format_push_preview_masks_sensitive_title_and_content():
+    """预览中的标题与正文含敏感信息时应脱敏"""
+    mobile = make_mobile_number()
+    preview = TwoPush.format_push_preview(
+        title=f'通知 {mobile} access_token=abc',
+        content='正文 sign=xyz secret=SECa',
+        proxy=None,
+        retry_settings={'interval': 3, 'max_count': 3},
+        channels=[{'provider': 'dingtalk'}],
+    )
+
+    assert mobile not in preview
+    assert mask_mobile_number(mobile) in preview
+    assert 'access_token=abc' not in preview
+    assert 'sign=xyz' not in preview
+    assert 'SECa' not in preview
 
 
 def test_parse_args_accepts_template_options(monkeypatch):
@@ -944,6 +1382,64 @@ def test_main_silent_mode_still_respects_file_log_config(monkeypatch, tmp_path, 
     assert calls == [(fake_logger, TwoPush.VERSION)]
 
 
+def test_main_invalid_max_files_does_not_crash(monkeypatch, tmp_path, mock_cleanup_residue):
+    """max_files 配置为非整数时应回退默认值而非抛出 ValueError"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Network]\n'
+        'proxy = \n'
+        'enable_proxy_for_push = false\n'
+        '\n'
+        '[Push]\n'
+        'retry_interval = 3s\n'
+        'retry_max_count = 3\n'
+        '\n'
+        '[Update]\n'
+        'auto_check = false\n'
+        'channel = stable\n'
+        '\n'
+        '[Logs]\n'
+        'save_enabled = true\n'
+        'max_files = abc\n',
+        encoding='utf-8',
+    )
+    captured = []
+
+    class FakeLogger:
+        def debug(self, message):
+            pass
+
+        def info(self, message):
+            pass
+
+        def warning(self, message):
+            pass
+
+        def error(self, message):
+            pass
+
+        def critical(self, message):
+            pass
+
+    def fake_setup_logger(name='TwoPush', console_enabled=True):
+        return FakeLogger()
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-S', '-c', str(config_file)])
+    monkeypatch.setattr(TwoPush, 'setup_logger', fake_setup_logger)
+    monkeypatch.setattr(TwoPush, 'add_file_logger', lambda logger, **kwargs: None)
+    monkeypatch.setattr(
+        TwoPush,
+        'cleanup_old_logs',
+        lambda logger, max_files, **kwargs: captured.append(max_files),
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        TwoPush.main()
+
+    assert exc_info.value.code == 0
+    assert captured == [15]
+
+
 def test_main_drag_drop_executes_push_and_pauses(monkeypatch, tmp_path, mock_cleanup_residue):
     json_file = tmp_path / 'push.json'
     json_file.write_text(
@@ -1242,3 +1738,93 @@ def test_main_push_failed_exits_before_update(monkeypatch, tmp_path, mock_cleanu
     assert exc_info.value.code == 2
     assert 'update' not in call_log
     assert 'auto_check' not in call_log
+
+
+def test_format_push_preview_preserves_dingtalk_route_label():
+    """推送预览应保持原有结构，不新增分支字段"""
+    preview = TwoPush.format_push_preview(
+        title='每日报告 - HOST',
+        content='截止 2026/07/12 12:00:00，系统运行正常',
+        proxy='http://127.0.0.1:7890',
+        retry_settings={'interval': 5, 'max_count': 2},
+        channels=[{'provider': 'dingtalk'}],
+    )
+
+    assert 'branch=' not in preview
+    assert 'dingtalk(onepush)' in preview
+    assert 'dingtalk(builtin)' not in preview
+    assert '每日报告 - HOST' in preview
+
+
+def test_format_push_preview_shows_route_labels():
+    """推送预览的 channels 应为钉钉通道标注 builtin/onepush 路由标识"""
+    preview = TwoPush.format_push_preview(
+        title='标题',
+        content='内容',
+        proxy=None,
+        retry_settings={},
+        channels=[
+            {'provider': 'dingtalk'},
+            {'provider': 'dingtalk', 'msgtype': 'markdown'},
+        ],
+    )
+
+    assert '"channels": ["dingtalk(onepush)", "dingtalk(builtin)"]' in preview
+
+
+def test_format_push_preview_keeps_non_string_values_unchanged():
+    """预览对非字符串 title/content 应原样保留，不被 str() 转换"""
+    preview = TwoPush.format_push_preview(
+        title=123,
+        content=456.5,
+        proxy=None,
+        retry_settings={},
+        channels=[],
+    )
+
+    assert '"title": 123,' in preview
+    assert '"content": 456.5,' in preview
+    assert '"title": "123"' not in preview
+    assert '"content": "456.5"' not in preview
+
+
+def test_format_push_preview_still_masks_string_values():
+    """预览对字符串 title/content 仍应执行脱敏"""
+    mobile = make_mobile_number()
+    preview = TwoPush.format_push_preview(
+        title=f'标题 {mobile}',
+        content=f'正文 {mobile}',
+        proxy=None,
+        retry_settings={},
+        channels=[],
+    )
+
+    assert mask_mobile_number(mobile) in preview
+    assert mobile not in preview
+
+
+def test_execute_push_uses_original_content_after_preview_masking(
+        monkeypatch, tmp_path):
+    """推送预览脱敏不应影响实际发送参数，发送仍用原始 title/content"""
+    original_title = f'标题 {make_mobile_number()}'
+    original_content = '# 测试推送\n\n正文 access_token=raw-token'
+    captured = {}
+
+    monkeypatch.setattr(TwoPush, 'load_json_template', lambda path, logger: {
+        'title': original_title,
+        'content': original_content,
+        'channels': [{'provider': 'dingtalk'}],
+    })
+    monkeypatch.setattr(
+        TwoPush,
+        'send_notification',
+        lambda **kwargs: captured.update(kwargs) or [('dingtalk', True)],
+    )
+    monkeypatch.setattr(TwoPush, 'resolve_proxy', lambda template, config: None)
+    logger = logging.getLogger('test_execute_push_sends_original_title_and_content_after_preview_masking')
+
+    result = TwoPush.execute_push(str(tmp_path / 'push.json'), FakeConfig(), logger)
+
+    assert result == 0
+    assert captured['title'] == original_title
+    assert captured['content'] == original_content
