@@ -315,6 +315,48 @@ def test_put_ini_returns_validation_error_contract_and_does_not_write(tmp_path):
     assert config_path.read_text(encoding='utf-8') == original
 
 
+def test_put_ini_preserves_unknown_original_sections_and_keys(tmp_path):
+    """INI 原文中的未知节键应允许保存，同时继续校验可编辑字段。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text(
+        '[Network]\nproxy = old\nunknown_network = keep\n\n'
+        '[Custom]\ncustom_key = keep\n',
+        encoding='utf-8',
+    )
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+
+    response = client.put('/api/ini', json={
+        'content': '[Network]\nproxy = new\nunknown_network = changed\n\n'
+                  '[Custom]\ncustom_key = changed\n',
+    })
+
+    assert response.status_code == 200
+    saved = config_path.read_text(encoding='utf-8')
+    assert 'proxy = new' in saved
+    assert 'unknown_network = changed' in saved
+    assert '[Custom]' in saved
+    assert 'custom_key = changed' in saved
+
+
+def test_put_json_creates_multilevel_parent_directories(tmp_path):
+    """JSON 新建文件应安全创建尚不存在的多级父目录。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    target = tmp_path / 'level-one' / 'level-two' / 'new.json'
+    payload = {'title': 't', 'content': 'c', 'channels': [{}]}
+
+    response = client.post('/api/json', json={**payload, 'path': 'level-one/level-two/new.json'})
+
+    assert response.status_code == 200
+    assert target.exists()
+    assert json.loads(target.read_text(encoding='utf-8')) == payload
+
+
 def test_task6_temp_delete_requires_true_confirmation_and_safe_array_contract(tmp_path):
     """临时文件删除必须要求 confirmed=true，并拒绝越界名称。"""
     resource_dir = tmp_path / 'web'
