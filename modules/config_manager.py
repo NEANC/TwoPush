@@ -191,6 +191,12 @@ class ConfigManager:
         重建配置文件，保留所有已有值，仅补充缺失的模板键。
         """
         lines = []
+        defaults = self.config.defaults()
+        if defaults:
+            lines.append('[DEFAULT]')
+            for key, val in defaults.items():
+                lines.append(f'{key} = {val}')
+            lines.append('')
         for section in self.config.sections():
             if section.upper() == 'DEFAULT' or section == '__migrations__':
                 continue

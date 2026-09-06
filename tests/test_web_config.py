@@ -40,6 +40,48 @@ def test_web_missing_config_initializes_without_system_exit(tmp_path):
     assert manager.get_attr('access_token') == ''
 
 
+def test_web_regeneration_preserves_unknown_default_keys(tmp_path):
+    """配置重建时应保留 DEFAULT 中的未知键"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[DEFAULT]\ncustom_setting = keep-me\n\n[Web]\naccess_token = valid-token\n',
+        encoding='utf-8',
+    )
+    manager = ConfigManager(
+        str(config_file),
+        logging.getLogger('test_web_regeneration_preserves_unknown_default_keys'),
+        default_sections={'Web': {'new_setting': 'default'}},
+        non_interactive=True,
+    )
+
+    manager.load()
+
+    config = configparser.ConfigParser()
+    config.read(config_file, encoding='utf-8')
+    assert config['DEFAULT']['custom_setting'] == 'keep-me'
+
+
+def test_web_regeneration_preserves_existing_short_access_token(tmp_path):
+    """配置重建时应原样保留已有短访问令牌"""
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[Web]\naccess_token = short\n',
+        encoding='utf-8',
+    )
+    manager = ConfigManager(
+        str(config_file),
+        logging.getLogger('test_web_regeneration_preserves_existing_short_access_token'),
+        default_sections={'Web': {'new_setting': 'default'}},
+        non_interactive=True,
+    )
+
+    manager.load()
+
+    config = configparser.ConfigParser()
+    config.read(config_file, encoding='utf-8')
+    assert config.get('Web', 'access_token') == 'short'
+
+
 def test_cli_missing_config_still_exits_after_generation(tmp_path):
     """CLI 默认模式缺少配置文件时仍应保持首次运行退出行为"""
     manager = ConfigManager(
