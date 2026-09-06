@@ -22,7 +22,7 @@ def _validate_windows_path_parts(parts: list[str]) -> None:
             raise ValueError('路径包含 Windows 不允许的字符')
         if part.endswith((' ', '.')):
             raise ValueError('路径段不能以空格或句点结尾')
-        if part.split('.', 1)[0].upper() in _RESERVED_DEVICE_NAMES:
+        if part.split('.', 1)[0].rstrip(' ').rstrip('.').upper() in _RESERVED_DEVICE_NAMES:
             raise ValueError('路径不能使用 Windows 保留设备名')
 
 
