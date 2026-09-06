@@ -160,6 +160,20 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         except ValidationError as error:
             raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
 
+    def safe_temp_path(name: str) -> Path:
+        """校验临时目录和文件均未越过程序目录。"""
+        temp = app.state.program_dir / 'Temp'
+        checked_name = safe_temp_name(name)
+        target = temp / checked_name
+        try:
+            temp_resolved = temp.resolve(strict=False)
+            target_resolved = target.resolve(strict=False)
+            if temp.is_symlink() or target_resolved.parent != temp_resolved:
+                raise OSError('临时路径包含重解析点')
+        except OSError as error:
+            raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
+        return target
+
     def json_payload(value: dict[str, Any]) -> dict[str, Any]:
         """复用公共 JSON 模板模型校验载荷。"""
         try:
@@ -313,11 +327,15 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def list_temp():
         """列出程序目录中临时 JSON 文件。"""
         temp = app.state.program_dir / 'Temp'
+        try:
+            temp_resolved = temp.resolve(strict=False)
+        except OSError:
+            return {'files': []}
         files = []
-        if temp.is_dir():
+        if temp.is_dir() and not temp.is_symlink() and temp_resolved == temp:
             for item in temp.glob('Temp_*.json'):
                 try:
-                    if item.is_file() and not item.is_symlink() and item.resolve().parent == temp.resolve():
+                    if item.is_file() and not item.is_symlink() and item.resolve().parent == temp_resolved:
                         files.append(item.name)
                 except OSError:
                     continue
@@ -328,7 +346,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """读取程序目录中安全的临时 JSON 文件。"""
         temp = app.state.program_dir / 'Temp'
         checked_name = safe_temp_name(name)
-        target = temp / checked_name
+        target = safe_temp_path(checked_name)
         if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or target.is_symlink():
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
         return Response(target.read_bytes(), media_type='application/json')
@@ -341,7 +359,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         temp = app.state.program_dir / 'Temp'
         deleted = []
         for name in dict.fromkeys(payload.names):
-            target = temp / name
+            target = safe_temp_path(name)
             if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or target.is_symlink():
                 return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
             deleted.append(name)

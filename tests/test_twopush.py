@@ -79,6 +79,8 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
         def get_attr(self, key, default=''):
             return 'secret token/中文?&=' if key == 'access_token' else default
 
+    (tmp_path / 'config.ini').write_text('[Web]\naccess_token = secret token/中文?&=\n', encoding='utf-8')
+
     class FakeServer:
         def __init__(self, config):
             calls['uvicorn_config'] = config
@@ -104,13 +106,15 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
     assert calls['config_kwargs']['non_interactive'] is True
     assert calls['loaded'] is True
     assert calls['ran'] is True
-    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
+    assert calls['url'] == 'http://0.0.0.0:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
+    assert calls['uvicorn_config']['host'] == '0.0.0.0'
     assert calls['uvicorn_config']['access_log'] is False
 
 
 def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_path):
     """Web 服务应使用实际监听 socket 端口并完成清理。"""
     calls = []
+    uvicorn_config = {}
 
     class FakeConfig:
         def __init__(self, **kwargs):
@@ -142,7 +146,7 @@ def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_p
         should_exit = False
         servers = [type('Server', (), {'sockets': [FakeSocket()]})()]
         def __init__(self, config):
-            pass
+            uvicorn_config.update(config)
         def run(self):
             calls.append('run')
         def close(self):
@@ -160,6 +164,7 @@ def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_p
     monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 0
+    assert uvicorn_config['host'] == '127.0.0.1'
     assert 'http://127.0.0.1:54321/' in calls
     assert calls[-3:] == ['close', 'control.stop', 'manager.stop'] or calls[-4:] == ['close', 'control.stop', 'manager.stop', 'manager.shutdown']
     assert 'manager.shutdown' in calls

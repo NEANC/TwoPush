@@ -207,6 +207,34 @@ def test_temp_is_program_dir_scoped_and_rejects_links_and_non_temp_names(tmp_pat
     assert client.get('/api/temp/other.json').status_code == 404
 
 
+def test_temp_read_and_delete_reject_temp_directory_reparse_point(tmp_path):
+    """临时目录重解析到工作区外时，读取和删除必须拒绝。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    program_dir.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'Temp_escape.json').write_text('secret', encoding='utf-8')
+    try:
+        (program_dir / 'Temp').symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        return
+
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
+
+    assert client.get('/api/temp/Temp_escape.json').status_code == 404
+    assert client.post('/api/temp/delete', json={
+        'names': ['Temp_escape.json'],
+        'confirmed': True,
+    }).status_code == 404
+    assert (outside / 'Temp_escape.json').exists()
+
+
 def test_lifespan_shutdown_calls_manager_stop_and_shutdown(tmp_path):
     """应用生命周期结束时应显式停止并关闭控制器。"""
     resource_dir = tmp_path / 'web'

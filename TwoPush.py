@@ -111,6 +111,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         )
         port = _select_web_port()
         access_token = config.get_attr('access_token', '')
+        host = app.state.host
         url = f'http://127.0.0.1:{port}/'
         if len(access_token) >= 16:
             url += '?' + urlencode({'token': access_token})
@@ -118,7 +119,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         import uvicorn
         server = uvicorn.Server(uvicorn.Config(
             app,
-            host='127.0.0.1',
+            host=host,
             port=port,
             access_log=False,
             log_config=None,
@@ -144,7 +145,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         server_sockets = getattr(server, 'servers', None) or []
         if server_sockets:
             actual_port = server_sockets[0].sockets[0].getsockname()[1]
-        url = f'http://127.0.0.1:{actual_port}/'
+        url = f'http://{host}:{actual_port}/'
         if len(access_token) >= 16:
             url += '?' + urlencode({'token': access_token})
         if not getattr(server, 'started', False):
