@@ -10,7 +10,11 @@
 import argparse
 import json
 import os
+import socket
 import sys
+import threading
+import time
+import webbrowser
 
 from contextlib import contextmanager
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
@@ -37,6 +41,98 @@ from modules.json_manager import (
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
+WEB_DEFAULT_PORT = 52233
+
+
+def should_start_web():
+    """判断是否应在无参数模式启动 Web 服务。"""
+    return len(sys.argv) == 1
+
+
+def _select_web_port():
+    """优先选择默认端口，冲突时选择系统动态端口。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind(('127.0.0.1', WEB_DEFAULT_PORT))
+            return WEB_DEFAULT_PORT
+        except OSError:
+            probe.bind(('127.0.0.1', 0))
+            return probe.getsockname()[1]
+
+
+def run_web_server(config_path=DEFAULT_CONFIG_FILE):
+    """初始化并运行 Web 服务，退出时清理推送进程管理器。"""
+    from modules.push_process import PushProcessManager
+    from modules.web_server import WebServerControl, create_app
+
+    logger = setup_logger(console_enabled=True)
+    config = ConfigManager(
+        config_file=config_path,
+        logger=logger,
+        app_name='TwoPush',
+        non_interactive=True,
+    )
+    config.load()
+    if not config.validate():
+        return 2
+
+    process_manager = PushProcessManager()
+    control = WebServerControl()
+    app = create_app(
+        os.path.dirname(os.path.abspath(config_path)),
+        config_path,
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'),
+        process_manager,
+        server_control=control,
+    )
+    port = _select_web_port()
+    access_token = config.get_attr('access_token', '')
+    url = f'http://127.0.0.1:{port}/'
+    if len(access_token) >= 16:
+        url += f'?token={access_token}'
+
+    import uvicorn
+    server = uvicorn.Server(uvicorn.Config(
+        app,
+        host='127.0.0.1',
+        port=port,
+        access_log=False,
+        log_config=None,
+    ))
+
+    def watch_stop_request():
+        """将 Web 停止请求转换为 Uvicorn 退出信号。"""
+        while not server.should_exit:
+            if control.stop_requested:
+                server.should_exit = True
+                return
+            time.sleep(0.05)
+
+    watcher = threading.Thread(target=watch_stop_request, daemon=True)
+    watcher.start()
+    server_thread = threading.Thread(target=server.run, daemon=True)
+    server_thread.start()
+    while not getattr(server, 'started', False):
+        if server.should_exit:
+            break
+        time.sleep(0.05)
+    actual_port = port
+    server_sockets = getattr(server, 'servers', None) or []
+    if server_sockets:
+        actual_port = server_sockets[0].sockets[0].getsockname()[1]
+    url = f'http://127.0.0.1:{actual_port}/'
+    if len(access_token) >= 16:
+        url += f'?token={access_token}'
+    webbrowser.open(url)
+    server_thread.join()
+    try:
+        server.close()
+    finally:
+        control.stop()
+        process_manager.stop()
+        process_manager.shutdown()
+    return 0
+
 
 _PROXY_SENSITIVE_QUERY_KEYS = frozenset({
     'password', 'passwd', 'token', 'access_token', 'accesskey',
@@ -537,6 +633,8 @@ def execute_push(json_path, config, logger):
 
 def main():
     """主入口"""
+    if should_start_web():
+        return run_web_server()
     args = parse_args()
 
     # 自更新内部参数

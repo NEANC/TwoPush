@@ -37,6 +37,64 @@ def test_parse_args_uses_config_ini_by_default(monkeypatch):
     assert args.config == 'config.ini'
 
 
+def test_should_start_web_only_without_arguments(monkeypatch):
+    """仅无参数时进入 Web 入口。"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py'])
+    assert TwoPush.should_start_web() is True
+
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--help'])
+    assert TwoPush.should_start_web() is False
+
+
+def test_should_start_web_preserves_any_cli_argument(monkeypatch):
+    """任意命令行参数都保留原 CLI 行为。"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', 'push.json'])
+    assert TwoPush.should_start_web() is False
+
+
+def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path):
+    """Web 服务使用非交互配置、实际端口和带令牌首页 URL。"""
+    calls = {}
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            calls['config_kwargs'] = kwargs
+        def load(self):
+            calls['loaded'] = True
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return 'secret-token-123456' if key == 'access_token' else default
+
+    class FakeServer:
+        def __init__(self, config):
+            calls['uvicorn_config'] = config
+            self.started = True
+            self.should_exit = False
+        def run(self):
+            calls['ran'] = True
+        def close(self):
+            calls['closed'] = True
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.setdefault('url', url))}))
+    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
+
+    result = TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+
+    assert result == 0
+    assert calls['config_kwargs']['non_interactive'] is True
+    assert calls['loaded'] is True
+    assert calls['ran'] is True
+    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret-token-123456'
+    assert calls['uvicorn_config']['access_log'] is False
+
+
 def test_parse_args_single_dash_long_option_abbreviated_by_argparse(monkeypatch):
     """argparse 短选项缩写与位置参数共存时，裸文本会被位置参数截获"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'value'])
