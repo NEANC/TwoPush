@@ -165,6 +165,17 @@ def test_update_ini_cleans_temporary_file_when_replace_fails(tmp_path, monkeypat
     assert config_file.read_text(encoding='utf-8') == '[Web]\naccess_token = keep\n'
 
 
+def test_validate_ini_values_accepts_valid_values():
+    """合法配置值应通过校验"""
+    from modules.web_config import validate_ini_values
+
+    assert validate_ini_values({
+        'Push': {'retry_interval': '1h', 'retry_max_count': '3'},
+        'Logs': {'max_files': '15', 'save_enabled': 'true'},
+        'Update': {'auto_check': 'false', 'channel': 'preview'},
+    }) == {}
+
+
 def test_update_ini_accepts_flat_gui_values(tmp_path):
     """更新接口应支持以节名和键名组成的扁平字段映射"""
     from modules.web_config import update_ini
@@ -176,12 +187,71 @@ def test_update_ini_accepts_flat_gui_values(tmp_path):
     assert 'proxy = new' in config_file.read_text(encoding='utf-8')
 
 
-def test_validate_ini_values_accepts_valid_values():
-    """合法配置值应通过校验"""
-    from modules.web_config import validate_ini_values
 
-    assert validate_ini_values({
-        'Push': {'retry_interval': '1h', 'retry_max_count': '3'},
-        'Logs': {'max_files': '15', 'save_enabled': 'true'},
-        'Update': {'auto_check': 'false', 'channel': 'preview'},
-    }) == {}
+
+def test_read_ini_does_not_duplicate_default_keys_into_sections(tmp_path):
+    """读取配置时节字典不应包含继承自 DEFAULT 的键"""
+    from modules.web_config import read_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[DEFAULT]\nshared = default\n\n[Network]\nproxy = local\n', encoding='utf-8')
+
+    loaded = read_ini(str(config_file))
+
+    assert loaded['DEFAULT'] == {'shared': 'default'}
+    assert loaded['Network'] == {'proxy': 'local'}
+
+
+def test_update_ini_rejects_invalid_values_before_writing(tmp_path):
+    """更新前校验失败时不应改写配置文件"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    original = '[Push]\nretry_interval = 3s\n'
+    config_file.write_text(original, encoding='utf-8')
+
+    try:
+        update_ini(str(config_file), {'Push': {'retry_interval': '-5s'}})
+    except ValueError as error:
+        assert 'Push.retry_interval' in str(error)
+    else:
+        raise AssertionError('非法配置值应抛出 ValueError')
+
+    assert config_file.read_text(encoding='utf-8') == original
+
+
+def test_update_ini_missing_or_malformed_file_has_explicit_error(tmp_path):
+    """更新不存在或解析失败的文件时应抛出明确异常"""
+    from modules.web_config import update_ini
+
+    missing = tmp_path / 'missing.ini'
+    try:
+        update_ini(str(missing), {'Network': {'proxy': 'new'}})
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError('缺失配置文件应抛出 FileNotFoundError')
+
+    malformed = tmp_path / 'malformed.ini'
+    malformed.write_text('[Network\nproxy = old\n', encoding='utf-8')
+    try:
+        update_ini(str(malformed), {'Network': {'proxy': 'new'}})
+    except configparser.Error:
+        pass
+    else:
+        raise AssertionError('解析失败应抛出 configparser.Error')
+
+
+def test_update_ini_ignores_unknown_fields_and_does_not_rewrite_without_valid_update(tmp_path, monkeypatch):
+    """未知字段应被忽略，且无有效更新时不应重写文件"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Web]\naccess_token = keep\n', encoding='utf-8')
+    replace_calls = []
+    monkeypatch.setattr('modules.web_config.os.replace', lambda *args: replace_calls.append(args))
+
+    update_ini(str(config_file), {'Web': {'access_token': 'changed'}, 'Custom': {'key': 'value'}})
+
+    assert replace_calls == []
+    assert config_file.read_text(encoding='utf-8') == '[Web]\naccess_token = keep\n'

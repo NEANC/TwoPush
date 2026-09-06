@@ -5,6 +5,7 @@
 
 import configparser
 import os
+import tempfile
 
 from modules.utils import parse_time_string
 
@@ -24,13 +25,20 @@ BOOLEAN_FIELDS = {
 
 def read_ini(path):
     """读取 INI 文件并返回节名到键值的嵌套字典。"""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
     parser = configparser.ConfigParser(strict=False)
-    parser.read(path, encoding='utf-8')
+    with open(path, 'r', encoding='utf-8') as config_file:
+        parser.read_file(config_file)
     result = {}
     if parser.defaults():
         result['DEFAULT'] = dict(parser.defaults())
     for section in parser.sections():
-        result[section] = dict(parser.items(section, raw=True))
+        inherited_keys = set(parser.defaults())
+        result[section] = {
+            key: value for key, value in parser.items(section, raw=True)
+            if key not in inherited_keys
+        }
     return result
 
 
@@ -47,27 +55,49 @@ def _normalise_values(values):
 
 
 def update_ini(path, values):
-    """仅更新 GUI 配置字段，并以同目录临时文件原子替换原文件。"""
+    """校验并更新 GUI 配置字段，以同目录唯一临时文件原子替换原文件。"""
+    if not os.path.isfile(path):
+        raise FileNotFoundError(path)
+
     parser = configparser.ConfigParser(strict=False)
-    parser.read(path, encoding='utf-8')
+    with open(path, 'r', encoding='utf-8') as config_file:
+        parser.read_file(config_file)
+
     updates = _normalise_values(values)
-    for section, section_values in updates.items():
-        if section not in GUI_FIELDS:
-            continue
+    valid_updates = {
+        section: {
+            key: value for key, value in section_values.items()
+            if section in GUI_FIELDS and key in GUI_FIELDS[section]
+            and not (section == 'Web' and key == 'access_token')
+        }
+        for section, section_values in updates.items()
+    }
+    valid_updates = {section: data for section, data in valid_updates.items() if data}
+    if not valid_updates:
+        return
+
+    errors = validate_ini_values(valid_updates)
+    if errors:
+        raise ValueError('; '.join(f'{field}: {message}' for field, message in errors.items()))
+
+    for section, section_values in valid_updates.items():
         if not parser.has_section(section):
             parser.add_section(section)
         for key, value in section_values.items():
-            if key in GUI_FIELDS[section]:
-                parser.set(section, key, str(value))
+            parser.set(section, key, str(value))
 
-    temporary_path = f'{path}.tmp'
+    temporary_path = tempfile.NamedTemporaryFile(
+        mode='w', encoding='utf-8', newline='', prefix=f'.{os.path.basename(path)}.',
+        suffix='.tmp', dir=os.path.dirname(os.path.abspath(path)), delete=False,
+    )
+    temporary_name = temporary_path.name
     try:
-        with open(temporary_path, 'w', encoding='utf-8', newline='') as config_file:
-            parser.write(config_file)
-        os.replace(temporary_path, path)
+        with temporary_path:
+            parser.write(temporary_path)
+        os.replace(temporary_name, path)
     except OSError:
         try:
-            os.unlink(temporary_path)
+            os.unlink(temporary_name)
         except OSError:
             pass
         raise
@@ -85,6 +115,9 @@ def validate_ini_values(values):
                     errors[field] = '必须是布尔值（true 或 false）'
             elif field == 'Push.retry_interval':
                 try:
+                    if ((isinstance(value, (int, float)) and value < 0)
+                            or (isinstance(value, str) and value.strip().startswith('-'))):
+                        raise ValueError
                     if parse_time_string(value) <= 0:
                         raise ValueError
                 except (TypeError, ValueError, OverflowError):
