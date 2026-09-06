@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TwoPush Web 配置</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">SOURCE MODE</p>
+      <h1>TwoPush <span>控制台</span></h1>
+    </div>
+    <button id="stop-service" class="button danger" type="button">退出服务</button>
+  </header>
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="panel">
+        <div class="section-heading"><h2>工作区</h2><span id="session-status">连接中</span></div>
+        <div id="file-list" class="file-list" aria-live="polite"></div>
+      </section>
+      <section class="panel temp-panel">
+        <div class="section-heading"><h2>临时推送</h2><button id="refresh-temp" class="text-button" type="button">刷新</button></div>
+        <div id="temp-list" class="muted">暂无临时文件</div>
+      </section>
+    </aside>
+    <section class="content">
+      <nav class="tabs" aria-label="配置类型">
+        <button class="tab active" data-kind="json" type="button">JSON 推送模板</button>
+        <button class="tab" data-kind="ini" type="button">INI 全局配置</button>
+      </nav>
+      <section class="panel editor-panel">
+        <div class="section-heading"><div><p class="eyebrow">EDITOR</p><h2 id="editor-title">选择一个 JSON 文件开始</h2></div><span id="save-state" class="muted">未选择文件</span></div>
+        <textarea id="editor" spellcheck="false" aria-label="配置编辑器"></textarea>
+        <div class="actions">
+          <button id="save" class="button primary" type="button">保存</button>
+          <button id="direct-push" class="button" type="button">直接推送</button>
+          <button id="save-and-push" class="button" type="button">保存并推送</button>
+        </div>
+      </section>
+      <section class="panel log-panel"><div class="section-heading"><h2>运行日志</h2><span id="push-status" class="status idle">空闲</span></div><pre id="logs" aria-live="polite">等待推送任务…</pre></section>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>
