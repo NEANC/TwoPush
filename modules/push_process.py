@@ -29,6 +29,7 @@ class PushProcessManager:
         self._stop_requested = False
         self._reader_threads = []
         self._wait_thread = None
+        self._reader_failed = False
     def _build_command(self, json_path, config_path):
         """构造 TwoPush CLI 命令。"""
         return [
@@ -58,7 +59,7 @@ class PushProcessManager:
         return candidate
 
     def _create_temp_file(self, source_name, content):
-        """使用独占模式创建临时 JSON 文件并写入载荷。"""
+        """写入临时 JSON 并在完成后原子切换为可交接文件。"""
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         base = self._safe_name(Path(str(source_name)).stem)
         index = 0
@@ -66,8 +67,16 @@ class PushProcessManager:
             suffix = '' if index == 0 else f'_{index}'
             path = self.temp_dir / f'Temp_{base}{suffix}.json'
             try:
-                with path.open('x', encoding='utf-8') as stream:
-                    stream.write(content)
+                with path.open('x', encoding='utf-8'):
+                    pass
+                staging_path = self.temp_dir / f'.{path.name}.{uuid.uuid4().hex}.tmp'
+                try:
+                    staging_path.write_text(content, encoding='utf-8')
+                    os.replace(staging_path, path)
+                except Exception:
+                    staging_path.unlink(missing_ok=True)
+                    path.unlink(missing_ok=True)
+                    raise
                 return path
             except FileExistsError:
                 index += 1
@@ -88,6 +97,7 @@ class PushProcessManager:
                 'outputs': [],
             }
             self._stop_requested = False
+            self._reader_failed = False
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             try:
@@ -148,8 +158,19 @@ class PushProcessManager:
                             'stream': stream_name,
                             'text': line.rstrip('\r\n'),
                         })
+        except Exception:
+            with self._lock:
+                self._reader_failed = True
+                if self._task and self._task['status'] == 'running':
+                    self._task['status'] = 'failed'
         finally:
-            stream.close()
+            try:
+                stream.close()
+            except Exception:
+                with self._lock:
+                    self._reader_failed = True
+                    if self._task and self._task['status'] == 'running':
+                        self._task['status'] = 'failed'
 
     def _wait_process(self, temporary_path):
         """等待子进程和输出线程结束，更新状态并清理临时文件。"""
@@ -168,9 +189,15 @@ class PushProcessManager:
             if self._task:
                 self._task['exit_code'] = exit_code
                 if self._task['status'] == 'running':
-                    self._task['status'] = 'success' if exit_code == 0 else 'failed'
+                    self._task['status'] = (
+                        'failed' if self._reader_failed else
+                        ('success' if exit_code == 0 else 'failed')
+                    )
         if temporary_path:
-            temporary_path.unlink(missing_ok=True)
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def get_status(self, cursor=0):
         """返回任务状态及指定序号之后的输出。"""
@@ -187,11 +214,18 @@ class PushProcessManager:
             if not self._process or not self._task or self._task['status'] != 'running':
                 return False
             self._stop_requested = True
-            self._task['status'] = 'stopped'
             if os.name == 'nt':
-                subprocess.run(['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                result = subprocess.run(['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                if result is not None and result.returncode != 0:
+                    self._task['status'] = 'failed'
+                    return False
             else:
-                self._process.terminate()
+                try:
+                    self._process.terminate()
+                except OSError:
+                    self._task['status'] = 'failed'
+                    return False
+            self._task['status'] = 'stopped'
             return True
 
     def shutdown(self):

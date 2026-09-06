@@ -51,10 +51,84 @@ class FakeProcess:
         self.finish()
 
 
+class FailingStream(FakeStream):
+    """迭代输出时抛出异常的模拟流。"""
+
+    def __iter__(self):
+        yield "开始输出\n"
+        raise OSError("读取失败")
+
+
+class FailingStopProcess(FakeProcess):
+    """停止操作失败的模拟进程。"""
+
+    def terminate(self):
+        raise OSError("停止失败")
+
+
 @pytest.fixture
 def manager(tmp_path):
     """创建使用临时程序目录的控制器。"""
     return PushProcessManager(program_dir=tmp_path)
+
+
+def test_reader_failure_marks_task_failed_and_is_not_overwritten(
+        monkeypatch, manager, tmp_path):
+    """读取输出异常应标记任务失败，即使进程退出码为零也不能覆盖。"""
+    process = FakeProcess(code=0)
+    process.stdout = FailingStream([])
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert manager.get_status()["status"] == "failed"
+
+
+def test_cleanup_failure_does_not_leave_task_thread_unhandled(
+        monkeypatch, manager, tmp_path):
+    """临时文件清理异常不得让收尾线程失控或改变任务状态。"""
+    process = FakeProcess(code=0)
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(Path, "unlink", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("清理失败")))
+    manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert manager.get_status()["status"] == "success"
+    assert manager._wait_thread is not None
+
+
+def test_stop_failure_marks_task_failed(monkeypatch, manager, tmp_path):
+    """非 Windows 停止异常应报告失败而不是伪装为已停止。"""
+    process = FailingStopProcess()
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+
+    assert manager.stop() is False
+    assert manager.get_status()["status"] == "failed"
+    process.finish()
+    manager._wait_thread.join(1)
+
+
+def test_payload_file_is_atomic_before_process_start(monkeypatch, manager, tmp_path):
+    """子进程启动时只能看到写入完成的最终临时文件。"""
+    process = FakeProcess()
+    observed = {}
+
+    def fake_popen(command, **kwargs):
+        """检查启动瞬间的临时文件内容。"""
+        observed["files"] = list((tmp_path / "Temp").glob("*.json"))
+        observed["content"] = observed["files"][0].read_text(encoding="utf-8")
+        return process
+
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", fake_popen)
+    manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
+
+    assert observed["content"] == '{\n  "title": "内容"\n}'
+    process.finish()
+    manager._wait_thread.join(1)
 
 
 def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manager, tmp_path):
