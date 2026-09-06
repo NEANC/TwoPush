@@ -80,6 +80,7 @@ def test_reader_failure_marks_task_failed_and_is_not_overwritten(
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
     process.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
     assert manager.get_status()["status"] == "failed"
 
@@ -93,6 +94,7 @@ def test_cleanup_failure_does_not_leave_task_thread_unhandled(
     manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
     process.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
     assert manager.get_status()["status"] == "success"
     assert manager._wait_thread is not None
@@ -109,6 +111,7 @@ def test_stop_failure_marks_task_failed(monkeypatch, manager, tmp_path):
     assert manager.get_status()["status"] == "failed"
     process.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
 
 def test_payload_file_is_atomic_before_process_start(monkeypatch, manager, tmp_path):
@@ -128,6 +131,7 @@ def test_payload_file_is_atomic_before_process_start(monkeypatch, manager, tmp_p
     assert observed["content"] == '{\n  "title": "内容"\n}'
     process.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
 
 def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manager, tmp_path):
@@ -207,6 +211,7 @@ def test_stop_then_immediate_start_waits_for_previous_task_cleanup(
         manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
     first.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
 
 def test_reader_updates_only_its_own_task():
@@ -243,6 +248,8 @@ def test_shutdown_returns_when_stop_fails_and_cleans_temp(monkeypatch, manager, 
     assert manager.get_status()['status'] == 'failed'
     assert not temp_file.exists()
     assert not manager._wait_thread.is_alive()
+
+
 def test_build_command_uses_short_options(manager, tmp_path):
     """CLI 命令应支持配置和推送参数的短参数。"""
     command = manager._build_command(tmp_path / "push.json", tmp_path / "config.ini")
@@ -262,6 +269,7 @@ def test_payload_temp_file_uses_exclusive_collision_suffix(monkeypatch, manager,
     assert json.loads(created.read_text(encoding="utf-8")) == {"title": "新内容"}
     process.finish()
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
 
 def test_payload_write_failure_cleans_temp_file(monkeypatch, manager, tmp_path):
@@ -279,6 +287,7 @@ def test_wait_failure_marks_failed_and_cleans_temp(monkeypatch, manager, tmp_pat
     monkeypatch.setattr(process, "wait", lambda: (_ for _ in ()).throw(OSError("等待失败")))
     manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
     manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
     assert manager.get_status()["status"] == "failed"
     assert not list((tmp_path / "Temp").glob("*.json"))
 
