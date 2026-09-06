@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -147,7 +146,8 @@ def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manage
     monkeypatch.setattr("modules.push_process.subprocess.Popen", fake_popen)
     task_id = manager.start_file_push(push_file, config_file)
     process.finish()
-    time.sleep(0.05)
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
 
     assert calls[0][0] == [sys.executable, str(tmp_path / "TwoPush.py"), "-c", str(config_file), "-p", str(push_file)]
     assert calls[0][1]["shell"] is False
@@ -170,7 +170,8 @@ def test_start_payload_push_names_and_cleans_temp_file(monkeypatch, manager, tmp
     assert temp_file.exists()
     assert json.loads(temp_file.read_text(encoding="utf-8")) == {"title": "内容"}
     process.finish()
-    time.sleep(0.05)
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
     assert manager.get_status()["task_id"] == task_id
     assert not temp_file.exists()
 
@@ -187,10 +188,61 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
         manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
     manager.stop()
     process.finish()
-    time.sleep(0.05)
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
     assert manager.get_status()["status"] == "stopped"
 
 
+def test_stop_then_immediate_start_waits_for_previous_task_cleanup(
+        monkeypatch, manager, tmp_path):
+    """停止后旧任务未收尾时不得启动新任务。"""
+    first = FakeProcess()
+    second = FakeProcess()
+    processes = iter([first, second])
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: next(processes))
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+    assert manager.stop() is True
+    with pytest.raises(RuntimeError):
+        manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
+    first.finish()
+    manager._wait_thread.join(1)
+
+
+def test_reader_updates_only_its_own_task():
+    """旧任务 reader 不能把输出写入当前新任务。"""
+    manager = PushProcessManager()
+    old_task = {'task_id': 'old', 'status': 'stopped', 'exit_code': 0, 'outputs': [], 'reader_failed': False}
+    new_task = {'task_id': 'new', 'status': 'running', 'exit_code': None, 'outputs': [], 'reader_failed': False}
+    manager._task = new_task
+    manager._read_stream(FakeStream(['旧任务\n']), 'stdout', old_task)
+    assert new_task['outputs'] == []
+    assert old_task['outputs'][0]['text'] == '旧任务'
+
+
+def test_reader_failure_isolated_to_its_own_task():
+    """旧任务 reader 异常不能改变新任务状态。"""
+    manager = PushProcessManager()
+    old_task = {'task_id': 'old', 'status': 'running', 'exit_code': None, 'outputs': [], 'reader_failed': False}
+    new_task = {'task_id': 'new', 'status': 'running', 'exit_code': None, 'outputs': [], 'reader_failed': False}
+    manager._task = new_task
+    manager._read_stream(FailingStream([]), 'stderr', old_task)
+    assert old_task['status'] == 'failed'
+    assert old_task['reader_failed'] is True
+    assert new_task['status'] == 'running'
+
+
+def test_shutdown_returns_when_stop_fails_and_cleans_temp(monkeypatch, manager, tmp_path):
+    """停止失败时 shutdown 也应有限返回并清理临时文件。"""
+    process = FailingStopProcess()
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
+    temp_file = next((tmp_path / 'Temp').glob('*.json'))
+    manager.shutdown()
+    assert manager.get_status()['status'] == 'failed'
+    assert not temp_file.exists()
+    assert not manager._wait_thread.is_alive()
 def test_build_command_uses_short_options(manager, tmp_path):
     """CLI 命令应支持配置和推送参数的短参数。"""
     command = manager._build_command(tmp_path / "push.json", tmp_path / "config.ini")

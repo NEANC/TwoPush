@@ -29,7 +29,8 @@ class PushProcessManager:
         self._stop_requested = False
         self._reader_threads = []
         self._wait_thread = None
-        self._reader_failed = False
+        self._temporary_path = None
+
     def _build_command(self, json_path, config_path):
         """构造 TwoPush CLI 命令。"""
         return [
@@ -87,17 +88,18 @@ class PushProcessManager:
     def _start(self, json_path, config_path, temporary_path=None):
         """启动一个 CLI 推送任务。"""
         with self._lock:
-            if self._task and self._task['status'] == 'running':
-                raise RuntimeError('已有推送任务正在运行')
+            if self._wait_thread and self._wait_thread.is_alive():
+                raise RuntimeError('上一个推送任务尚未完成收尾')
             task_id = uuid.uuid4().hex
-            self._task = {
+            task = {
                 'task_id': task_id,
                 'status': 'running',
                 'exit_code': None,
                 'outputs': [],
+                'reader_failed': False,
             }
+            self._task = task
             self._stop_requested = False
-            self._reader_failed = False
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             try:
@@ -117,18 +119,23 @@ class PushProcessManager:
                 raise
             stdout_thread = threading.Thread(
                 target=self._read_stream,
-                args=(self._process.stdout, 'stdout'),
+                args=(self._process.stdout, 'stdout', task),
                 daemon=True,
             )
             stderr_thread = threading.Thread(
                 target=self._read_stream,
-                args=(self._process.stderr, 'stderr'),
+                args=(self._process.stderr, 'stderr', task),
                 daemon=True,
             )
             self._reader_threads = [stdout_thread, stderr_thread]
+            self._temporary_path = temporary_path
             stdout_thread.start()
             stderr_thread.start()
-            wait_thread = threading.Thread(target=self._wait_process, args=(temporary_path,), daemon=True)
+            wait_thread = threading.Thread(
+                target=self._wait_process,
+                args=(temporary_path, task, list(self._reader_threads)),
+                daemon=True,
+            )
             self._wait_thread = wait_thread
             wait_thread.start()
             return task_id
@@ -147,50 +154,50 @@ class PushProcessManager:
             temp_path.unlink(missing_ok=True)
             raise
 
-    def _read_stream(self, stream, stream_name):
+    def _read_stream(self, stream, stream_name, task):
         """读取子进程输出并分配全局递增序号。"""
         try:
             for line in stream:
                 with self._lock:
-                    if self._task:
-                        self._task['outputs'].append({
-                            'sequence': len(self._task['outputs']) + 1,
-                            'stream': stream_name,
-                            'text': line.rstrip('\r\n'),
-                        })
+                    task['outputs'].append({
+                        'sequence': len(task['outputs']) + 1,
+                        'stream': stream_name,
+                        'text': line.rstrip('\r\n'),
+                    })
         except Exception:
             with self._lock:
-                self._reader_failed = True
-                if self._task and self._task['status'] == 'running':
-                    self._task['status'] = 'failed'
+                task['reader_failed'] = True
+                if task['status'] == 'running':
+                    task['status'] = 'failed'
         finally:
             try:
                 stream.close()
             except Exception:
                 with self._lock:
-                    self._reader_failed = True
-                    if self._task and self._task['status'] == 'running':
-                        self._task['status'] = 'failed'
+                    task['reader_failed'] = True
+                    if task['status'] == 'running':
+                        task['status'] = 'failed'
 
-    def _wait_process(self, temporary_path):
+    def _wait_process(self, temporary_path, task, reader_threads):
         """等待子进程和输出线程结束，更新状态并清理临时文件。"""
         process = self._process
         try:
             exit_code = process.wait()
         except Exception:
             with self._lock:
-                if self._task:
-                    self._task['status'] = 'failed'
-                    self._task['exit_code'] = None
+                if task:
+                    task['status'] = 'failed'
+                    task['exit_code'] = None
             exit_code = None
-        for reader_thread in self._reader_threads:
-            reader_thread.join()
+        for reader_thread in reader_threads:
+            if reader_thread.is_alive():
+                reader_thread.join()
         with self._lock:
-            if self._task:
-                self._task['exit_code'] = exit_code
-                if self._task['status'] == 'running':
-                    self._task['status'] = (
-                        'failed' if self._reader_failed else
+            if task:
+                task['exit_code'] = exit_code
+                if task['status'] == 'running':
+                    task['status'] = (
+                        'failed' if task['reader_failed'] else
                         ('success' if exit_code == 0 else 'failed')
                     )
         if temporary_path:
@@ -215,7 +222,11 @@ class PushProcessManager:
                 return False
             self._stop_requested = True
             if os.name == 'nt':
-                result = subprocess.run(['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                try:
+                    result = subprocess.run(['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                except OSError:
+                    self._task['status'] = 'failed'
+                    return False
                 if result is not None and result.returncode != 0:
                     self._task['status'] = 'failed'
                     return False
@@ -233,7 +244,17 @@ class PushProcessManager:
         self.stop()
         wait_thread = self._wait_thread
         if wait_thread and wait_thread is not threading.current_thread():
-            wait_thread.join()
+            wait_thread.join(2)
+        if wait_thread and wait_thread.is_alive():
+            with self._lock:
+                if self._task:
+                    self._task['status'] = 'failed'
+            if self._temporary_path:
+                try:
+                    self._temporary_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            return
         with self._lock:
             if self._task and self._task['status'] == 'running':
                 self._task['status'] = 'stopped'
