@@ -6,21 +6,34 @@
 import configparser
 import os
 import tempfile
+import threading
+from pathlib import Path
 
+from modules.config_manager import ConfigManager
 from modules.utils import parse_time_string
 
 
 GUI_FIELDS = {
-    'Network': {'proxy', 'enable_proxy_for_push'},
-    'Push': {'retry_interval', 'retry_max_count'},
-    'Update': {'auto_check', 'channel'},
-    'Logs': {'save_enabled', 'max_files'},
+    section: set(keys)
+    for section, keys in ConfigManager(
+        '', None, non_interactive=True,
+    ).default_sections.items()
+    if section != 'Web'
 }
 BOOLEAN_FIELDS = {
     'Network.enable_proxy_for_push',
     'Update.auto_check',
     'Logs.save_enabled',
 }
+_UPDATE_LOCKS = {}
+_UPDATE_LOCKS_GUARD = threading.Lock()
+
+
+def _get_update_lock(path):
+    """获取规范化配置路径对应的进程内更新锁。"""
+    normalised_path = str(Path(path).resolve())
+    with _UPDATE_LOCKS_GUARD:
+        return _UPDATE_LOCKS.setdefault(normalised_path, threading.RLock())
 
 
 def read_ini(path):
@@ -34,10 +47,9 @@ def read_ini(path):
     if parser.defaults():
         result['DEFAULT'] = dict(parser.defaults())
     for section in parser.sections():
-        inherited_keys = set(parser.defaults())
         result[section] = {
-            key: value for key, value in parser.items(section, raw=True)
-            if key not in inherited_keys
+            key: value for key, value in parser._sections[section].items()
+            if key != '__name__'
         }
     return result
 
@@ -56,6 +68,13 @@ def _normalise_values(values):
 
 def update_ini(path, values):
     """校验并更新 GUI 配置字段，以同目录唯一临时文件原子替换原文件。"""
+    lock = _get_update_lock(path)
+    with lock:
+        _update_ini_locked(path, values)
+
+
+def _update_ini_locked(path, values):
+    """在配置文件锁内执行一次完整的读取、校验和原子更新。"""
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
 
@@ -86,21 +105,32 @@ def update_ini(path, values):
         for key, value in section_values.items():
             parser.set(section, key, str(value))
 
-    temporary_path = tempfile.NamedTemporaryFile(
-        mode='w', encoding='utf-8', newline='', prefix=f'.{os.path.basename(path)}.',
-        suffix='.tmp', dir=os.path.dirname(os.path.abspath(path)), delete=False,
-    )
-    temporary_name = temporary_path.name
+    temporary_file = None
+    temporary_name = None
     try:
-        with temporary_path:
-            parser.write(temporary_path)
+        temporary_file = tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf-8', newline='',
+            prefix=f'.{os.path.basename(path)}.',
+            suffix='.tmp',
+            dir=os.path.dirname(os.path.abspath(path)), delete=False,
+        )
+        temporary_name = temporary_file.name
+        with temporary_file:
+            parser.write(temporary_file)
         os.replace(temporary_name, path)
-    except OSError:
-        try:
-            os.unlink(temporary_name)
-        except OSError:
-            pass
-        raise
+    finally:
+        if temporary_file is not None:
+            close = getattr(temporary_file, 'close', None)
+            if close is not None:
+                try:
+                    close()
+                except OSError:
+                    pass
+        if temporary_name is not None:
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
 
 
 def validate_ini_values(values):
