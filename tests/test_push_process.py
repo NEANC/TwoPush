@@ -163,6 +163,28 @@ def test_payload_file_is_atomic_before_process_start(monkeypatch, manager, tmp_p
     assert not manager._wait_thread.is_alive()
 
 
+def test_log_messages_use_message_field_and_sequence_is_global(
+        monkeypatch, manager, tmp_path):
+    """不同推送任务的日志应使用统一字段并保持全局序号递增。"""
+    first = FakeProcess()
+    second = FakeProcess()
+    processes = iter([first, second])
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: next(processes))
+
+    manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+    first.finish()
+    manager._wait_thread.join(1)
+    first_outputs = manager.get_status()['outputs']
+
+    manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
+    second.finish()
+    manager._wait_thread.join(1)
+    second_outputs = manager.get_status()['outputs']
+
+    assert all('message' in item and 'text' not in item for item in first_outputs + second_outputs)
+    assert [item['sequence'] for item in first_outputs] == [1, 2]
+    assert [item['sequence'] for item in second_outputs] == [3, 4]
+    assert manager.get_status(cursor=2)['outputs'] == second_outputs
 def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manager, tmp_path):
     """文件推送应使用当前解释器调用 TwoPush.py 并保留源文件。"""
     push_file = tmp_path / "推送 配置.json"
@@ -283,7 +305,7 @@ def test_reader_updates_only_its_own_task():
     manager._task = new_task
     manager._read_stream(FakeStream(['旧任务\n']), 'stdout', old_task)
     assert new_task['outputs'] == []
-    assert old_task['outputs'][0]['text'] == '旧任务'
+    assert old_task['outputs'][0]['message'] == '旧任务'
 
 
 def test_reader_failure_isolated_to_its_own_task():

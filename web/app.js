@@ -90,6 +90,8 @@
         list.appendChild(row);
       });
     }).catch(function (error) { setMessage('temp-list', error.message); });
+  }
+
   function startPolling() {
     if (state.timer) return;
     state.timer = setInterval(function () {
@@ -101,11 +103,17 @@
     }, 1000);
   }
 
-  document.querySelectorAll('.tab').forEach(function (tab) { tab.onclick = function () { state.kind = tab.dataset.kind; document.querySelector('.tab.active').classList.remove('active'); tab.classList.add('active'); loadFiles(); }; });
+  function updateActions() {
+    const pushButtons = [document.getElementById('direct-push'), document.getElementById('save-and-push')];
+    pushButtons.forEach(function (button) { button.hidden = state.kind === 'ini'; });
+  }
+
+  document.querySelectorAll('.tab').forEach(function (tab) { tab.onclick = function () { state.kind = tab.dataset.kind; document.querySelector('.tab.active').classList.remove('active'); tab.classList.add('active'); updateActions(); loadFiles(); }; });
   document.getElementById('save').onclick = function () { save('save'); };
   document.getElementById('direct-push').onclick = function () { save('direct'); };
   document.getElementById('save-and-push').onclick = function () { save('save_and_push'); };
   document.getElementById('refresh-temp').onclick = loadTemp;
   document.getElementById('stop-service').onclick = function () { if (window.confirm('确定退出 Web 服务吗？')) request('/api/service/stop', { method: 'POST' }); };
+  updateActions();
   request('/api/session').then(function () { setMessage('session-status', '已连接'); loadFiles(); }).catch(function (error) { setMessage('session-status', error.message); });
 }());

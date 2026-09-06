@@ -61,6 +61,18 @@ def test_valid_token_requires_bearer_for_api_and_allows_home_query(tmp_path):
     assert client.get('/api/session', headers={'Authorization': 'Bearer not-a-secret-token'}).status_code == 200
 
 
+def test_query_token_is_single_use_and_bearer_remains_valid(tmp_path):
+    """首页查询令牌仅可使用一次，Bearer 认证生命周期不受影响。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    (resource_dir / 'index.html').write_text('home', encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = not-a-secret-token\n', encoding='utf-8')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+
+    assert client.get('/?token=not-a-secret-token').status_code == 200
+    assert client.get('/?token=not-a-secret-token').status_code == 401
+    assert client.get('/api/session', headers={'Authorization': 'Bearer not-a-secret-token'}).status_code == 200
 def test_files_hide_temp_hidden_and_escape_paths(tmp_path):
     """文件浏览只能在工作区内逐级访问并隐藏敏感项目。"""
     resource_dir = tmp_path / 'web'

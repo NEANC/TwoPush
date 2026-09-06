@@ -30,6 +30,7 @@ class PushProcessManager:
         self._reader_threads = []
         self._wait_thread = None
         self._temporary_path = None
+        self._sequence = 0
 
     def _build_command(self, json_path, config_path):
         """构造 TwoPush CLI 命令。"""
@@ -159,10 +160,11 @@ class PushProcessManager:
         try:
             for line in stream:
                 with self._lock:
+                    self._sequence += 1
                     task['outputs'].append({
-                        'sequence': len(task['outputs']) + 1,
+                        'sequence': self._sequence,
                         'stream': stream_name,
-                        'text': line.rstrip('\r\n'),
+                        'message': line.rstrip('\r\n'),
                     })
         except Exception:
             with self._lock:
