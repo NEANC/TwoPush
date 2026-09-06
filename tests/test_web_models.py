@@ -74,16 +74,16 @@ def test_file_paths_allow_nested_relative_paths():
     assert FileOperationRequest(path="nested\\a.json").path == "nested\\a.json"
 
 
-def test_temp_delete_requires_plain_filename_and_confirmation():
-    """临时文件删除只接受纯文件名和布尔确认。"""
-    assert TempDeleteRequest(name="Temp_push.json", confirmed=True).confirmed is True
-    for name in ("", "a/b.json", "../a.json", "*.json", "C:\\a.json"):
+def test_temp_delete_requires_safe_names_array_and_confirmation():
+    """临时文件删除只接受纯文件名数组和布尔确认。"""
+    payload = TempDeleteRequest(names=["Temp_push.json"], confirmed=True)
+    assert payload.names == ["Temp_push.json"]
+    for names in ([], [""], ["a/b.json"], ["../a.json"], ["*.json"], ["C:\\a.json"]):
         with pytest.raises(ValidationError):
-            TempDeleteRequest(name=name, confirmed=True)
+            TempDeleteRequest(names=names, confirmed=True)
+    assert TempDeleteRequest(names=["Temp_push.json"], confirmed=False).confirmed is False
     with pytest.raises(ValidationError):
-        TempDeleteRequest(name="Temp_push.json", confirmed=False)
-    with pytest.raises(ValidationError):
-        TempDeleteRequest(name="Temp_push.json", confirmed="true")
+        TempDeleteRequest(names=["Temp_push.json"], confirmed="true")
 
 
 @pytest.mark.parametrize(
@@ -144,7 +144,7 @@ def test_file_paths_reject_windows_unsafe_names(path):
 def test_temp_names_reject_windows_unsafe_names(name):
     """临时文件名必须拒绝 Windows 特殊名称和非法字符。"""
     with pytest.raises(ValidationError):
-        TempDeleteRequest(name=name, confirmed=True)
+        TempDeleteRequest(names=[name], confirmed=True)
 
 
 def test_resolve_web_host_uses_token_length_threshold():

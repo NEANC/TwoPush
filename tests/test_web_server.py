@@ -251,10 +251,10 @@ def test_task6_temp_delete_requires_true_confirmation_and_safe_array_contract(tm
     manager.program_dir = program_dir
     client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
 
-    assert client.post('/api/temp/delete', json={'name': 'Temp_ok.json', 'confirmed': False}).status_code == 422
-    assert client.post('/api/temp/delete', json={'name': 'Temp_ok.json', 'confirmed': True}).json()['deleted'] is True
+    assert client.post('/api/temp/delete', json={'names': ['Temp_ok.json'], 'confirmed': False}).status_code == 400
+    assert client.post('/api/temp/delete', json={'names': ['Temp_ok.json'], 'confirmed': True}).json()['deleted'] is True
     assert not target.exists()
-    assert client.post('/api/temp/delete', json={'name': ['Temp_ok.json'], 'confirmed': True}).status_code == 422
+    assert client.post('/api/temp/delete', json={'names': ['Temp_ok.json'], 'confirmed': True}).status_code == 404
 
 
 def test_task6_missing_json_returns_not_found_error_shape(tmp_path):

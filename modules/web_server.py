@@ -153,6 +153,13 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             raise HTTPException(422, detail={'code': 'invalid_path', 'message': str(error)}) from error
         return _inside(root, root.joinpath(*checked.replace('\\', '/').split('/')))
 
+    def safe_temp_name(value: str) -> str:
+        """校验临时文件名并统一返回不存在错误。"""
+        try:
+            return TempDeleteRequest(names=[value], confirmed=True).names[0]
+        except ValidationError as error:
+            raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
+
     def json_payload(value: dict[str, Any]) -> dict[str, Any]:
         """复用公共 JSON 模板模型校验载荷。"""
         try:
@@ -320,20 +327,27 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def read_temp(name: str):
         """读取程序目录中安全的临时 JSON 文件。"""
         temp = app.state.program_dir / 'Temp'
-        target = temp / name
-        if not name.startswith('Temp_') or not name.endswith('.json') or '/' in name or '\\' in name or not target.is_file() or target.is_symlink():
+        checked_name = safe_temp_name(name)
+        target = temp / checked_name
+        if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or target.is_symlink():
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
         return Response(target.read_bytes(), media_type='application/json')
 
     @app.post('/api/temp/delete', dependencies=[Depends(require_auth)])
     async def delete_temp(payload: TempDeleteRequest):
         """删除已确认的临时 JSON 文件。"""
+        if not payload.confirmed:
+            return _error('TEMP_CONFIRM_REQUIRED', '删除临时文件必须确认', status_code=400)
         temp = app.state.program_dir / 'Temp'
-        target = temp / payload.name
-        if not payload.name.startswith('Temp_') or not payload.name.endswith('.json') or not target.is_file() or target.is_symlink():
-            return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
-        target.unlink()
-        return {'deleted': True, 'name': payload.name, 'message': '已删除'}
+        deleted = []
+        for name in payload.names:
+            target = temp / name
+            if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or target.is_symlink():
+                return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
+            deleted.append(name)
+        for name in deleted:
+            (temp / name).unlink()
+        return {'deleted': True, 'names': deleted, 'message': '已删除'}
 
     @app.post('/api/push', dependencies=[Depends(require_auth)])
     async def push(request: PushRequest):

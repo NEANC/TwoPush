@@ -137,21 +137,21 @@ class FileOperationRequest(BaseModel):
 class TempDeleteRequest(BaseModel):
     """临时文件删除请求。"""
 
-    name: str
+    names: list[str] = Field(min_length=1)
     confirmed: bool
 
-    @field_validator('name')
+    @field_validator('names')
     @classmethod
-    def validate_name(cls, value: str) -> str:
-        """校验临时文件名。"""
-        return _validate_filename(value)
+    def validate_names(cls, value: list[str]) -> list[str]:
+        """校验临时文件名数组。"""
+        return [_validate_filename(name) for name in value]
 
     @field_validator('confirmed', mode='before')
     @classmethod
     def validate_confirmed(cls, value: Any) -> bool:
-        """仅接受布尔 true 作为删除确认。"""
-        if type(value) is not bool or value is not True:
-            raise ValueError('confirmed 必须为 true')
+        """仅接受布尔值作为删除确认。"""
+        if type(value) is not bool:
+            raise ValueError('confirmed 必须为布尔值')
         return value
 
 

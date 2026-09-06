@@ -1,7 +1,10 @@
 (function () {
   'use strict';
 
-  const state = { kind: 'json', path: '', cursor: 0, timer: null };
+  const query = new URLSearchParams(window.location.search);
+  const token = query.get('token') || '';
+  if (token) window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+  const state = { kind: 'json', path: '', cursor: 0, timer: null, token: token };
   const editor = document.getElementById('editor');
 
   function setMessage(id, message) {
@@ -9,12 +12,18 @@
   }
 
   async function request(url, options) {
-    const response = await fetch(url, options);
+    const requestOptions = options || {};
+    const headers = new Headers(requestOptions.headers || {});
+    if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
+    requestOptions.headers = headers;
+    const response = await fetch(url, requestOptions);
     if (!response.ok) {
       const body = await response.json().catch(function () { return {}; });
       throw new Error(body.error ? body.error.message : '请求失败');
     }
-    return response.status === 204 ? null : response.json();
+    if (response.status === 204) return null;
+    const type = response.headers.get('content-type') || '';
+    return type.indexOf('application/json') >= 0 ? response.json() : response.text();
   }
 
   function selectFile(path) {
@@ -60,6 +69,27 @@
       .catch(function (error) { setMessage('save-state', error.message); });
   }
 
+  function loadTemp() {
+    request('/api/temp').then(function (data) {
+      const list = document.getElementById('temp-list');
+      list.innerHTML = '';
+      if (!data.files.length) { list.textContent = '暂无临时文件'; return; }
+      data.files.forEach(function (name) {
+        const row = document.createElement('div');
+        row.textContent = name + ' ';
+        const button = document.createElement('button');
+        button.className = 'text-button';
+        button.type = 'button';
+        button.textContent = '确认删除';
+        button.onclick = function () {
+          if (!window.confirm('确认删除 ' + name + ' 吗？')) return;
+          request('/api/temp/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names: [name], confirmed: true }) })
+            .then(loadTemp).catch(function (error) { setMessage('temp-list', error.message); });
+        };
+        row.appendChild(button);
+        list.appendChild(row);
+      });
+    }).catch(function (error) { setMessage('temp-list', error.message); });
   function startPolling() {
     if (state.timer) return;
     state.timer = setInterval(function () {
@@ -75,7 +105,7 @@
   document.getElementById('save').onclick = function () { save('save'); };
   document.getElementById('direct-push').onclick = function () { save('direct'); };
   document.getElementById('save-and-push').onclick = function () { save('save_and_push'); };
-  document.getElementById('refresh-temp').onclick = function () { request('/api/temp').then(function (data) { setMessage('temp-list', data.files.join(', ') || '暂无临时文件'); }); };
+  document.getElementById('refresh-temp').onclick = loadTemp;
   document.getElementById('stop-service').onclick = function () { if (window.confirm('确定退出 Web 服务吗？')) request('/api/service/stop', { method: 'POST' }); };
   request('/api/session').then(function () { setMessage('session-status', '已连接'); loadFiles(); }).catch(function (error) { setMessage('session-status', error.message); });
 }());
