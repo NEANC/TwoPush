@@ -1353,6 +1353,7 @@ def test_default_config_initialization_creates_json_template(monkeypatch, tmp_pa
     script_file.write_text('', encoding='utf-8')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'argv', [str(script_file)])
+    monkeypatch.setattr(TwoPush, 'should_start_web', lambda: False)
     monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -1371,6 +1372,7 @@ def test_default_config_initialization_does_not_overwrite_existing_template(monk
     template_file.write_text('{"keep": true}\n', encoding='utf-8')
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(sys, 'argv', [str(script_file)])
+    monkeypatch.setattr(TwoPush, 'should_start_web', lambda: False)
     monkeypatch.setattr(TwoPush, 'add_file_logger', lambda *args, **kwargs: None)
 
     with pytest.raises(SystemExit) as exc_info:
