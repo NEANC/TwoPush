@@ -247,7 +247,7 @@ class PushProcessManager:
             wait_thread.join(2)
         if wait_thread and wait_thread.is_alive():
             with self._lock:
-                if self._task:
+                if self._task and self._task['status'] == 'running':
                     self._task['status'] = 'failed'
             return
         with self._lock:

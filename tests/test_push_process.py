@@ -198,7 +198,13 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr("modules.push_process.os.name", "nt")
     kill_calls = []
-    monkeypatch.setattr("modules.push_process.subprocess.run", lambda *args, **kwargs: kill_calls.append((args, kwargs)))
+
+    def fake_run(*args, **kwargs):
+        """记录 Windows 进程树终止调用。"""
+        kill_calls.append((args, kwargs))
+        return type("Result", (), {"returncode": 0})()
+
+    monkeypatch.setattr("modules.push_process.subprocess.run", fake_run)
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
     with pytest.raises(RuntimeError):
         manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
@@ -207,6 +213,32 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
     manager._wait_thread.join(1)
     assert not manager._wait_thread.is_alive()
     assert manager.get_status()["status"] == "stopped"
+    assert kill_calls[0][0][0] == ["taskkill", "/PID", "1234", "/T", "/F"]
+    assert kill_calls[0][1]["check"] is False
+
+
+def test_stop_success_shutdown_timeout_preserves_stopped_and_defers_cleanup(
+        monkeypatch, manager, tmp_path):
+    """成功停止后 shutdown 超时仍保持 stopped，临时文件延后清理。"""
+    process = FakeProcess()
+    release_reader = threading.Event()
+    process.stdout = BlockingStream(release_reader)
+    process.stderr = BlockingStream(release_reader)
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
+    temp_file = next((tmp_path / 'Temp').glob('*.json'))
+
+    manager.shutdown()
+
+    assert manager.get_status()['status'] == 'stopped'
+    assert manager._wait_thread.is_alive()
+    assert temp_file.exists()
+
+    release_reader.set()
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
+    assert not temp_file.exists()
 
 
 def test_stop_then_immediate_start_waits_for_previous_task_cleanup(
@@ -265,7 +297,7 @@ def test_shutdown_returns_when_stop_fails_and_cleans_temp(monkeypatch, manager, 
 def test_shutdown_timeout_defers_temp_cleanup_until_wait_thread_finishes(
         monkeypatch, manager, tmp_path):
     """shutdown 超时时不得在 reader/wait 线程结束前删除临时文件。"""
-    process = FailingStopProcess()
+    process = FakeProcess()
     release_reader = threading.Event()
     process.stdout = BlockingStream(release_reader)
     process.stderr = BlockingStream(release_reader)
@@ -276,7 +308,7 @@ def test_shutdown_timeout_defers_temp_cleanup_until_wait_thread_finishes(
 
     manager.shutdown()
 
-    assert manager.get_status()['status'] == 'failed'
+    assert manager.get_status()['status'] == 'stopped'
     assert manager._wait_thread.is_alive()
     assert temp_file.exists()
 
