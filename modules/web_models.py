@@ -25,8 +25,7 @@ def _validate_relative_path(value: str) -> str:
         raise ValueError('路径不允许包含通配符')
     parts = re.split(r'[/\\]', path)
     if any(part in ('', '.') for part in parts):
-        if path in ('.', './', '.\\'):
-            raise ValueError('路径必须指向文件')
+        raise ValueError('路径不允许包含空路径段或当前目录段')
     if '..' in parts:
         raise ValueError('路径不允许目录遍历')
     return path

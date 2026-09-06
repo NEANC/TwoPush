@@ -59,7 +59,7 @@ def test_push_request_accepts_only_supported_actions():
         PushRequest(action="delete", path="payload.json")
 
 
-@pytest.mark.parametrize("path", ["", "/tmp/a.json", "C:\\a.json", "\\\\server\\share\\a.json", "../a.json", "a/../b.json", "a*.json"])
+@pytest.mark.parametrize("path", ["", "/tmp/a.json", "C:\\a.json", "\\\\server\\share\\a.json", "../a.json", "a/../b.json", "a*.json", "a//b.json", "a/./b.json", "a/", "a\\"])
 def test_file_paths_must_be_safe_relative_paths(path):
     """文件路径必须是非空、不越界且不含特殊模式的相对路径。"""
     with pytest.raises(ValidationError):
