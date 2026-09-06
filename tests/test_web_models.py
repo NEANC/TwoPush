@@ -86,6 +86,51 @@ def test_temp_delete_requires_plain_filename_and_confirmation():
         TempDeleteRequest(name="Temp_push.json", confirmed="true")
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "nested:stream.json",
+        "nested\u0000.json",
+        "nested\u001f.json",
+        "nested\\name.json ",
+        "nested\\name.json.",
+        "CON.txt",
+        "NUL\\payload.json",
+    ],
+)
+def test_file_paths_reject_windows_unsafe_names(path):
+    """文件路径必须拒绝 Windows 特殊名称和非法字符。"""
+    with pytest.raises(ValidationError):
+        FileOperationRequest(path=path)
+
+    with pytest.raises(ValidationError):
+        PushRequest(action="save", path=path)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Temp:push.json",
+        "Temp\u0000push.json",
+        "Temp\u001fpush.json",
+        "Temp_push.json ",
+        "Temp_push.json.",
+        "CON",
+        "CON.txt",
+        "NUL",
+        "PRN",
+        "AUX",
+        "COM1",
+        "LPT1",
+        "aux.txt",
+    ],
+)
+def test_temp_names_reject_windows_unsafe_names(name):
+    """临时文件名必须拒绝 Windows 特殊名称和非法字符。"""
+    with pytest.raises(ValidationError):
+        TempDeleteRequest(name=name, confirmed=True)
+
+
 def test_resolve_web_host_uses_token_length_threshold():
     """短令牌使用本机监听，足够长令牌使用全部网卡。"""
     assert resolve_web_host("") == "127.0.0.1"

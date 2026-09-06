@@ -12,18 +12,33 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _ALLOWED_ACTIONS = frozenset({'save', 'direct', 'save_and_push'})
 _WILDCARD_CHARS = frozenset({'*', '?', '['})
 _DRIVE_PATH = re.compile(r'^[A-Za-z]:')
+_RESERVED_DEVICE_NAMES = frozenset({'CON', 'PRN', 'AUX', 'NUL', *(f'COM{index}' for index in range(1, 10)), *(f'LPT{index}' for index in range(1, 10))})
+
+
+def _validate_windows_path_parts(parts: list[str]) -> None:
+    """校验 Windows 文件名组成部分。"""
+    for part in parts:
+        if ':' in part or any(ord(char) < 32 for char in part):
+            raise ValueError('路径包含 Windows 不允许的字符')
+        if part.endswith((' ', '.')):
+            raise ValueError('路径段不能以空格或句点结尾')
+        if part.split('.', 1)[0].upper() in _RESERVED_DEVICE_NAMES:
+            raise ValueError('路径不能使用 Windows 保留设备名')
 
 
 def _validate_relative_path(value: str) -> str:
     """校验工作区内使用的相对文件路径。"""
     if not isinstance(value, str) or not value.strip():
         raise ValueError('路径必须是非空字符串')
+    if value.endswith((' ', '.')):
+        raise ValueError('路径不能以空格或句点结尾')
     path = value.strip()
     if path.startswith(('/', '\\')) or _DRIVE_PATH.match(path):
         raise ValueError('路径必须是相对路径')
     if any(char in path for char in _WILDCARD_CHARS):
         raise ValueError('路径不允许包含通配符')
     parts = re.split(r'[/\\]', path)
+    _validate_windows_path_parts(parts)
     if any(part in ('', '.') for part in parts):
         raise ValueError('路径不允许包含空路径段或当前目录段')
     if '..' in parts:
@@ -35,11 +50,14 @@ def _validate_filename(value: str) -> str:
     """校验只包含文件名的临时文件标识。"""
     if not isinstance(value, str) or not value.strip():
         raise ValueError('名称必须是非空字符串')
+    if value.endswith((' ', '.')):
+        raise ValueError('名称不能以空格或句点结尾')
     name = value.strip()
     if name in ('.', '..') or '/' in name or '\\' in name:
         raise ValueError('名称必须是纯文件名')
     if _DRIVE_PATH.match(name) or any(char in name for char in _WILDCARD_CHARS):
         raise ValueError('名称不是安全的文件名')
+    _validate_windows_path_parts([name])
     return name
 
 
