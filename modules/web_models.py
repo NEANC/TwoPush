@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _ALLOWED_ACTIONS = frozenset({'save', 'direct', 'save_and_push'})
 _WILDCARD_CHARS = frozenset({'*', '?', '['})
+_WINDOWS_ILLEGAL_CHARS = frozenset({':', '<', '>', '"', '|'})
 _DRIVE_PATH = re.compile(r'^[A-Za-z]:')
 _RESERVED_DEVICE_NAMES = frozenset({'CON', 'PRN', 'AUX', 'NUL', *(f'COM{index}' for index in range(1, 10)), *(f'LPT{index}' for index in range(1, 10))})
 
@@ -18,7 +19,7 @@ _RESERVED_DEVICE_NAMES = frozenset({'CON', 'PRN', 'AUX', 'NUL', *(f'COM{index}' 
 def _validate_windows_path_parts(parts: list[str]) -> None:
     """校验 Windows 文件名组成部分。"""
     for part in parts:
-        if ':' in part or any(ord(char) < 32 for char in part):
+        if any(char in _WINDOWS_ILLEGAL_CHARS for char in part) or any(ord(char) < 32 for char in part):
             raise ValueError('路径包含 Windows 不允许的字符')
         if part.endswith((' ', '.')):
             raise ValueError('路径段不能以空格或句点结尾')

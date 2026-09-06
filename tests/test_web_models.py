@@ -90,6 +90,10 @@ def test_temp_delete_requires_plain_filename_and_confirmation():
     "path",
     [
         "nested:stream.json",
+        "report<.json",
+        "report>.json",
+        'report".json',
+        "report|.json",
         "nested\u0000.json",
         "nested\u001f.json",
         "nested\\name.json ",
@@ -115,6 +119,10 @@ def test_file_paths_reject_windows_unsafe_names(path):
     "name",
     [
         "Temp:push.json",
+        "report<.json",
+        "report>.json",
+        'report".json',
+        "report|.json",
         "Temp\u0000push.json",
         "Temp\u001fpush.json",
         "Temp_push.json ",
