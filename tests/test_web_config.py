@@ -95,3 +95,93 @@ def test_cli_missing_config_still_exits_after_generation(tmp_path):
         assert error.code == 0
     else:
         raise AssertionError('CLI 首次运行应退出')
+
+
+def test_read_ini_and_update_ini_preserve_unmanaged_content(tmp_path):
+    """更新 GUI 配置时应保留 Web 令牌、未知节和未知键"""
+    from modules.web_config import read_ini, update_ini
+
+    config_file = tmp_path / 'config.ini'
+    original = (
+        '[Network]\nproxy = old\nunknown_network = keep\n\n'
+        '[Web]\naccess_token = secret-token\nweb_unknown = keep-web\n\n'
+        '[Custom]\ncustom_key = custom-value\n'
+    )
+    config_file.write_text(original, encoding='utf-8')
+
+    values = {
+        'Network': {'proxy': 'new'},
+        'Push': {'retry_interval': '5s'},
+        'Web': {'access_token': 'changed'},
+    }
+    loaded = read_ini(str(config_file))
+    update_ini(str(config_file), values)
+
+    assert loaded['Web']['access_token'] == 'secret-token'
+    content = config_file.read_text(encoding='utf-8')
+    assert 'proxy = new' in content
+    assert 'retry_interval = 5s' in content
+    assert 'access_token = secret-token' in content
+    assert 'web_unknown = keep-web' in content
+    assert 'unknown_network = keep' in content
+    assert '[Custom]' in content
+    assert 'custom_key = custom-value' in content
+
+
+def test_validate_ini_values_reports_specific_errors():
+    """配置校验应返回各字段的具体错误"""
+    from modules.web_config import validate_ini_values
+
+    errors = validate_ini_values({
+        'Push': {'retry_interval': 'bad', 'retry_max_count': '0'},
+        'Logs': {'max_files': '-1', 'save_enabled': 'maybe'},
+        'Update': {'auto_check': 'sometimes', 'channel': 'nightly'},
+    })
+
+    assert 'Push.retry_interval' in errors
+    assert 'Push.retry_max_count' in errors
+    assert 'Logs.max_files' in errors
+    assert 'Logs.save_enabled' in errors
+    assert 'Update.auto_check' in errors
+    assert 'Update.channel' in errors
+
+
+def test_update_ini_cleans_temporary_file_when_replace_fails(tmp_path, monkeypatch):
+    """原子替换失败时应清理临时文件"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Web]\naccess_token = keep\n', encoding='utf-8')
+    monkeypatch.setattr('modules.web_config.os.replace', lambda *_: (_ for _ in ()).throw(OSError('fail')))
+
+    try:
+        update_ini(str(config_file), {'Network': {'proxy': 'new'}})
+    except OSError:
+        pass
+    else:
+        raise AssertionError('原子替换失败应抛出 OSError')
+
+    assert not (tmp_path / 'config.ini.tmp').exists()
+    assert config_file.read_text(encoding='utf-8') == '[Web]\naccess_token = keep\n'
+
+
+def test_update_ini_accepts_flat_gui_values(tmp_path):
+    """更新接口应支持以节名和键名组成的扁平字段映射"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Network]\nproxy = old\n', encoding='utf-8')
+    update_ini(str(config_file), {'Network.proxy': 'new'})
+
+    assert 'proxy = new' in config_file.read_text(encoding='utf-8')
+
+
+def test_validate_ini_values_accepts_valid_values():
+    """合法配置值应通过校验"""
+    from modules.web_config import validate_ini_values
+
+    assert validate_ini_values({
+        'Push': {'retry_interval': '1h', 'retry_max_count': '3'},
+        'Logs': {'max_files': '15', 'save_enabled': 'true'},
+        'Update': {'auto_check': 'false', 'channel': 'preview'},
+    }) == {}
