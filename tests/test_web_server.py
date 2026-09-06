@@ -276,6 +276,45 @@ def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
     assert saved == {'title': 't', 'content': 'c', 'channels': [{}]}
 
 
+def test_put_ini_validates_content_preserves_token_and_raw_text(tmp_path):
+    """INI 原文保存应校验配置并保留已有访问令牌。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    original = '[Web]\naccess_token = keep-this-secret\n\n[Network]\nproxy = old\n'
+    config_path.write_text(original, encoding='utf-8')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    headers = {'Authorization': 'Bearer keep-this-secret'}
+
+    response = client.put('/api/ini', json={
+        'content': '[Web]\naccess_token = changed\n\n[Network]\nproxy = new\n',
+    }, headers=headers)
+
+    assert response.status_code == 200
+    assert 'access_token = keep-this-secret' in config_path.read_text(encoding='utf-8')
+    assert 'proxy = new' in config_path.read_text(encoding='utf-8')
+
+
+def test_put_ini_returns_validation_error_contract_and_does_not_write(tmp_path):
+    """INI 校验失败应返回字段错误契约且保持原文件不变。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    original = '[Push]\nretry_interval = 3s\n'
+    config_path.write_text(original, encoding='utf-8')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    headers = {'Authorization': 'Bearer ' + 'x' * 16}
+
+    response = client.put('/api/ini', json={
+        'content': '[Push]\nretry_interval = bad\n[Unknown]\nkey = value\n',
+    }, headers=headers)
+
+    assert response.status_code == 422
+    assert response.json()['error']['code'] == 'INI_VALIDATION_FAILED'
+    assert 'errors' in response.json()['error']['details']
+    assert config_path.read_text(encoding='utf-8') == original
+
+
 def test_task6_temp_delete_requires_true_confirmation_and_safe_array_contract(tmp_path):
     """临时文件删除必须要求 confirmed=true，并拒绝越界名称。"""
     resource_dir = tmp_path / 'web'
@@ -357,6 +396,60 @@ def test_frontend_async_file_responses_require_current_request_identity(tmp_path
     assert 'requestVersion !== state.requestVersion' in script
     assert 'const requestedKind = state.kind;' in script
     assert 'const requestedPath = path;' in script
+
+
+def test_frontend_file_browser_and_creation_controls_contract(tmp_path):
+    """前端应提供目录导航、返回、新建 JSON 和另存为控件。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text((Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+    index_html = resource_dir / 'index.html'
+    index_html.write_text((Path(__file__).parents[1] / 'web' / 'index.html').read_text(encoding='utf-8'), encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    script = client.get('/app.js').text
+    page = client.get('/').text
+
+    assert "state.directory" in script
+    assert "directory: state.directory" in script or "directory=' + encodeURIComponent(state.directory)" in script
+    assert "parent-directory" in page
+    assert "new-json" in page
+    assert "save-as" in page
+
+
+def test_frontend_prompts_before_discarding_unsaved_changes(tmp_path):
+    """前端切换文件、目录和配置类型前应确认未保存变更。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text((Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    script = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager())).get('/app.js').text
+
+    assert "state.dirty" in script
+    assert "放弃未保存的变更" in script
+    assert "beforeContextChange" in script
+
+
+def test_frontend_ini_switch_uses_ini_api_and_save_as_uses_json_api(tmp_path):
+    """前端应使用现有 INI 接口，并以 JSON API 创建或另存文件。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text((Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    script = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager())).get('/app.js').text
+
+    assert "request('/api/ini?path='" in script or "'/api/ini?path='" in script
+    assert "request('/api/json'" in script
+    assert "method: 'POST'" in script
 
 
 def test_task6_missing_json_returns_not_found_error_shape(tmp_path):

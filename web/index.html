@@ -18,6 +18,8 @@
     <aside class="sidebar">
       <section class="panel">
         <div class="section-heading"><h2>工作区</h2><span id="session-status">连接中</span></div>
+        <div class="browser-toolbar"><button id="parent-directory" class="text-button" type="button" hidden>返回上级</button><span id="directory-label" class="muted">工作区</span></div>
+        <div class="file-actions"><button id="new-json" class="button" type="button">新建 JSON</button></div>
         <div id="file-list" class="file-list" aria-live="polite"></div>
       </section>
       <section class="panel temp-panel">
@@ -35,6 +37,7 @@
         <textarea id="editor" spellcheck="false" aria-label="配置编辑器"></textarea>
         <div class="actions">
           <button id="save" class="button primary" type="button">保存</button>
+          <button id="save-as" class="button" type="button">另存为 / 创建文件</button>
           <button id="direct-push" class="button" type="button">直接推送</button>
           <button id="save-and-push" class="button" type="button">保存并推送</button>
         </div>
