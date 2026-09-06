@@ -261,7 +261,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             return _error('JSON_PATH_INVALID', '目标必须是 JSON 文件')
         data = json_payload(body)
         try:
-            target.parent.mkdir(exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_name(f'.{target.name}.tmp')
             temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
             os.replace(temporary, target)

@@ -175,7 +175,7 @@ def parse_ini_content(content):
     validation_values = {
         section: {
             key: value for key, value in section_values.items()
-            if not (section == 'Web' and key == 'access_token')
+            if section in GUI_FIELDS and key in GUI_FIELDS[section]
         }
         for section, section_values in values.items()
     }
