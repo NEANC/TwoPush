@@ -6,6 +6,7 @@
 import json
 import logging
 import os
+import socket
 import sys
 
 import pytest
@@ -52,6 +53,18 @@ def test_should_start_web_preserves_any_cli_argument(monkeypatch):
     assert TwoPush.should_start_web() is False
 
 
+def test_select_web_port_falls_back_to_dynamic_port_when_default_is_occupied(monkeypatch):
+    """默认端口被占用时应回退到可用动态端口。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(('127.0.0.1', 0))
+        occupied.listen(1)
+        monkeypatch.setattr(TwoPush, 'WEB_DEFAULT_PORT', occupied.getsockname()[1])
+        fallback_port = TwoPush._select_web_port()
+
+    assert fallback_port != TwoPush.WEB_DEFAULT_PORT
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(('127.0.0.1', fallback_port))
+
 def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path):
     """Web 服务使用非交互配置、实际端口和带令牌首页 URL。"""
     calls = {}
@@ -64,7 +77,7 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
         def validate(self):
             return True
         def get_attr(self, key, default=''):
-            return 'secret-token-123456' if key == 'access_token' else default
+            return 'secret token/中文?&=' if key == 'access_token' else default
 
     class FakeServer:
         def __init__(self, config):
@@ -91,8 +104,210 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
     assert calls['config_kwargs']['non_interactive'] is True
     assert calls['loaded'] is True
     assert calls['ran'] is True
-    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret-token-123456'
+    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
     assert calls['uvicorn_config']['access_log'] is False
+
+
+def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_path):
+    """Web 服务应使用实际监听 socket 端口并完成清理。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeSocket:
+        def getsockname(self):
+            return ('127.0.0.1', 54321)
+
+    class FakeServer:
+        started = True
+        should_exit = False
+        servers = [type('Server', (), {'sockets': [FakeSocket()]})()]
+        def __init__(self, config):
+            pass
+        def run(self):
+            calls.append('run')
+        def close(self):
+            calls.append('close')
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.append(url))}))
+    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
+
+    assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 0
+    assert 'http://127.0.0.1:54321/' in calls
+    assert calls[-3:] == ['close', 'control.stop', 'manager.stop'] or calls[-4:] == ['close', 'control.stop', 'manager.stop', 'manager.shutdown']
+    assert 'manager.shutdown' in calls
+
+
+def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monkeypatch, tmp_path):
+    """Web 服务线程启动失败时应及时退出并清理资源。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeServer:
+        started = False
+        should_exit = False
+        def __init__(self, config):
+            pass
+        def run(self):
+            calls.append('run')
+        def close(self):
+            calls.append('close')
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.append(url))}))
+    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
+
+    assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 1
+    assert calls == ['run', 'close', 'control.stop', 'manager.stop', 'manager.shutdown']
+
+
+def test_run_web_server_browser_failure_cleans_up(monkeypatch, tmp_path):
+    """浏览器打开失败时应关闭服务和进程管理器。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeServer:
+        started = True
+        should_exit = False
+        def __init__(self, config):
+            pass
+        def run(self):
+            calls.append('run')
+        def close(self):
+            calls.append('close')
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    def fail_open(url):
+        raise RuntimeError('browser unavailable')
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(fail_open)}))
+    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
+
+    with pytest.raises(RuntimeError, match='browser unavailable'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+    assert calls == ['run', 'close', 'control.stop', 'manager.stop', 'manager.shutdown']
+
+def test_run_web_server_constructor_failure_cleans_up(monkeypatch, tmp_path):
+    """Web 服务构造失败时也应清理已创建的资源。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        class Server:
+            def __init__(self, config):
+                raise RuntimeError('server unavailable')
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
+
+    with pytest.raises(RuntimeError, match='server unavailable'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+    assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
 
 
 def test_parse_args_single_dash_long_option_abbreviated_by_argparse(monkeypatch):

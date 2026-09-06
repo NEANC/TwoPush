@@ -17,7 +17,7 @@ import time
 import webbrowser
 
 from contextlib import contextmanager
-from urllib.parse import unquote_plus, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlencode, urlsplit, urlunsplit
 
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
@@ -78,60 +78,72 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
 
     process_manager = PushProcessManager()
     control = WebServerControl()
-    app = create_app(
-        os.path.dirname(os.path.abspath(config_path)),
-        config_path,
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'),
-        process_manager,
-        server_control=control,
-    )
-    port = _select_web_port()
-    access_token = config.get_attr('access_token', '')
-    url = f'http://127.0.0.1:{port}/'
-    if len(access_token) >= 16:
-        url += f'?token={access_token}'
-
-    import uvicorn
-    server = uvicorn.Server(uvicorn.Config(
-        app,
-        host='127.0.0.1',
-        port=port,
-        access_log=False,
-        log_config=None,
-    ))
-
-    def watch_stop_request():
-        """将 Web 停止请求转换为 Uvicorn 退出信号。"""
-        while not server.should_exit:
-            if control.stop_requested:
-                server.should_exit = True
-                return
-            time.sleep(0.05)
-
-    watcher = threading.Thread(target=watch_stop_request, daemon=True)
-    watcher.start()
-    server_thread = threading.Thread(target=server.run, daemon=True)
-    server_thread.start()
-    while not getattr(server, 'started', False):
-        if server.should_exit:
-            break
-        time.sleep(0.05)
-    actual_port = port
-    server_sockets = getattr(server, 'servers', None) or []
-    if server_sockets:
-        actual_port = server_sockets[0].sockets[0].getsockname()[1]
-    url = f'http://127.0.0.1:{actual_port}/'
-    if len(access_token) >= 16:
-        url += f'?token={access_token}'
-    webbrowser.open(url)
-    server_thread.join()
+    server = None
     try:
-        server.close()
+        app = create_app(
+            os.path.dirname(os.path.abspath(config_path)),
+            config_path,
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'),
+            process_manager,
+            server_control=control,
+        )
+        port = _select_web_port()
+        access_token = config.get_attr('access_token', '')
+        url = f'http://127.0.0.1:{port}/'
+        if len(access_token) >= 16:
+            url += '?' + urlencode({'token': access_token})
+
+        import uvicorn
+        server = uvicorn.Server(uvicorn.Config(
+            app,
+            host='127.0.0.1',
+            port=port,
+            access_log=False,
+            log_config=None,
+        ))
+
+        def watch_stop_request():
+            """将 Web 停止请求转换为 Uvicorn 退出信号。"""
+            while not server.should_exit:
+                if control.stop_requested:
+                    server.should_exit = True
+                    return
+                time.sleep(0.05)
+
+        watcher = threading.Thread(target=watch_stop_request, daemon=True)
+        watcher.start()
+        server_thread = threading.Thread(target=server.run, daemon=True)
+        server_thread.start()
+        while not getattr(server, 'started', False):
+            if server.should_exit or not server_thread.is_alive():
+                break
+            time.sleep(0.05)
+        actual_port = port
+        server_sockets = getattr(server, 'servers', None) or []
+        if server_sockets:
+            actual_port = server_sockets[0].sockets[0].getsockname()[1]
+        url = f'http://127.0.0.1:{actual_port}/'
+        if len(access_token) >= 16:
+            url += '?' + urlencode({'token': access_token})
+        if not getattr(server, 'started', False):
+            if server_thread.is_alive():
+                server_thread.join(timeout=1)
+            return 1
+        webbrowser.open(url)
+        server_thread.join()
+        return 0
     finally:
-        control.stop()
-        process_manager.stop()
-        process_manager.shutdown()
-    return 0
+        try:
+            if server is not None:
+                server.close()
+        finally:
+            try:
+                control.stop()
+            finally:
+                try:
+                    process_manager.stop()
+                finally:
+                    process_manager.shutdown()
 
 
 _PROXY_SENSITIVE_QUERY_KEYS = frozenset({
