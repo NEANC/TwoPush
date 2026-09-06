@@ -313,6 +313,24 @@ def test_frontend_type_switch_clears_editor_context(tmp_path):
     assert "setMessage('editor-title', '');" in script
 
 
+def test_frontend_async_file_responses_require_current_request_identity(tmp_path):
+    """旧文件响应不得覆盖新选择或类型切换后的编辑器。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text((Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    script = client.get('/app.js').text
+
+    assert 'state.requestVersion' in script
+    assert 'requestVersion !== state.requestVersion' in script
+    assert 'const requestedKind = state.kind;' in script
+    assert 'const requestedPath = path;' in script
+
+
 def test_task6_missing_json_returns_not_found_error_shape(tmp_path):
     """缺失 JSON 必须返回 404 和稳定错误结构。"""
     resource_dir = tmp_path / 'web'

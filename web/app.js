@@ -4,7 +4,7 @@
   const query = new URLSearchParams(window.location.search);
   const token = query.get('token') || '';
   if (token) window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
-  const state = { kind: 'json', path: '', cursor: 0, timer: null, token: token };
+  const state = { kind: 'json', path: '', cursor: 0, timer: null, token: token, requestVersion: 0 };
   const editor = document.getElementById('editor');
 
   function setMessage(id, message) {
@@ -28,13 +28,19 @@
 
   function selectFile(path) {
     state.path = path;
-    request('/api/' + state.kind + '?path=' + encodeURIComponent(path))
+    const requestedKind = state.kind;
+    const requestedPath = path;
+    const requestVersion = ++state.requestVersion;
+    request('/api/' + requestedKind + '?path=' + encodeURIComponent(path))
       .then(function (data) {
-        editor.value = state.kind === 'json' ? JSON.stringify(data, null, 2) : data.content;
-        setMessage('editor-title', path);
+        if (requestVersion !== state.requestVersion || requestedKind !== state.kind || requestedPath !== state.path) return;
+        editor.value = requestedKind === 'json' ? JSON.stringify(data, null, 2) : data.content;
+        setMessage('editor-title', requestedPath);
         setMessage('save-state', '已加载');
       })
-      .catch(function (error) { setMessage('save-state', error.message); });
+      .catch(function (error) {
+        if (requestVersion === state.requestVersion) setMessage('save-state', error.message);
+      });
   }
 
   function loadFiles() {
@@ -109,6 +115,7 @@
   }
 
   function clearEditorContext() {
+    state.requestVersion += 1;
     state.path = '';
     editor.value = '';
     setMessage('editor-title', '');
