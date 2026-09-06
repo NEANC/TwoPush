@@ -78,6 +78,9 @@ _DEFAULT_SECTIONS: Dict[str, Dict[str, str]] = {
         'save_enabled': 'true',
         'max_files': '15',
     },
+    'Web': {
+        'access_token': '',
+    },
 }
 
 _DEFAULT_COMMENTS: Dict[str, str] = {
@@ -89,6 +92,7 @@ _DEFAULT_COMMENTS: Dict[str, str] = {
     'Update.channel': '更新通道: preview 包括预发布版本 (Alpha/Beta/RC) 或 stable 仅正式发布版本',
     'Logs.save_enabled': '是否保存日志到文件',
     'Logs.max_files': '最大日志文件保留数量',
+    'Web.access_token': '远程访问令牌；至少 16 个字符。留空时仅允许本机访问',
 }
 
 
@@ -99,7 +103,8 @@ class ConfigManager:
                  default_sections: Optional[Dict[str, Dict[str, str]]] = None,
                  comments: Optional[Dict[str, str]] = None,
                  app_name: str = '',
-                 first_run_callback: Optional[Callable[[], None]] = None):
+                 first_run_callback: Optional[Callable[[], None]] = None,
+                 non_interactive: bool = False):
         """
         初始化配置管理器
 
@@ -111,6 +116,7 @@ class ConfigManager:
             app_name: 应用名称（用于系统临时目录回退）
             first_run_callback: 首次运行（无配置文件时生成默认配置后）的回调，
                                 不传则直接 sys.exit(0)
+            non_interactive: 首次生成配置后是否继续加载，不触发交互输入或退出
         """
         self.config_file = config_file
         self.logger = logger
@@ -135,6 +141,7 @@ class ConfigManager:
         self.comments = merged_comments
         self.app_name = app_name
         self._first_run_callback = first_run_callback
+        self.non_interactive = non_interactive
 
         # 动态属性字典
         self._attrs: Dict[str, str] = {}
@@ -171,6 +178,9 @@ class ConfigManager:
             sys.exit(1)
         if self._first_run_callback:
             self._first_run_callback()
+        if self.non_interactive:
+            self.logger.info("首次运行配置已生成，继续加载默认配置。")
+            return
         self.logger.info("请修改配置文件后重新运行软件。")
         if not self._first_run_callback and sys.stdin.isatty():
             input("按任意键退出...")
