@@ -93,6 +93,7 @@ class IniConfigPayload(BaseModel):
 
     model_config = ConfigDict(extra='allow')
 
+    path: str | None = None
     network: dict[str, str | bool | int] = Field(default_factory=dict)
     push: dict[str, str | bool | int] = Field(default_factory=dict)
     update: dict[str, str | bool | int] = Field(default_factory=dict)
@@ -104,6 +105,7 @@ class PushRequest(BaseModel):
 
     action: str
     path: str
+    payload: dict[str, Any] | None = None
 
     @field_validator('action')
     @classmethod

@@ -6,6 +6,7 @@
 import json
 import os
 import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     app = FastAPI()
     app.state.process_manager = process_manager
+    app.state.config_file = config_file
+    app.state.program_dir = Path(getattr(process_manager, 'program_dir', root)).resolve()
     app.state.server_control = control
     app.state.workspace_root = root
     app.state.host = resolve_web_host(access_token)
@@ -159,6 +162,13 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         except ValidationError as error:
             raise HTTPException(422, detail={'code': 'invalid_json', 'message': 'JSON 模板校验失败', 'details': error.errors()}) from error
 
+    def _save_json(target: Path, data: dict[str, Any]) -> None:
+        """将 JSON 载荷原子保存到指定文件。"""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f'.{target.name}.tmp')
+        temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        os.replace(temporary, target)
+
     @app.get('/', response_class=HTMLResponse)
     async def index(request: Request):
         """返回首页，允许有效令牌首次查询访问。"""
@@ -182,8 +192,9 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         return {'host': app.state.host, 'authenticated': len(access_token) >= 16}
 
     @app.get('/api/files', dependencies=[__import__('fastapi').Depends(require_auth)])
-    async def list_files(path: str = Query('', description='工作区内相对目录')):
+    async def list_files(directory: str = Query('', description='工作区内相对目录'), path: str | None = None):
         """逐级列出工作区中的非隐藏项目。"""
+        path = directory if path is None else path
         directory = root if not path else safe_path(path)
         if not directory.is_dir():
             return _error('NOT_DIRECTORY', '目标不是目录')
@@ -197,7 +208,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             except (OSError, ValueError):
                 continue
             items.append({'name': item.name, 'path': relative, 'type': 'directory' if item.is_dir() else 'file'})
-        return {'path': '' if directory == root else directory.relative_to(root).as_posix(), 'items': items}
+        return {'path': '' if directory == root else directory.relative_to(root).as_posix(), 'items': items, 'files': items}
 
     @app.get('/api/json', dependencies=[__import__('fastapi').Depends(require_auth)])
     async def read_json(path: str):
@@ -251,22 +262,28 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         return {'valid': True, 'message': 'JSON 有效'}
 
     @app.get('/api/ini', dependencies=[__import__('fastapi').Depends(require_auth)])
-    async def read_ini_api():
-        """读取 INI 配置内容。"""
+    async def read_ini_api(path: str | None = None):
+        """读取指定 INI 配置内容。"""
+        selected = config_file if path is None else safe_path(path)
+        if selected.suffix.lower() != '.ini' or not selected.is_file():
+            return _error('INI_NOT_FOUND', 'INI 配置不存在', status_code=404)
         try:
-            return read_ini(str(config_file))
+            return read_ini(str(selected))
         except (OSError, ValueError) as error:
             return _error('INI_READ_FAILED', 'INI 配置读取失败', {'reason': str(error)}, 500)
 
     @app.put('/api/ini', dependencies=[Depends(require_auth)])
     async def write_ini_api(payload: IniConfigPayload):
         """校验并原子更新 INI 配置。"""
-        values = payload.model_dump(exclude_unset=True)
+        values = payload.model_dump(exclude_unset=True, exclude={'path'})
+        selected = config_file if payload.path is None else safe_path(payload.path)
+        if selected.suffix.lower() != '.ini':
+            return _error('INI_PATH_INVALID', '目标必须是 INI 文件')
         errors = validate_ini_values(values)
         if errors:
             return _error('INI_INVALID', 'INI 配置校验失败', {'fields': errors})
         try:
-            update_ini(str(config_file), values)
+            update_ini(str(selected), values)
         except (OSError, ValueError) as error:
             return _error('INI_SAVE_FAILED', 'INI 配置保存失败', {'reason': str(error)}, 500)
         return {'saved': True}
@@ -281,39 +298,53 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     @app.get('/api/temp', dependencies=[Depends(require_auth)])
     async def list_temp():
-        """列出临时 JSON 文件。"""
-        temp = root / 'Temp'
-        return {'files': [item.name for item in temp.glob('*.json')] if temp.is_dir() else []}
+        """列出程序目录中临时 JSON 文件。"""
+        temp = app.state.program_dir / 'Temp'
+        files = []
+        if temp.is_dir():
+            for item in temp.glob('Temp_*.json'):
+                try:
+                    if item.is_file() and not item.is_symlink() and item.resolve().parent == temp.resolve():
+                        files.append(item.name)
+                except OSError:
+                    continue
+        return {'files': sorted(files)}
 
     @app.get('/api/temp/{name}', dependencies=[Depends(require_auth)])
     async def read_temp(name: str):
-        """读取临时 JSON 文件。"""
-        target = root / 'Temp' / name
-        if '/' in name or '\\' in name or not target.is_file():
+        """读取程序目录中安全的临时 JSON 文件。"""
+        temp = app.state.program_dir / 'Temp'
+        target = temp / name
+        if not name.startswith('Temp_') or not name.endswith('.json') or '/' in name or '\\' in name or not target.is_file() or target.is_symlink():
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
         return Response(target.read_bytes(), media_type='application/json')
 
     @app.post('/api/temp/delete', dependencies=[Depends(require_auth)])
     async def delete_temp(payload: TempDeleteRequest):
         """删除已确认的临时 JSON 文件。"""
-        target = root / 'Temp' / payload.name
-        if not target.is_file():
+        temp = app.state.program_dir / 'Temp'
+        target = temp / payload.name
+        if not payload.name.startswith('Temp_') or not payload.name.endswith('.json') or not target.is_file() or target.is_symlink():
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
         target.unlink()
-        return {'deleted': True, 'message': '已删除'}
+        return {'deleted': True, 'name': payload.name, 'message': '已删除'}
 
     @app.post('/api/push', dependencies=[Depends(require_auth)])
     async def push(request: PushRequest):
         """执行保存、直接推送或保存并推送操作。"""
         target = safe_path(request.path)
         try:
-            payload = json.loads(target.read_text(encoding='utf-8'))
+            payload = (request.payload if request.payload is not None
+                       else json.loads(target.read_text(encoding='utf-8')))
+            payload = json_payload(payload)
             if request.action == 'direct':
-                task_id = process_manager.start_file_push(target, config_file)
+                task_id = process_manager.start_payload_push(payload, config_file, target.stem)
             elif request.action == 'save':
-                task_id = process_manager.start_payload_push(payload, config_file, target.stem)
+                _save_json(target, payload)
+                return {'saved': True, 'path': target.relative_to(root).as_posix(), 'action': request.action, 'message': '已保存'}
             else:
-                task_id = process_manager.start_payload_push(payload, config_file, target.stem)
+                _save_json(target, payload)
+                task_id = process_manager.start_file_push(target, config_file)
         except RuntimeError as error:
             return _error('PUSH_BUSY', str(error), status_code=409)
         except (OSError, json.JSONDecodeError) as error:
@@ -342,7 +373,9 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     @app.on_event('shutdown')
     async def shutdown():
-        """服务退出时清理推送任务。"""
+        """服务退出时显式停止并清理推送任务。"""
+        control.stop()
+        process_manager.stop()
         process_manager.shutdown()
 
     return app
