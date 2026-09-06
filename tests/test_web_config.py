@@ -5,6 +5,8 @@
 
 import configparser
 import logging
+import os
+import threading
 
 from modules.config_manager import ConfigManager
 
@@ -200,6 +202,143 @@ def test_read_ini_does_not_duplicate_default_keys_into_sections(tmp_path):
 
     assert loaded['DEFAULT'] == {'shared': 'default'}
     assert loaded['Network'] == {'proxy': 'local'}
+
+
+def test_read_ini_preserves_explicit_section_override_of_default(tmp_path):
+    """读取配置时应保留普通节对 DEFAULT 同名键的显式覆盖"""
+    from modules.web_config import read_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text(
+        '[DEFAULT]\nshared = default\n\n[Network]\nshared = local\n',
+        encoding='utf-8',
+    )
+
+    loaded = read_ini(str(config_file))
+
+    assert loaded['DEFAULT'] == {'shared': 'default'}
+    assert loaded['Network'] == {'shared': 'local'}
+
+
+def test_update_ini_cleans_actual_temporary_path_when_write_fails(tmp_path, monkeypatch):
+    """临时文件写入异常时应清理实际创建的临时路径"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Network]\nproxy = old\n', encoding='utf-8')
+    temporary_paths = []
+    real_temporary_file = __import__('tempfile').NamedTemporaryFile
+
+    def create_temporary_file(*args, **kwargs):
+        temporary_file = real_temporary_file(*args, **kwargs)
+        temporary_paths.append(temporary_file.name)
+        return temporary_file
+
+    monkeypatch.setattr('modules.web_config.tempfile.NamedTemporaryFile', create_temporary_file)
+    monkeypatch.setattr('modules.web_config.configparser.ConfigParser.write',
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('write fail')))
+
+    try:
+        update_ini(str(config_file), {'Network': {'proxy': 'new'}})
+    except OSError:
+        pass
+    else:
+        raise AssertionError('写入失败应抛出 OSError')
+
+    assert temporary_paths
+    assert not os.path.exists(temporary_paths[0])
+
+
+def test_update_ini_cleans_temporary_file_when_context_setup_fails(tmp_path, monkeypatch):
+    """临时文件创建后进入上下文异常时应清理实际路径"""
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Network]\nproxy = old\n', encoding='utf-8')
+    real_temporary_file = __import__('tempfile').NamedTemporaryFile
+    temporary_paths = []
+
+    class FailingContext:
+        """创建真实临时文件但在进入上下文时失败"""
+
+        def __init__(self, temporary_file):
+            self.temporary_file = temporary_file
+            self.name = temporary_file.name
+
+        def close(self):
+            """关闭底层临时文件"""
+            self.temporary_file.close()
+
+        def __enter__(self):
+            raise OSError('enter fail')
+
+        def __exit__(self, *_args):
+            self.temporary_file.close()
+
+    def create_failing_context(*args, **kwargs):
+        temporary_file = real_temporary_file(*args, **kwargs)
+        temporary_paths.append(temporary_file.name)
+        return FailingContext(temporary_file)
+
+    monkeypatch.setattr(
+        'modules.web_config.tempfile.NamedTemporaryFile',
+        create_failing_context,
+    )
+
+    try:
+        update_ini(str(config_file), {'Network': {'proxy': 'new'}})
+    except OSError:
+        pass
+    else:
+        raise AssertionError('进入临时文件上下文失败应抛出 OSError')
+
+    assert temporary_paths
+    assert not os.path.exists(temporary_paths[0])
+
+
+def test_update_ini_passes_actual_paths_to_atomic_replace(tmp_path, monkeypatch):
+    from modules.web_config import update_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Network]\nproxy = old\n', encoding='utf-8')
+    replace_calls = []
+    monkeypatch.setattr('modules.web_config.os.replace', lambda *args: replace_calls.append(args))
+
+    update_ini(str(config_file), {'Network': {'proxy': 'new'}})
+
+    assert replace_calls
+    temporary_path, target_path = replace_calls[0]
+    assert os.path.dirname(temporary_path) == str(tmp_path)
+    assert target_path == str(config_file)
+
+
+def test_update_ini_serializes_concurrent_updates(tmp_path):
+    """同一配置文件的并发更新不应丢失彼此的修改"""
+    from modules.web_config import update_ini, read_ini
+
+    config_file = tmp_path / 'config.ini'
+    config_file.write_text('[Network]\nproxy = old\n\n[Push]\nretry_interval = 3s\n', encoding='utf-8')
+    barrier = threading.Barrier(2)
+    errors = []
+
+    def update(values):
+        try:
+            barrier.wait()
+            update_ini(str(config_file), values)
+        except Exception as error:
+            errors.append(error)
+
+    first = threading.Thread(target=update, args=({'Network': {'proxy': 'new'}},))
+    second = threading.Thread(target=update, args=({'Push': {'retry_interval': '5s'}},))
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+
+    assert errors == []
+    loaded = read_ini(str(config_file))
+    assert loaded['Network']['proxy'] == 'new'
+    assert loaded['Push']['retry_interval'] == '5s'
 
 
 def test_update_ini_rejects_invalid_values_before_writing(tmp_path):
