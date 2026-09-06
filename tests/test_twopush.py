@@ -86,8 +86,8 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
             self.should_exit = False
         def run(self):
             calls['ran'] = True
-        def close(self):
-            calls['closed'] = True
+        def shutdown(self):
+            calls['shutdown'] = True
 
     class FakeUvicorn:
         Config = staticmethod(lambda app, **kwargs: kwargs)

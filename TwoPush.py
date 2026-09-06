@@ -8,6 +8,8 @@
 """
 
 import argparse
+import asyncio
+import inspect
 import json
 import os
 import socket
@@ -58,6 +60,26 @@ def _select_web_port():
         except OSError:
             probe.bind(('127.0.0.1', 0))
             return probe.getsockname()[1]
+
+
+def _cleanup_web_server(server, preserve_exception=False):
+    """请求 Uvicorn 服务退出，并兼容旧测试替身。"""
+    if server is None:
+        return
+    try:
+        server.should_exit = True
+        shutdown = getattr(server, 'shutdown', None)
+        if shutdown is not None:
+            result = shutdown()
+            if inspect.isawaitable(result):
+                asyncio.run(result)
+            return
+        close = getattr(server, 'close', None)
+        if close is not None:
+            close()
+    except Exception:
+        if not preserve_exception:
+            raise
 
 
 def run_web_server(config_path=DEFAULT_CONFIG_FILE):
@@ -134,8 +156,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         return 0
     finally:
         try:
-            if server is not None:
-                server.close()
+            _cleanup_web_server(server, preserve_exception=sys.exc_info()[0] is not None)
         finally:
             try:
                 control.stop()
