@@ -29,6 +29,18 @@ class FakeStream:
         pass
 
 
+class BlockingStream(FakeStream):
+    """提供可控制结束时机的模拟输出流。"""
+
+    def __init__(self, release_event):
+        super().__init__([])
+        self.release_event = release_event
+
+    def __iter__(self):
+        self.release_event.wait(10)
+        return iter([])
+
+
 class FakeProcess:
     """提供进程控制器所需的最小模拟进程接口。"""
 
@@ -248,6 +260,31 @@ def test_shutdown_returns_when_stop_fails_and_cleans_temp(monkeypatch, manager, 
     assert manager.get_status()['status'] == 'failed'
     assert not temp_file.exists()
     assert not manager._wait_thread.is_alive()
+
+
+def test_shutdown_timeout_defers_temp_cleanup_until_wait_thread_finishes(
+        monkeypatch, manager, tmp_path):
+    """shutdown 超时时不得在 reader/wait 线程结束前删除临时文件。"""
+    process = FailingStopProcess()
+    release_reader = threading.Event()
+    process.stdout = BlockingStream(release_reader)
+    process.stderr = BlockingStream(release_reader)
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
+    temp_file = next((tmp_path / 'Temp').glob('*.json'))
+
+    manager.shutdown()
+
+    assert manager.get_status()['status'] == 'failed'
+    assert manager._wait_thread.is_alive()
+    assert temp_file.exists()
+
+    release_reader.set()
+    process.finish()
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
+    assert not temp_file.exists()
 
 
 def test_build_command_uses_short_options(manager, tmp_path):

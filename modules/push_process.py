@@ -249,11 +249,6 @@ class PushProcessManager:
             with self._lock:
                 if self._task:
                     self._task['status'] = 'failed'
-            if self._temporary_path:
-                try:
-                    self._temporary_path.unlink(missing_ok=True)
-                except OSError:
-                    pass
             return
         with self._lock:
             if self._task and self._task['status'] == 'running':
