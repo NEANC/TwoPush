@@ -51,9 +51,11 @@
     let payload;
     try { payload = state.kind === 'json' ? JSON.parse(editor.value) : { path: state.path, content: editor.value }; }
     catch (error) { setMessage('save-state', 'JSON 格式无效'); return; }
-    if (state.kind === 'json') payload.path = state.path;
-    payload.action = action || 'save';
-    request('/api/' + state.kind, { method: state.kind === 'json' ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+    const endpoint = state.kind === 'json' ? '/api/push' : '/api/ini';
+    const body = state.kind === 'json'
+      ? { action: action || 'save', path: state.path, payload: payload }
+      : { path: state.path, content: payload.content };
+    request(endpoint, { method: state.kind === 'json' ? 'POST' : 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       .then(function () { setMessage('save-state', '已保存'); if (action && action !== 'save') startPolling(); })
       .catch(function (error) { setMessage('save-state', error.message); });
   }

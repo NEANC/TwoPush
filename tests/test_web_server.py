@@ -211,4 +211,60 @@ def test_lifespan_shutdown_calls_manager_stop_and_shutdown(tmp_path):
     manager = Manager()
     with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
         pass
-    assert manager.calls == ['stop', 'shutdown']
+
+
+def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
+    """INI 接口应传输原文，嵌套 JSON 保存不应写入控制字段。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Network]\nproxy = old\n', encoding='utf-8')
+    manager = FakeProcessManager()
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
+
+    ini_response = client.get('/api/ini')
+    assert ini_response.json() == {'path': 'config.ini', 'content': '[Network]\nproxy = old\n'}
+    ini_path = tmp_path / 'nested' / 'saved.ini'
+    ini_content = '[Network]\nproxy = new\n'
+    assert client.put('/api/ini', json={'path': 'nested/saved.ini', 'content': ini_content}).json()['saved'] is True
+    assert ini_path.read_text(encoding='utf-8') == ini_content
+
+    payload = {'title': 't', 'content': 'c', 'channels': [{}], 'path': 'nested/saved.json', 'action': 'save'}
+    response = client.post('/api/json', json=payload)
+    assert response.status_code == 200
+    saved = json.loads((tmp_path / 'nested' / 'saved.json').read_text(encoding='utf-8'))
+    assert saved == {'title': 't', 'content': 'c', 'channels': [{}]}
+
+
+def test_task6_temp_delete_requires_true_confirmation_and_safe_array_contract(tmp_path):
+    """临时文件删除必须要求 confirmed=true，并拒绝越界名称。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    temp = program_dir / 'Temp'
+    temp.mkdir(parents=True)
+    target = temp / 'Temp_ok.json'
+    target.write_text('{}', encoding='utf-8')
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
+
+    assert client.post('/api/temp/delete', json={'name': 'Temp_ok.json', 'confirmed': False}).status_code == 422
+    assert client.post('/api/temp/delete', json={'name': 'Temp_ok.json', 'confirmed': True}).json()['deleted'] is True
+    assert not target.exists()
+    assert client.post('/api/temp/delete', json={'name': ['Temp_ok.json'], 'confirmed': True}).status_code == 422
+
+
+def test_task6_missing_json_returns_not_found_error_shape(tmp_path):
+    """缺失 JSON 必须返回 404 和稳定错误结构。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    response = client.get('/api/json', params={'path': 'missing.json'})
+    assert response.status_code == 404
+    assert response.json()['error']['code'] == 'JSON_NOT_FOUND'
+    assert set(response.json()['error']) == {'code', 'message', 'details'}

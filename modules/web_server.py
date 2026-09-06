@@ -15,10 +15,8 @@ from pydantic import ValidationError
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
-from modules.web_config import read_ini, update_ini, validate_ini_values
 from modules.web_models import (
     FileOperationRequest,
-    IniConfigPayload,
     JsonTemplatePayload,
     PushRequest,
     TempDeleteRequest,
@@ -169,6 +167,13 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         os.replace(temporary, target)
 
+    def _save_ini_text(target: Path, content: str) -> None:
+        """将 INI 原文保存到指定文件。"""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f'.{target.name}.tmp')
+        temporary.write_text(content, encoding='utf-8')
+        os.replace(temporary, target)
+
     @app.get('/', response_class=HTMLResponse)
     async def index(request: Request):
         """返回首页，允许有效令牌首次查询访问。"""
@@ -215,7 +220,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """读取 JSON 文件并保留未知字段。"""
         target = safe_path(path)
         if target.suffix.lower() != '.json' or not target.is_file():
-            return _error('JSON_NOT_FOUND', 'JSON 文件不存在')
+            return _error('JSON_NOT_FOUND', 'JSON 文件不存在', status_code=404)
         try:
             return json.loads(target.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError) as error:
@@ -227,6 +232,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """原子保存 JSON 模板。"""
         body = await request.json()
         target_path = path or body.pop('path', None)
+        body.pop('action', None)
         if not target_path:
             return _error('JSON_PATH_INVALID', '缺少 JSON 文件路径')
         target = safe_path(target_path)
@@ -263,30 +269,30 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     @app.get('/api/ini', dependencies=[__import__('fastapi').Depends(require_auth)])
     async def read_ini_api(path: str | None = None):
-        """读取指定 INI 配置内容。"""
+        """读取指定 INI 配置原文。"""
         selected = config_file if path is None else safe_path(path)
         if selected.suffix.lower() != '.ini' or not selected.is_file():
             return _error('INI_NOT_FOUND', 'INI 配置不存在', status_code=404)
         try:
-            return read_ini(str(selected))
-        except (OSError, ValueError) as error:
+            return {'path': selected.relative_to(root).as_posix(), 'content': selected.read_text(encoding='utf-8')}
+        except OSError as error:
             return _error('INI_READ_FAILED', 'INI 配置读取失败', {'reason': str(error)}, 500)
 
     @app.put('/api/ini', dependencies=[Depends(require_auth)])
-    async def write_ini_api(payload: IniConfigPayload):
-        """校验并原子更新 INI 配置。"""
-        values = payload.model_dump(exclude_unset=True, exclude={'path'})
-        selected = config_file if payload.path is None else safe_path(payload.path)
+    async def write_ini_api(request: Request):
+        """接收并保存指定 INI 原文。"""
+        body = await request.json()
+        selected = config_file if not body.get('path') else safe_path(body['path'])
         if selected.suffix.lower() != '.ini':
             return _error('INI_PATH_INVALID', '目标必须是 INI 文件')
-        errors = validate_ini_values(values)
-        if errors:
-            return _error('INI_INVALID', 'INI 配置校验失败', {'fields': errors})
+        content = body.get('content')
+        if not isinstance(content, str):
+            return _error('INI_INVALID', 'INI content 必须是字符串')
         try:
-            update_ini(str(selected), values)
-        except (OSError, ValueError) as error:
+            _save_ini_text(selected, content)
+        except OSError as error:
             return _error('INI_SAVE_FAILED', 'INI 配置保存失败', {'reason': str(error)}, 500)
-        return {'saved': True}
+        return {'saved': True, 'path': selected.relative_to(root).as_posix()}
 
     @app.post('/api/ini/select', dependencies=[Depends(require_auth)])
     async def select_ini(body: FileOperationRequest):
