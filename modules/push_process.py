@@ -196,10 +196,10 @@ class PushProcessManager:
             if task:
                 task['exit_code'] = exit_code
                 if task['status'] == 'running':
-                    task['status'] = (
-                        'failed' if task['reader_failed'] else
-                        ('success' if exit_code == 0 else 'failed')
-                    )
+                    if task['reader_failed'] or exit_code != 0:
+                        task['status'] = 'failed'
+                    else:
+                        task['status'] = 'success'
         if temporary_path:
             try:
                 temporary_path.unlink(missing_ok=True)
@@ -218,7 +218,12 @@ class PushProcessManager:
     def stop(self):
         """停止当前任务及其 Windows 进程树。"""
         with self._lock:
-            if not self._process or not self._task or self._task['status'] != 'running':
+            if (
+                    not self._process or
+                    not self._task or
+                    self._stop_requested or
+                    not self._wait_thread or
+                    not self._wait_thread.is_alive()):
                 return False
             self._stop_requested = True
             if os.name == 'nt':

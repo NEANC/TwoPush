@@ -97,6 +97,23 @@ def test_reader_failure_marks_task_failed_and_is_not_overwritten(
     assert manager.get_status()["status"] == "failed"
 
 
+def test_reader_failure_still_allows_stop_until_task_finishes(
+        monkeypatch, manager, tmp_path):
+    """reader 失败后进程仍活动时，stop 应终止进程并保留 stopped 状态。"""
+    process = FakeProcess(code=0)
+    process.stdout = FailingStream([])
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+
+    manager._reader_threads[0].join(1)
+    assert manager.get_status()["status"] == "failed"
+    assert manager.stop() is True
+    assert manager.get_status()["status"] == "stopped"
+    manager._wait_thread.join(1)
+    assert not manager._wait_thread.is_alive()
+
+
 def test_cleanup_failure_does_not_leave_task_thread_unhandled(
         monkeypatch, manager, tmp_path):
     """临时文件清理异常不得让收尾线程失控或改变任务状态。"""
