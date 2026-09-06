@@ -108,7 +108,14 @@
     pushButtons.forEach(function (button) { button.hidden = state.kind === 'ini'; });
   }
 
-  document.querySelectorAll('.tab').forEach(function (tab) { tab.onclick = function () { state.kind = tab.dataset.kind; document.querySelector('.tab.active').classList.remove('active'); tab.classList.add('active'); updateActions(); loadFiles(); }; });
+  function clearEditorContext() {
+    state.path = '';
+    editor.value = '';
+    setMessage('editor-title', '');
+    setMessage('save-state', '');
+  }
+
+  document.querySelectorAll('.tab').forEach(function (tab) { tab.onclick = function () { state.kind = tab.dataset.kind; clearEditorContext(); document.querySelector('.tab.active').classList.remove('active'); tab.classList.add('active'); updateActions(); loadFiles(); }; });
   document.getElementById('save').onclick = function () { save('save'); };
   document.getElementById('direct-push').onclick = function () { save('direct'); };
   document.getElementById('save-and-push').onclick = function () { save('save_and_push'); };

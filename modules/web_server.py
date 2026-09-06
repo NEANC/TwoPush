@@ -340,7 +340,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             return _error('TEMP_CONFIRM_REQUIRED', '删除临时文件必须确认', status_code=400)
         temp = app.state.program_dir / 'Temp'
         deleted = []
-        for name in payload.names:
+        for name in dict.fromkeys(payload.names):
             target = temp / name
             if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or target.is_symlink():
                 return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)

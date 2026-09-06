@@ -269,6 +269,50 @@ def test_task6_temp_delete_requires_true_confirmation_and_safe_array_contract(tm
     assert client.post('/api/temp/delete', json={'names': ['Temp_ok.json'], 'confirmed': True}).status_code == 404
 
 
+
+
+def test_temp_delete_deduplicates_repeated_names(tmp_path):
+    """临时文件删除接口应允许 names 中出现重复名称。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    temp = program_dir / 'Temp'
+    temp.mkdir(parents=True)
+    target = temp / 'Temp_duplicate.json'
+    target.write_text('{}', encoding='utf-8')
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
+
+    response = client.post('/api/temp/delete', json={
+        'names': ['Temp_duplicate.json', 'Temp_duplicate.json'],
+        'confirmed': True,
+    })
+
+    assert response.status_code == 200
+    assert response.json()['names'] == ['Temp_duplicate.json']
+    assert not target.exists()
+
+
+def test_frontend_type_switch_clears_editor_context(tmp_path):
+    """切换 JSON/INI 类型时前端必须清空旧文件上下文。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text((Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager()))
+    script = client.get('/app.js').text
+
+    assert "state.path = '';" in script
+    assert "editor.value = '';" in script
+    assert "setMessage('editor-title', '');" in script
+
+
 def test_task6_missing_json_returns_not_found_error_shape(tmp_path):
     """缺失 JSON 必须返回 404 和稳定错误结构。"""
     resource_dir = tmp_path / 'web'
