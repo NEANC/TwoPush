@@ -381,16 +381,30 @@ def test_update_ini_missing_or_malformed_file_has_explicit_error(tmp_path):
         raise AssertionError('解析失败应抛出 configparser.Error')
 
 
-def test_update_ini_ignores_unknown_fields_and_does_not_rewrite_without_valid_update(tmp_path, monkeypatch):
-    """未知字段应被忽略，且无有效更新时不应重写文件"""
+def test_update_ini_rejects_unknown_sections_and_keys(tmp_path):
+    """更新配置时应拒绝未知节和键，而不是静默忽略。"""
     from modules.web_config import update_ini
 
     config_file = tmp_path / 'config.ini'
-    config_file.write_text('[Web]\naccess_token = keep\n', encoding='utf-8')
-    replace_calls = []
-    monkeypatch.setattr('modules.web_config.os.replace', lambda *args: replace_calls.append(args))
+    config_file.write_text('[Network]\nproxy = old\n', encoding='utf-8')
 
-    update_ini(str(config_file), {'Web': {'access_token': 'changed'}, 'Custom': {'key': 'value'}})
+    for values, expected in [
+        ({'Unknown': {'key': 'value'}}, 'Unknown'),
+        ({'Network': {'unknown': 'value'}}, 'Network.unknown'),
+    ]:
+        try:
+            update_ini(str(config_file), values)
+        except ValueError as error:
+            assert expected in str(error)
+        else:
+            raise AssertionError('未知配置项应抛出 ValueError')
 
-    assert replace_calls == []
-    assert config_file.read_text(encoding='utf-8') == '[Web]\naccess_token = keep\n'
+
+def test_validate_ini_values_reports_unknown_fields():
+    """配置校验应为未知节键返回字段级错误。"""
+    from modules.web_config import validate_ini_values
+
+    errors = validate_ini_values({'Unknown': {'key': 'value'}, 'Network': {'unknown': 'value'}})
+
+    assert errors['Unknown.key'] == '不是允许更新的配置项'
+    assert errors['Network.unknown'] == '不是允许更新的配置项'

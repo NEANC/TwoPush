@@ -301,7 +301,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     @app.put('/api/ini', dependencies=[Depends(require_auth)])
     async def write_ini_api(request: Request):
-        """接收并保存指定 INI 原文。"""
+        """接收并保存指定 INI 原文，并执行配置校验。"""
         body = await request.json()
         selected = config_file if not body.get('path') else safe_path(body['path'])
         if selected.suffix.lower() != '.ini':
@@ -310,7 +310,15 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         if not isinstance(content, str):
             return _error('INI_INVALID', 'INI content 必须是字符串')
         try:
+            from modules.web_config import parse_ini_content, protect_access_token
+            errors, _ = parse_ini_content(content)
+            if errors:
+                return _error('INI_VALIDATION_FAILED', 'INI 配置校验失败', {'errors': errors}, 422)
+            original = selected.read_text(encoding='utf-8') if selected.is_file() else ''
+            content = protect_access_token(content, original)
             _save_ini_text(selected, content)
+        except ValueError as error:
+            return _error('INI_INVALID', str(error), status_code=422)
         except OSError as error:
             return _error('INI_SAVE_FAILED', 'INI 配置保存失败', {'reason': str(error)}, 500)
         return {'saved': True, 'path': selected.relative_to(root).as_posix()}

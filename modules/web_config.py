@@ -5,6 +5,7 @@
 
 import configparser
 import os
+import re
 import tempfile
 import threading
 from pathlib import Path
@@ -83,21 +84,19 @@ def _update_ini_locked(path, values):
         parser.read_file(config_file)
 
     updates = _normalise_values(values)
-    valid_updates = {
+    validation_updates = {
         section: {
             key: value for key, value in section_values.items()
-            if section in GUI_FIELDS and key in GUI_FIELDS[section]
-            and not (section == 'Web' and key == 'access_token')
+            if not (section == 'Web' and key == 'access_token')
         }
         for section, section_values in updates.items()
     }
-    valid_updates = {section: data for section, data in valid_updates.items() if data}
-    if not valid_updates:
-        return
-
-    errors = validate_ini_values(valid_updates)
+    errors = validate_ini_values(validation_updates)
     if errors:
         raise ValueError('; '.join(f'{field}: {message}' for field, message in errors.items()))
+    valid_updates = validation_updates
+    if not valid_updates:
+        return
 
     for section, section_values in valid_updates.items():
         if not parser.has_section(section):
@@ -140,7 +139,9 @@ def validate_ini_values(values):
     for section, section_values in normalised.items():
         for key, value in section_values.items():
             field = f'{section}.{key}'
-            if field in BOOLEAN_FIELDS:
+            if section not in GUI_FIELDS or key not in GUI_FIELDS[section]:
+                errors[field] = '不是允许更新的配置项'
+            elif field in BOOLEAN_FIELDS:
                 if str(value).strip().lower() not in {'true', 'false', '1', '0', 'yes', 'no', 'on', 'off'}:
                     errors[field] = '必须是布尔值（true 或 false）'
             elif field == 'Push.retry_interval':
@@ -161,3 +162,47 @@ def validate_ini_values(values):
             elif field == 'Update.channel' and str(value).strip().lower() not in {'stable', 'preview'}:
                 errors[field] = '必须是 stable 或 preview'
     return errors
+
+
+def parse_ini_content(content):
+    """解析并校验 INI 原文，返回校验错误和节键值。"""
+    parser = configparser.ConfigParser(strict=False)
+    try:
+        parser.read_string(content)
+    except configparser.Error as error:
+        raise ValueError(f'INI 格式无效: {error}') from error
+    values = {section: dict(parser.items(section, raw=True)) for section in parser.sections()}
+    validation_values = {
+        section: {
+            key: value for key, value in section_values.items()
+            if not (section == 'Web' and key == 'access_token')
+        }
+        for section, section_values in values.items()
+    }
+    return validate_ini_values(validation_values), values
+
+
+def protect_access_token(content, original_content):
+    """保留原配置中的 Web 访问令牌，同时允许其余 INI 原文更新。"""
+    original = configparser.ConfigParser(strict=False)
+    original.read_string(original_content)
+    token = original.get('Web', 'access_token', fallback=None)
+    if token is None:
+        return content
+    lines = content.splitlines(keepends=True)
+    section = None
+    replaced = False
+    output = []
+    for line in lines:
+        match = re.match(r'\s*\[([^]]+)\]', line)
+        if match:
+            section = match.group(1).strip()
+        if section == 'Web' and re.match(r'\s*access_token\s*=', line, re.IGNORECASE):
+            newline = '\r\n' if line.endswith('\r\n') else '\n' if line.endswith('\n') else ''
+            line = f'access_token = {token}{newline}'
+            replaced = True
+        output.append(line)
+    if not replaced:
+        suffix = '' if not output or output[-1].endswith(('\n', '\r')) else '\n'
+        output.append(f'{suffix}[Web]\naccess_token = {token}\n')
+    return ''.join(output)
