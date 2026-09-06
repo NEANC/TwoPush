@@ -28,14 +28,15 @@ class PushProcessManager:
         self._task = None
         self._stop_requested = False
         self._reader_threads = []
+        self._wait_thread = None
     def _build_command(self, json_path, config_path):
         """构造 TwoPush CLI 命令。"""
         return [
             sys.executable,
             str(self.program_dir / 'TwoPush.py'),
-            '--config',
+            '-c',
             str(config_path),
-            '--push',
+            '-p',
             str(json_path),
         ]
 
@@ -55,6 +56,24 @@ class PushProcessManager:
             candidate = self.temp_dir / f'Temp_{base}_{index}.json'
             index += 1
         return candidate
+
+    def _create_temp_file(self, source_name, content):
+        """使用独占模式创建临时 JSON 文件并写入载荷。"""
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        base = self._safe_name(Path(str(source_name)).stem)
+        index = 0
+        while True:
+            suffix = '' if index == 0 else f'_{index}'
+            path = self.temp_dir / f'Temp_{base}{suffix}.json'
+            try:
+                with path.open('x', encoding='utf-8') as stream:
+                    stream.write(content)
+                return path
+            except FileExistsError:
+                index += 1
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
 
     def _start(self, json_path, config_path, temporary_path=None):
         """启动一个 CLI 推送任务。"""
@@ -99,7 +118,9 @@ class PushProcessManager:
             self._reader_threads = [stdout_thread, stderr_thread]
             stdout_thread.start()
             stderr_thread.start()
-            threading.Thread(target=self._wait_process, args=(temporary_path,), daemon=True).start()
+            wait_thread = threading.Thread(target=self._wait_process, args=(temporary_path,), daemon=True)
+            self._wait_thread = wait_thread
+            wait_thread.start()
             return task_id
 
     def start_file_push(self, json_path, config_path):
@@ -108,8 +129,8 @@ class PushProcessManager:
 
     def start_payload_push(self, payload, config_path, source_name='push'):
         """写入临时 JSON 后异步启动推送，并在结束时清理。"""
-        temp_path = self._temp_path(source_name)
-        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
+        temp_path = self._create_temp_file(source_name, content)
         try:
             return self._start(temp_path, Path(config_path), temp_path)
         except Exception:
@@ -133,11 +154,21 @@ class PushProcessManager:
     def _wait_process(self, temporary_path):
         """等待子进程和输出线程结束，更新状态并清理临时文件。"""
         process = self._process
-        exit_code = process.wait()
+        try:
+            exit_code = process.wait()
+        except Exception:
+            with self._lock:
+                if self._task:
+                    self._task['status'] = 'failed'
+                    self._task['exit_code'] = None
+            exit_code = None
+        for reader_thread in self._reader_threads:
+            reader_thread.join()
         with self._lock:
             if self._task:
                 self._task['exit_code'] = exit_code
-                self._task['status'] = 'stopped' if self._stop_requested else ('success' if exit_code == 0 else 'failed')
+                if self._task['status'] == 'running':
+                    self._task['status'] = 'success' if exit_code == 0 else 'failed'
         if temporary_path:
             temporary_path.unlink(missing_ok=True)
 
@@ -164,5 +195,11 @@ class PushProcessManager:
             return True
 
     def shutdown(self):
-        """服务退出时停止正在运行的任务。"""
+        """服务退出时停止正在运行的任务并等待收尾。"""
         self.stop()
+        wait_thread = self._wait_thread
+        if wait_thread and wait_thread is not threading.current_thread():
+            wait_thread.join()
+        with self._lock:
+            if self._task and self._task['status'] == 'running':
+                self._task['status'] = 'stopped'

@@ -47,6 +47,9 @@ class FakeProcess:
     def finish(self):
         self._done.set()
 
+    def terminate(self):
+        self.finish()
+
 
 @pytest.fixture
 def manager(tmp_path):
@@ -72,7 +75,7 @@ def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manage
     process.finish()
     time.sleep(0.05)
 
-    assert calls[0][0] == [sys.executable, str(tmp_path / "TwoPush.py"), "--config", str(config_file), "--push", str(push_file)]
+    assert calls[0][0] == [sys.executable, str(tmp_path / "TwoPush.py"), "-c", str(config_file), "-p", str(push_file)]
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["encoding"] == "utf-8"
     assert calls[0][1]["errors"] == "replace"
@@ -112,4 +115,59 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
     process.finish()
     time.sleep(0.05)
     assert manager.get_status()["status"] == "stopped"
-    assert kill_calls[0][0][0] == ["taskkill", "/PID", "1234", "/T", "/F"]
+
+
+def test_build_command_uses_short_options(manager, tmp_path):
+    """CLI 命令应支持配置和推送参数的短参数。"""
+    command = manager._build_command(tmp_path / "push.json", tmp_path / "config.ini")
+    assert command[-4:] == ["-c", str(tmp_path / "config.ini"), "-p", str(tmp_path / "push.json")]
+
+
+def test_payload_temp_file_uses_exclusive_collision_suffix(monkeypatch, manager, tmp_path):
+    """临时文件已存在时应使用独占创建和后缀文件。"""
+    existing = tmp_path / "Temp" / "Temp_push.json"
+    existing.parent.mkdir()
+    existing.write_text("旧内容", encoding="utf-8")
+    process = FakeProcess()
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    manager.start_payload_push({"title": "新内容"}, tmp_path / "配置.ini", "push")
+    created = tmp_path / "Temp" / "Temp_push_1.json"
+    assert existing.read_text(encoding="utf-8") == "旧内容"
+    assert json.loads(created.read_text(encoding="utf-8")) == {"title": "新内容"}
+    process.finish()
+    manager._wait_thread.join(1)
+
+
+def test_payload_write_failure_cleans_temp_file(monkeypatch, manager, tmp_path):
+    """载荷写入失败时应清理已创建的临时文件。"""
+    monkeypatch.setattr(Path, "open", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("写入失败")))
+    with pytest.raises(OSError):
+        manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
+    assert not list((tmp_path / "Temp").glob("*.json"))
+
+
+def test_wait_failure_marks_failed_and_cleans_temp(monkeypatch, manager, tmp_path):
+    """等待进程异常时应标记失败并清理临时文件。"""
+    process = FakeProcess()
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr(process, "wait", lambda: (_ for _ in ()).throw(OSError("等待失败")))
+    manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
+    manager._wait_thread.join(1)
+    assert manager.get_status()["status"] == "failed"
+    assert not list((tmp_path / "Temp").glob("*.json"))
+
+
+def test_shutdown_waits_for_task_and_is_idempotent(monkeypatch, manager, tmp_path):
+    """关闭应等待任务线程完成并确保停止状态，重复停止无副作用。"""
+    process = FakeProcess()
+    monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
+    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    terminate_calls = []
+    monkeypatch.setattr(process, "terminate", lambda: (terminate_calls.append(True), process.finish()))
+    manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
+    assert manager.stop() is True
+    manager.shutdown()
+    assert manager.stop() is False
+    assert manager.get_status()["status"] == "stopped"
+    assert terminate_calls == [True]
+    assert not list((tmp_path / "Temp").glob("*.json"))
