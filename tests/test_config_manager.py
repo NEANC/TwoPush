@@ -19,6 +19,38 @@ class FakeStdin:
     def isatty(self):
         """返回当前标准输入是否为交互终端"""
         return True
+
+
+class FakeEofStdin:
+    """用于模拟读取时遇到 EOF 的标准输入"""
+
+    def isatty(self):
+        """返回当前标准输入是否为交互终端"""
+        return True
+
+
+def test_generate_default_config_exits_safely_on_eof(tmp_path, monkeypatch):
+    """标准输入读取到 EOF 时首次生成配置应安全退出"""
+    config_file = tmp_path / 'TwoPush.ini'
+    logger = logging.getLogger('test_generate_default_config_exits_safely_on_eof')
+    manager = ConfigManager(str(config_file), logger)
+
+    monkeypatch.setattr(sys, 'stdin', FakeEofStdin())
+    monkeypatch.setattr(
+        'builtins.input',
+        lambda prompt='': (_ for _ in ()).throw(EOFError()),
+    )
+
+    try:
+        manager._generate_default_config()
+    except SystemExit as error:
+        assert error.code == 0
+    else:
+        raise AssertionError('EOF 时首次生成配置应退出')
+
+    assert config_file.exists()
+
+
 def test_setup_logger_reuse_does_not_duplicate_stream_handlers():
     """重复获取同名日志记录器不应叠加控制台 handler"""
     logger_name = 'test_setup_logger_reuse_does_not_duplicate_stream_handlers'

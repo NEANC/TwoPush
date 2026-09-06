@@ -183,7 +183,10 @@ class ConfigManager:
             return
         self.logger.info("请修改配置文件后重新运行软件。")
         if not self._first_run_callback and sys.stdin.isatty():
-            input("按任意键退出...")
+            try:
+                input("按任意键退出...")
+            except EOFError:
+                self.logger.info("标准输入已关闭，直接退出。")
         sys.exit(0)
 
     def _regenerate_config_file(self) -> None:
