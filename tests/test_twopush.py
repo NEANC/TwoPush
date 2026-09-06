@@ -53,20 +53,16 @@ def test_should_start_web_preserves_any_cli_argument(monkeypatch):
     assert TwoPush.should_start_web() is False
 
 
-def test_select_web_port_falls_back_to_dynamic_port_when_default_is_occupied(monkeypatch):
-    """默认端口被占用时应回退到可用动态端口。"""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
-        occupied.bind(('127.0.0.1', 0))
-        occupied.listen(1)
-        monkeypatch.setattr(TwoPush, 'WEB_DEFAULT_PORT', occupied.getsockname()[1])
-        fallback_port = TwoPush._select_web_port()
+def test_select_dynamic_web_port_returns_bindable_port():
+    """确认默认端口占用后应能选择可绑定的动态端口。"""
+    fallback_port = TwoPush._select_dynamic_web_port()
 
-    assert fallback_port != TwoPush.WEB_DEFAULT_PORT
+    assert fallback_port > 0
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(('127.0.0.1', fallback_port))
 
-def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path):
-    """Web 服务使用非交互配置、实际端口和带令牌首页 URL。"""
+def test_run_web_server_uses_config_and_opens_default_port_without_probe(monkeypatch, tmp_path):
+    """Web 服务优先交给 Uvicorn 绑定默认端口，首页 URL 使用本机地址。"""
     calls = {}
 
     class FakeConfig:
@@ -98,7 +94,6 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
     monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
     monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
     monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.setdefault('url', url))}))
-    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     result = TwoPush.run_web_server(str(tmp_path / 'config.ini'))
 
@@ -106,7 +101,7 @@ def test_run_web_server_uses_config_and_opens_actual_port(monkeypatch, tmp_path)
     assert calls['config_kwargs']['non_interactive'] is True
     assert calls['loaded'] is True
     assert calls['ran'] is True
-    assert calls['url'] == 'http://0.0.0.0:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
+    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
     assert calls['uvicorn_config']['host'] == '0.0.0.0'
     assert calls['uvicorn_config']['access_log'] is False
 
@@ -161,7 +156,6 @@ def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_p
     monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
     monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
     monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.append(url))}))
-    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 0
     assert uvicorn_config['host'] == '127.0.0.1'
@@ -214,7 +208,6 @@ def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monk
     monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
     monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
     monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.append(url))}))
-    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 1
     assert calls == ['run', 'close', 'control.stop', 'manager.stop', 'manager.shutdown']
@@ -267,7 +260,6 @@ def test_run_web_server_browser_failure_cleans_up(monkeypatch, tmp_path):
     monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
     monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
     monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(fail_open)}))
-    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     with pytest.raises(RuntimeError, match='browser unavailable'):
         TwoPush.run_web_server(str(tmp_path / 'config.ini'))
@@ -308,7 +300,6 @@ def test_run_web_server_constructor_failure_cleans_up(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
     monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
     monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
-    monkeypatch.setattr(TwoPush, '_select_web_port', lambda: 52233)
 
     with pytest.raises(RuntimeError, match='server unavailable'):
         TwoPush.run_web_server(str(tmp_path / 'config.ini'))

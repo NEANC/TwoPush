@@ -9,6 +9,7 @@
 
 import argparse
 import asyncio
+import errno
 import inspect
 import json
 import os
@@ -51,15 +52,18 @@ def should_start_web():
     return len(sys.argv) == 1
 
 
-def _select_web_port():
-    """优先选择默认端口，冲突时选择系统动态端口。"""
+def _select_dynamic_web_port():
+    """在确认默认端口占用后选择系统动态端口。"""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        try:
-            probe.bind(('127.0.0.1', WEB_DEFAULT_PORT))
-            return WEB_DEFAULT_PORT
-        except OSError:
-            probe.bind(('127.0.0.1', 0))
-            return probe.getsockname()[1]
+        probe.bind(('127.0.0.1', 0))
+        return probe.getsockname()[1]
+
+
+def _is_port_in_use_error(error):
+    """判断 Uvicorn 启动失败是否由端口占用引起。"""
+    return isinstance(error, OSError) and (
+        getattr(error, 'winerror', None) == 10048 or error.errno == errno.EADDRINUSE
+    )
 
 
 def _cleanup_web_server(server, preserve_exception=False):
@@ -109,21 +113,31 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             process_manager,
             server_control=control,
         )
-        port = _select_web_port()
+        port = WEB_DEFAULT_PORT
         access_token = config.get_attr('access_token', '')
         host = app.state.host
-        url = f'http://127.0.0.1:{port}/'
-        if len(access_token) >= 16:
-            url += '?' + urlencode({'token': access_token})
 
         import uvicorn
-        server = uvicorn.Server(uvicorn.Config(
-            app,
-            host=host,
-            port=port,
-            access_log=False,
-            log_config=None,
-        ))
+
+        def build_server(server_port):
+            """按指定端口创建 Uvicorn 服务。"""
+            return uvicorn.Server(uvicorn.Config(
+                app,
+                host=host,
+                port=server_port,
+                access_log=False,
+                log_config=None,
+            ))
+
+        def run_server():
+            """运行服务并记录启动异常。"""
+            try:
+                server.run()
+            except BaseException as error:
+                server_error.append(error)
+
+        server = build_server(port)
+        server_error = []
 
         def watch_stop_request():
             """将 Web 停止请求转换为 Uvicorn 退出信号。"""
@@ -135,17 +149,27 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
 
         watcher = threading.Thread(target=watch_stop_request, daemon=True)
         watcher.start()
-        server_thread = threading.Thread(target=server.run, daemon=True)
+        server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
         while not getattr(server, 'started', False):
-            if server.should_exit or not server_thread.is_alive():
+            if server_error or server.should_exit or not server_thread.is_alive():
                 break
             time.sleep(0.05)
+        if server_error and _is_port_in_use_error(server_error[0]):
+            port = _select_dynamic_web_port()
+            server = build_server(port)
+            server_error.clear()
+            server_thread = threading.Thread(target=run_server, daemon=True)
+            server_thread.start()
+            while not getattr(server, 'started', False):
+                if server_error or server.should_exit or not server_thread.is_alive():
+                    break
+                time.sleep(0.05)
         actual_port = port
         server_sockets = getattr(server, 'servers', None) or []
         if server_sockets:
             actual_port = server_sockets[0].sockets[0].getsockname()[1]
-        url = f'http://{host}:{actual_port}/'
+        url = f'http://127.0.0.1:{actual_port}/'
         if len(access_token) >= 16:
             url += '?' + urlencode({'token': access_token})
         if not getattr(server, 'started', False):
