@@ -3,8 +3,9 @@
 
 """FastAPI Web 服务测试。"""
 
-from pathlib import Path
 import json
+import subprocess
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -234,6 +235,42 @@ def test_temp_read_and_delete_reject_temp_directory_reparse_point(tmp_path):
         'confirmed': True,
     }).status_code == 404
     assert (outside / 'Temp_escape.json').exists()
+
+
+
+@pytest.mark.skipif(__import__('os').name != 'nt', reason='Windows 专项重解析点回归测试')
+def test_temp_rejects_windows_junction_without_touching_external_target(tmp_path):
+    """临时目录为 Junction 时读取和删除必须拒绝且不影响外部目标。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    program_dir.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    external_file = outside / 'Temp_junction.json'
+    external_file.write_text('secret', encoding='utf-8')
+    junction = program_dir / 'Temp'
+    result = subprocess.run(
+        ['cmd', '/c', 'mklink', '/J', str(junction), str(outside)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f'无法创建 Junction: {result.stderr or result.stdout}')
+
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
+
+    assert client.get('/api/temp').json()['files'] == []
+    assert client.get('/api/temp/Temp_junction.json').status_code == 404
+    assert client.post('/api/temp/delete', json={
+        'names': ['Temp_junction.json'],
+        'confirmed': True,
+    }).status_code == 404
+    assert external_file.exists()
 
 
 def test_lifespan_shutdown_calls_control_and_manager_in_order(tmp_path):

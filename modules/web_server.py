@@ -3,6 +3,7 @@
 
 """源码模式 FastAPI Web 服务。"""
 
+import ctypes
 import json
 import os
 import threading
@@ -46,6 +47,17 @@ class WebServerControl:
         """标记服务应停止。"""
         with self.lock:
             self.stop_requested = True
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """判断 Windows 路径是否为重解析点。"""
+    if os.name != 'nt':
+        return path.is_symlink()
+    try:
+        attributes = ctypes.windll.kernel32.GetFileAttributesW(str(path))
+        return attributes != 0xFFFFFFFF and bool(attributes & 0x400)
+    except (AttributeError, OSError):
+        return path.is_symlink()
 
 
 def _error(code: str, message: str, details: dict[str, Any] | None = None,
@@ -190,7 +202,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         try:
             temp_resolved = temp.resolve(strict=False)
             target_resolved = target.resolve(strict=False)
-            if temp.is_symlink() or target_resolved.parent != temp_resolved:
+            if _is_reparse_point(temp) or _is_reparse_point(target) or target_resolved.parent != temp_resolved:
                 raise OSError('临时路径包含重解析点')
         except OSError as error:
             raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
@@ -362,10 +374,10 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         except OSError:
             return {'files': []}
         files = []
-        if temp.is_dir() and not temp.is_symlink() and temp_resolved == temp:
+        if temp.is_dir() and not _is_reparse_point(temp) and temp_resolved == temp:
             for item in temp.glob('Temp_*.json'):
                 try:
-                    if item.is_file() and not item.is_symlink() and item.resolve().parent == temp_resolved:
+                    if item.is_file() and not _is_reparse_point(item) and item.resolve().parent == temp_resolved:
                         files.append(item.name)
                 except OSError:
                     continue
@@ -377,7 +389,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         temp = app.state.program_dir / 'Temp'
         checked_name = safe_temp_name(name)
         target = safe_temp_path(checked_name)
-        if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or target.is_symlink():
+        if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or _is_reparse_point(target):
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
         return Response(target.read_bytes(), media_type='application/json')
 
@@ -390,7 +402,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         deleted = []
         for name in dict.fromkeys(payload.names):
             target = safe_temp_path(name)
-            if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or target.is_symlink():
+            if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or _is_reparse_point(target):
                 return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
             deleted.append(name)
         for name in deleted:
