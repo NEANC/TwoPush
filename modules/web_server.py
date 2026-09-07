@@ -94,7 +94,15 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     except (OSError, configparser.Error):
         access_token = ''
 
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(_app):
+        """管理服务生命周期并在退出时清理推送任务。"""
+        yield
+        control.stop()
+        process_manager.stop()
+        process_manager.shutdown()
+
+    app = FastAPI(lifespan=lifespan)
     app.state.process_manager = process_manager
     app.state.config_file = config_file
     app.state.program_dir = Path(getattr(process_manager, 'program_dir', root)).resolve()
@@ -416,12 +424,5 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         control.stop()
         process_manager.shutdown()
         return {'stopping': True, 'message': '服务正在停止'}
-
-    @app.on_event('shutdown')
-    async def shutdown():
-        """服务退出时显式停止并清理推送任务。"""
-        control.stop()
-        process_manager.stop()
-        process_manager.shutdown()
 
     return app

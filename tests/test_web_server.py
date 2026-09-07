@@ -5,6 +5,7 @@
 
 from pathlib import Path
 import json
+import warnings
 
 from fastapi.testclient import TestClient
 
@@ -235,22 +236,31 @@ def test_temp_read_and_delete_reject_temp_directory_reparse_point(tmp_path):
     assert (outside / 'Temp_escape.json').exists()
 
 
-def test_lifespan_shutdown_calls_manager_stop_and_shutdown(tmp_path):
-    """应用生命周期结束时应显式停止并关闭控制器。"""
+def test_lifespan_shutdown_calls_manager_stop_and_shutdown_without_deprecation_warning(tmp_path):
+    """应用生命周期结束时应清理控制器且不触发 FastAPI 弃用警告。"""
     resource_dir = tmp_path / 'web'
     resource_dir.mkdir()
     config_path = tmp_path / 'config.ini'
-    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    config_path.write_text('[Web]\\naccess_token = \\n', encoding='utf-8')
+
     class Manager(FakeProcessManager):
         def __init__(self):
             self.calls = []
+
         def stop(self):
             self.calls.append('stop')
+
         def shutdown(self):
             self.calls.append('shutdown')
+
     manager = Manager()
-    with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
-        pass
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter('always')
+        with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
+            pass
+
+    assert manager.calls == ['stop', 'shutdown']
+    assert not [warning for warning in captured if 'on_event' in str(warning.message)]
 
 
 def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
