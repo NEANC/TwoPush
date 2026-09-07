@@ -99,8 +99,10 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """管理服务生命周期并在退出时清理推送任务。"""
         yield
         control.stop()
-        process_manager.stop()
-        process_manager.shutdown()
+        try:
+            process_manager.stop()
+        finally:
+            process_manager.shutdown()
 
     app = FastAPI(lifespan=lifespan)
     app.state.process_manager = process_manager

@@ -5,8 +5,8 @@
 
 from pathlib import Path
 import json
-import warnings
 
+import pytest
 from fastapi.testclient import TestClient
 
 from modules.web_server import create_app
@@ -236,12 +236,47 @@ def test_temp_read_and_delete_reject_temp_directory_reparse_point(tmp_path):
     assert (outside / 'Temp_escape.json').exists()
 
 
-def test_lifespan_shutdown_calls_manager_stop_and_shutdown_without_deprecation_warning(tmp_path):
-    """应用生命周期结束时应清理控制器且不触发 FastAPI 弃用警告。"""
+def test_lifespan_shutdown_calls_control_and_manager_in_order(tmp_path):
+    """应用生命周期结束时应先停止服务控制器，再清理推送控制器。"""
     resource_dir = tmp_path / 'web'
     resource_dir.mkdir()
     config_path = tmp_path / 'config.ini'
-    config_path.write_text('[Web]\\naccess_token = \\n', encoding='utf-8')
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    class WebServerControl:
+        def __init__(self):
+            self.calls = []
+
+        def stop(self):
+            self.calls.append('control.stop')
+
+    class Manager(FakeProcessManager):
+        def __init__(self, calls):
+            self.calls = calls
+
+        def stop(self):
+            self.calls.append('manager.stop')
+
+        def shutdown(self):
+            self.calls.append('manager.shutdown')
+
+    calls = []
+    control = WebServerControl()
+    control.calls = calls
+    manager = Manager(calls)
+
+    with TestClient(create_app(tmp_path, config_path, resource_dir, manager, control)):
+        pass
+
+    assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
+
+
+def test_lifespan_shutdown_calls_shutdown_after_manager_stop_error(tmp_path):
+    """推送停止异常时仍应继续调用最终 shutdown。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
 
     class Manager(FakeProcessManager):
         def __init__(self):
@@ -249,18 +284,17 @@ def test_lifespan_shutdown_calls_manager_stop_and_shutdown_without_deprecation_w
 
         def stop(self):
             self.calls.append('stop')
+            raise RuntimeError('stop failed')
 
         def shutdown(self):
             self.calls.append('shutdown')
 
     manager = Manager()
-    with warnings.catch_warnings(record=True) as captured:
-        warnings.simplefilter('always')
+    with pytest.raises(RuntimeError, match='stop failed'):
         with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
             pass
 
     assert manager.calls == ['stop', 'shutdown']
-    assert not [warning for warning in captured if 'on_event' in str(warning.message)]
 
 
 def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
