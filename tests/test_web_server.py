@@ -297,6 +297,35 @@ def test_lifespan_shutdown_calls_shutdown_after_manager_stop_error(tmp_path):
     assert manager.calls == ['stop', 'shutdown']
 
 
+def test_lifespan_shutdown_cleans_manager_after_control_stop_error(tmp_path):
+    """服务控制器停止异常时仍应清理推送控制器并传播原异常。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    class Control:
+        def stop(self):
+            raise RuntimeError('control stop failed')
+
+    class Manager(FakeProcessManager):
+        def __init__(self):
+            self.calls = []
+
+        def stop(self):
+            self.calls.append('stop')
+
+        def shutdown(self):
+            self.calls.append('shutdown')
+
+    manager = Manager()
+    with pytest.raises(RuntimeError, match='control stop failed'):
+        with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control())):
+            pass
+
+    assert manager.calls == ['stop', 'shutdown']
+
+
 def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
     """INI 接口应传输原文，嵌套 JSON 保存不应写入控制字段。"""
     resource_dir = tmp_path / 'web'
