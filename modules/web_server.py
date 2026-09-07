@@ -98,13 +98,23 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def lifespan(_app):
         """管理服务生命周期并在退出时清理推送任务。"""
         yield
+        first_error = None
         try:
             control.stop()
-        finally:
-            try:
-                process_manager.stop()
-            finally:
-                process_manager.shutdown()
+        except Exception as error:
+            first_error = error
+        try:
+            process_manager.stop()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+        try:
+            process_manager.shutdown()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
+        if first_error is not None:
+            raise first_error
 
     app = FastAPI(lifespan=lifespan)
     app.state.process_manager = process_manager

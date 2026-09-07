@@ -326,6 +326,42 @@ def test_lifespan_shutdown_cleans_manager_after_control_stop_error(tmp_path):
     assert manager.calls == ['stop', 'shutdown']
 
 
+def test_lifespan_shutdown_preserves_first_error_and_runs_all_cleanup(tmp_path):
+    """多阶段清理异常时应传播最早异常并完成所有清理调用。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    class Control:
+        def __init__(self, calls):
+            self.calls = calls
+
+        def stop(self):
+            self.calls.append('control.stop')
+            raise RuntimeError('control failed')
+
+    class Manager(FakeProcessManager):
+        def __init__(self, calls):
+            self.calls = calls
+
+        def stop(self):
+            self.calls.append('manager.stop')
+            raise RuntimeError('manager stop failed')
+
+        def shutdown(self):
+            self.calls.append('manager.shutdown')
+            raise RuntimeError('manager shutdown failed')
+
+    calls = []
+    manager = Manager(calls)
+    with pytest.raises(RuntimeError, match='control failed'):
+        with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control(calls))):
+            pass
+
+    assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
+
+
 def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
     """INI 接口应传输原文，嵌套 JSON 保存不应写入控制字段。"""
     resource_dir = tmp_path / 'web'
