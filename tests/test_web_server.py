@@ -6,10 +6,12 @@
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from modules import web_server
 from modules.web_server import create_app
 
 
@@ -27,6 +29,20 @@ class FakeProcessManager:
     def shutdown(self):
         """记录服务退出。"""
         return None
+
+
+def test_is_reparse_point_treats_windows_failure_sentinel_as_not_reparse(tmp_path, monkeypatch):
+    """Windows 属性查询失败时应返回 False，而不是误判为重解析点。"""
+    monkeypatch.setattr(web_server.os, 'name', 'nt')
+    monkeypatch.setattr(
+        web_server.ctypes,
+        'windll',
+        SimpleNamespace(kernel32=SimpleNamespace(GetFileAttributesW=lambda _: -1)),
+        raising=False,
+    )
+
+    assert web_server._is_reparse_point(tmp_path / 'missing') is False
+
 
 
 def test_create_app_serves_home_and_sets_security_header(tmp_path):

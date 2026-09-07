@@ -55,7 +55,7 @@ def _is_reparse_point(path: Path) -> bool:
         return path.is_symlink()
     try:
         attributes = ctypes.windll.kernel32.GetFileAttributesW(str(path))
-        return attributes != 0xFFFFFFFF and bool(attributes & 0x400)
+        return attributes not in (-1, 0xFFFFFFFF) and bool(attributes & 0x400)
     except (AttributeError, OSError):
         return path.is_symlink()
 
