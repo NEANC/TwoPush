@@ -358,6 +358,14 @@ def test_shutdown_timeout_defers_temp_cleanup_until_wait_thread_finishes(
     assert not temp_file.exists()
 
 
+def test_shutdown_does_not_repeat_stop_after_explicit_stop(manager, monkeypatch):
+    """显式停止后 shutdown 不应再次触发停止副作用。"""
+    manager._stop_requested = True
+    monkeypatch.setattr(manager, 'stop', lambda: (_ for _ in ()).throw(RuntimeError('重复停止')))
+
+    manager.shutdown()
+
+
 def test_build_command_uses_short_options(manager, tmp_path):
     """CLI 命令应支持配置和推送参数的短参数。"""
     command = manager._build_command(tmp_path / "push.json", tmp_path / "config.ini")

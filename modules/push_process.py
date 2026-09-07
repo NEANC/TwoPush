@@ -248,7 +248,10 @@ class PushProcessManager:
 
     def shutdown(self):
         """服务退出时停止正在运行的任务并等待收尾。"""
-        self.stop()
+        with self._lock:
+            stop_requested = self._stop_requested
+        if not stop_requested:
+            self.stop()
         wait_thread = self._wait_thread
         if wait_thread and wait_thread is not threading.current_thread():
             wait_thread.join(2)
