@@ -1,5 +1,6 @@
 """验证测试依赖与 Starlette 测试客户端的兼容性。"""
 
+import warnings
 from pathlib import Path
 
 
@@ -29,18 +30,14 @@ def test_development_requirements_use_supported_test_client_dependencies():
 
     assert 'httpx>=0.28,<0.29' in development
     assert 'httpx2' not in development
-    assert 'anyio>=4.4,<5' in development
+    assert 'anyio>=4.4,<4.6' in development
 
 
-def test_fastapi_test_client_imports_without_deprecation_warning():
-    """真实导入 httpx 并用 TestClient 请求简单 FastAPI 应用。"""
-    import warnings
-
-    with warnings.catch_warnings():
-        warnings.simplefilter('error')
-        import httpx
-        from fastapi import FastAPI
-        from fastapi.testclient import TestClient
+def test_fastapi_test_client_request_has_no_deprecation_warning():
+    """真实 TestClient 请求在严格警告模式下不应触发弃用警告。"""
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
 
     app = FastAPI()
 
@@ -48,8 +45,10 @@ def test_fastapi_test_client_imports_without_deprecation_warning():
     def health_check():
         return {'status': 'ok'}
 
-    with TestClient(app) as client:
-        response = client.get('/health')
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        with TestClient(app) as client:
+            response = client.get('/health')
 
     assert httpx.__version__
     assert response.status_code == 200
