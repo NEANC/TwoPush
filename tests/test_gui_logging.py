@@ -9,6 +9,7 @@ from datetime import datetime
 
 import pytest
 
+import modules.logger_manager as logger_manager
 from modules.logger_manager import (
     cleanup_gui_logs,
     close_gui_logger,
@@ -158,24 +159,53 @@ def test_setup_replaces_closed_gui_handler(tmp_path):
                 if getattr(handler, 'is_gui_handler', False)]
     assert len(handlers) == 1
     assert handlers[0] is not closed_handler
-def test_setup_concurrent_initialization_keeps_one_gui_handler(tmp_path):
+def test_setup_concurrent_initialization_keeps_one_gui_handler(tmp_path, monkeypatch):
     """20 个线程并发初始化只能挂载一个 GUI handler。"""
     logger = logging.getLogger('gui-concurrent-setup-test')
     logger.handlers.clear()
     barrier = threading.Barrier(20)
+    constructor_entered = threading.Event()
+    release_constructor = threading.Event()
+    constructor_calls = 0
+    constructor_lock = threading.Lock()
+    errors = []
+    clock = FakeClock(datetime(2026, 9, 9))
+    original_init = logger_manager.DailyGuiFileHandler.__init__
+
+    def blocked_init(handler, *args, **kwargs):
+        """阻塞首个 handler 构造以验证初始化锁。"""
+        nonlocal constructor_calls
+        with constructor_lock:
+            constructor_calls += 1
+            first_call = constructor_calls == 1
+        if first_call:
+            constructor_entered.set()
+            assert release_constructor.wait(timeout=2)
+        original_init(handler, *args, **kwargs)
+
+    monkeypatch.setattr(logger_manager.DailyGuiFileHandler, '__init__', blocked_init)
 
     def setup():
         """同步后初始化 GUI logger。"""
-        barrier.wait()
-        setup_gui_logger(name=logger.name, log_dir=tmp_path,
-                         clock=FakeClock(datetime(2026, 9, 9)))
+        try:
+            barrier.wait(timeout=2)
+            setup_gui_logger(name=logger.name, log_dir=tmp_path, clock=clock)
+        except Exception as error:
+            errors.append(error)
 
     threads = [threading.Thread(target=setup) for _ in range(20)]
     for thread in threads:
         thread.start()
+    assert constructor_entered.wait(timeout=2)
+    assert not [handler for handler in logger.handlers
+                if getattr(handler, 'is_gui_handler', False)]
+    release_constructor.set()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=2)
 
+    assert not errors
+    assert all(not thread.is_alive() for thread in threads)
+    assert constructor_calls == 1
     assert len([handler for handler in logger.handlers
                 if getattr(handler, 'is_gui_handler', False)]) == 1
     close_gui_logger(logger)
