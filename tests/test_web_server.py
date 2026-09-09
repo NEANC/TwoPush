@@ -132,6 +132,62 @@ def test_query_token_is_single_use_and_bearer_remains_valid(tmp_path):
     assert client.get('/?token=not-a-secret-token').status_code == 200
     assert client.get('/?token=not-a-secret-token').status_code == 401
     assert client.get('/api/session', headers={'Authorization': 'Bearer not-a-secret-token'}).status_code == 200
+def test_safe_path_resolution_error_returns_invalid_path_422(tmp_path, monkeypatch):
+    """工作区路径解析异常应返回统一的 422 错误。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager())
+    monkeypatch.setattr(web_server, '_inside', lambda root, candidate: (_ for _ in ()).throw(ValueError('越界')))
+
+    response = TestClient(app).get('/api/files', params={'path': 'file.json'})
+
+    assert response.status_code == 422
+    assert response.json()['error']['code'] == 'invalid_path'
+
+
+def test_safe_temp_path_resolution_error_returns_invalid_path_422(tmp_path, monkeypatch):
+    """临时路径解析异常应返回统一的 422 错误。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    program_dir.mkdir()
+    (program_dir / 'Temp').mkdir()
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    app = create_app(tmp_path, config_path, resource_dir, manager)
+    monkeypatch.setattr(Path, 'resolve', lambda self, strict=False: (_ for _ in ()).throw(ValueError('解析失败')))
+
+    response = TestClient(app).get('/api/temp/Temp_ok.json')
+
+    assert response.status_code == 422
+    assert response.json()['error']['code'] == 'invalid_path'
+
+
+def test_files_rejects_symlink_escape_with_invalid_path_422(tmp_path):
+    """工作区越界链接应返回统一的 422 错误。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    link = tmp_path / 'escape'
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip('当前环境不支持目录符号链接')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager())
+
+    response = TestClient(app).get('/api/files', params={'path': 'escape'})
+
+    assert response.status_code == 422
+    assert response.json()['error']['code'] == 'invalid_path'
+
+
 def test_files_hide_temp_hidden_and_escape_paths(tmp_path):
     """文件浏览只能在工作区内逐级访问并隐藏敏感项目。"""
     resource_dir = tmp_path / 'web'
@@ -322,11 +378,11 @@ def test_temp_rejects_windows_junction_without_touching_external_target(tmp_path
     client = TestClient(create_app(tmp_path, config_path, resource_dir, manager))
 
     assert client.get('/api/temp').json()['files'] == []
-    assert client.get('/api/temp/Temp_junction.json').status_code == 404
+    assert client.get('/api/temp/Temp_junction.json').status_code == 422
     assert client.post('/api/temp/delete', json={
         'names': ['Temp_junction.json'],
         'confirmed': True,
-    }).status_code == 404
+    }).status_code == 422
     assert external_file.exists()
 
 

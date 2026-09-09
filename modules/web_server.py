@@ -208,9 +208,9 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             raise HTTPException(422, detail={'code': 'invalid_path', 'message': str(error)}) from error
         try:
             return _inside(root, root.joinpath(*checked.replace('\\', '/').split('/')))
-        except ValueError:
-            log_event('path invalid', logging.WARNING, path=checked)
-            raise
+        except (OSError, ValueError) as error:
+            log_event('path invalid', logging.WARNING, path=sanitize_log_message(checked), error_type=type(error).__name__)
+            raise HTTPException(422, detail={'code': 'invalid_path', 'message': '路径越出工作区或包含越界链接'}) from error
 
     def safe_temp_name(value: str) -> str:
         """校验临时文件名并统一返回不存在错误。"""
@@ -230,9 +230,9 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             target_resolved = target.resolve(strict=False)
             if _is_reparse_point(temp) or _is_reparse_point(target) or target_resolved.parent != temp_resolved:
                 raise OSError('临时路径包含重解析点')
-        except OSError as error:
-            log_event('temp path invalid', logging.WARNING, name=checked_name, error_type=type(error).__name__)
-            raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
+        except (OSError, ValueError) as error:
+            log_event('temp path invalid', logging.WARNING, name=sanitize_log_message(checked_name), error_type=type(error).__name__)
+            raise HTTPException(422, detail={'code': 'invalid_path', 'message': '临时路径无效'}) from error
         return target
 
     def json_payload(value: dict[str, Any]) -> dict[str, Any]:

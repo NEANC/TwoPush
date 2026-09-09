@@ -109,6 +109,9 @@ class PushProcessManager:
             if self.gui_mode:
                 env['TWOPUSH_GUI'] = '1'
                 env['TWOPUSH_SAVE_LOGS'] = '0'
+            else:
+                env.pop('TWOPUSH_GUI', None)
+                env.pop('TWOPUSH_SAVE_LOGS', None)
             try:
                 self._process = subprocess.Popen(
                     self._build_command(json_path, config_path),

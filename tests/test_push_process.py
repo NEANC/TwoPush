@@ -198,8 +198,49 @@ def test_log_messages_use_message_field_and_sequence_is_global(
     assert [item['sequence'] for item in first_outputs] == [1, 2]
     assert [item['sequence'] for item in second_outputs] == [3, 4]
     assert manager.get_status(cursor=2)['outputs'] == second_outputs
+def test_cli_child_environment_drops_gui_markers_from_parent(monkeypatch, manager, tmp_path):
+    """CLI 子进程环境不得继承 GUI 标记。"""
+    process = FakeProcess()
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append(kwargs['env'])
+        return process
+
+    monkeypatch.setenv('TWOPUSH_GUI', '1')
+    monkeypatch.setenv('TWOPUSH_SAVE_LOGS', '1')
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', fake_popen)
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert 'TWOPUSH_GUI' not in calls[0]
+    assert 'TWOPUSH_SAVE_LOGS' not in calls[0]
+
+
+def test_gui_child_environment_keeps_gui_markers(monkeypatch, manager, tmp_path):
+    """GUI 子进程环境应显式保留 GUI 标记。"""
+    process = FakeProcess()
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append(kwargs['env'])
+        return process
+
+    monkeypatch.setenv('TWOPUSH_GUI', 'unexpected')
+    monkeypatch.setenv('TWOPUSH_SAVE_LOGS', 'unexpected')
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', fake_popen)
+    manager.gui_mode = True
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert calls[0]['TWOPUSH_GUI'] == '1'
+    assert calls[0]['TWOPUSH_SAVE_LOGS'] == '0'
+
+
 def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manager, tmp_path):
-    """文件推送应使用当前解释器调用 TwoPush.py 并保留源文件。"""
+    """文件推送应使用当前解释器调用 TwoPush.py，且不修改源文件。"""
     push_file = tmp_path / "推送 配置.json"
     config_file = tmp_path / "配置.ini"
     push_file.write_text('{"title":"标题"}', encoding="utf-8")
