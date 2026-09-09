@@ -25,8 +25,8 @@ def sanitize_log_message(message, root=None):
     try:
         text = str(message)
         patterns = [
-            (r'(?i)(authorization\s*:\s*(?:bearer\s+)?)[^\s,;]+', r'\1***'),
-            (r'(?i)(smtp_password|access_token|token|secret|password)\s*[:=]\s*[^\s,;]+', r'\1=***'),
+            (r'(?i)(authorization\s*[:=]\s*(?:bearer\s+)?)["\']?[^\s,;"\']+', r'\1***'),
+            (r'(?i)((?:smtp[_-]?password|access[_-]?token|api[_-]?key|sc(?:key)?|webhook|token|secret|password)\s*[:=]\s*)["\']?[^\s,;"\'}]+', r'\1***'),
             (r'(?i)(https?://|socks5?://)([^/@\s]+):([^/@\s]+)@', r'\1***:***@'),
         ]
         for pattern, replacement in patterns:
@@ -34,18 +34,11 @@ def sanitize_log_message(message, root=None):
         if root is not None:
             root_text = str(Path(root).resolve())
             text = text.replace(root_text, '<root>')
-        text = re.sub(r'(?i)([A-Za-z]:\\[^\s,;]+)', '<path>', text)
-        text = re.sub(r'(?<![\w])/(?:[^\s,;]+/)*[^\s,;]+', '<path>', text)
+        text = re.sub(r'(?i)([A-Za-z]:\\[^\s,;"\']+)', '<path>', text)
+        text = re.sub(r'(?<![:/\w])/(?!api(?:/|$))(?:[^\s,;"\']+/)*[^\s,;"\']+', '<path>', text)
         return text
     except Exception as error:
         return f'[日志摘要不可用: {type(error).__name__}]'
-
-
-class SanitizingLoggerAdapter(logging.LoggerAdapter):
-    """为日志记录器统一应用安全摘要。"""
-
-    def process(self, msg, kwargs):
-        return sanitize_log_message(msg), kwargs
 
 
 class SanitizingFormatter(logging.Formatter):

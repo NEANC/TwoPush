@@ -697,6 +697,43 @@ def test_frontend_ini_switch_uses_ini_api_and_save_as_uses_json_api(tmp_path):
     assert "method: 'POST'" in script
 
 
+
+
+def test_web_file_errors_return_safe_details_and_type_is_logged(tmp_path, caplog):
+    """Web 文件错误 details 不泄露路径或异常文本，日志保留错误类型。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\\naccess_token = \\n', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-safe-error-test')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger)
+    client = TestClient(app)
+    target = tmp_path / 'bad.json'
+    target.write_text('{bad', encoding='utf-8')
+    response = client.get('/api/json', params={'path': 'bad.json'})
+    assert response.status_code == 400
+    assert response.json()['error']['details'] == {'reason': 'JSONDecodeError'}
+    details = response.json()['error']['details']
+    assert details == {'reason': 'JSONDecodeError'}
+    assert str(tmp_path) not in response.text
+
+
+def test_web_save_error_details_are_stable(tmp_path, monkeypatch):
+    """Web 保存失败只返回稳定错误摘要。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\\naccess_token = \\n', encoding='utf-8')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager())
+    monkeypatch.setattr(web_server.os, 'replace', lambda *_: (_ for _ in ()).throw(OSError('C:\\\\secret\\\\file')))
+    response = TestClient(app).put('/api/json', json={
+        'path': 'saved.json', 'title': 't', 'content': 'c', 'channels': [{}],
+    })
+    assert response.status_code == 500
+    assert response.json()['error']['details'] == {'reason': 'OSError'}
+    assert 'secret' not in response.text
+
+
 def test_task6_missing_json_returns_not_found_error_shape(tmp_path):
     """缺失 JSON 必须返回 404 和稳定错误结构。"""
     resource_dir = tmp_path / 'web'

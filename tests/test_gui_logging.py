@@ -33,6 +33,33 @@ def test_sanitize_log_message_hides_credentials_urls_and_paths():
     assert '/home/name' not in text
 
 
+def test_sanitize_preserves_routes_and_urls_while_hiding_extended_credentials():
+    """脱敏不得破坏 API 路径和 URL，并覆盖常见凭据字段。"""
+    text = sanitize_log_message(
+        'GET /api/session http://example.test/x '
+        'token="tok-value" secret: "sec-value" password=\'pwd-value\' '
+        'access_token: "access-value" smtp_password="smtp-value" '
+        'Authorization: Bearer bearer-value api_key="key-value" api-key=key2-value '
+        'sckey: "sc-value" webhook="hook-value" /home/name/config.ini C:\\Users\\name\\config.ini')
+    assert '/api/session' in text
+    assert 'http://example.test/x' in text
+    for secret in ('tok-value', 'sec-value', 'pwd-value', 'access-value', 'smtp-value', 'bearer-value', 'key-value', 'key2-value', 'sc-value', 'hook-value'):
+        assert secret not in text
+    assert '/home/name/config.ini' not in text
+    assert 'C:\\Users\\name\\config.ini' not in text
+
+
+def test_gui_file_log_never_contains_sensitive_values(tmp_path):
+    """GUI 文件日志不得写入敏感原文。"""
+    logger = setup_gui_logger(log_dir=tmp_path, clock=FakeClock(datetime(2026, 9, 9)))
+    logger.info('POST /api/session token="gui-secret" api_key=gui-key')
+    close_gui_logger(logger)
+    content = (tmp_path / 'TwoPush-GUI_2026-09-09.log').read_text(encoding='utf-8')
+    assert 'gui-secret' not in content
+    assert 'gui-key' not in content
+    assert '/api/session' in content
+
+
 class FakeClock:
     """提供可变的测试时间。"""
 

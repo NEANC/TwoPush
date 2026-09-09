@@ -70,6 +70,11 @@ def _error(code: str, message: str, details: dict[str, Any] | None = None,
     )
 
 
+def _safe_error_details(error: Exception) -> dict[str, str]:
+    """返回不包含底层异常文本的稳定错误摘要，并记录异常类型。"""
+    return {'reason': type(error).__name__}
+
+
 def _inside(root: Path, candidate: Path) -> Path:
     """解析并确认路径位于固定工作区内。"""
     try:
@@ -293,7 +298,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             log_event('json read')
             return json.loads(target.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError) as error:
-            return _error('JSON_INVALID', 'JSON 文件无法读取', {'reason': str(error)})
+            log_event('json read failed', logging.ERROR, error_type=type(error).__name__)
+            return _error('JSON_INVALID', 'JSON 文件无法读取', _safe_error_details(error))
 
     @app.put('/api/json', dependencies=[Depends(require_auth)])
     @app.post('/api/json', dependencies=[Depends(require_auth)])
@@ -314,7 +320,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
             os.replace(temporary, target)
         except OSError as error:
-            return _error('SAVE_FAILED', 'JSON 保存失败', {'reason': str(error)}, 500)
+            log_event('json write failed', logging.ERROR, error_type=type(error).__name__)
+            return _error('SAVE_FAILED', 'JSON 保存失败', _safe_error_details(error), 500)
         log_event('json write')
         return {'saved': True, 'path': target.relative_to(root).as_posix(), 'message': '已保存'}
 
@@ -348,7 +355,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             log_event('ini read')
             return {'path': selected.relative_to(root).as_posix(), 'content': selected.read_text(encoding='utf-8')}
         except OSError as error:
-            return _error('INI_READ_FAILED', 'INI 配置读取失败', {'reason': str(error)}, 500)
+            log_event('ini read failed', logging.ERROR, error_type=type(error).__name__)
+            return _error('INI_READ_FAILED', 'INI 配置读取失败', _safe_error_details(error), 500)
 
     @app.put('/api/ini', dependencies=[Depends(require_auth)])
     async def write_ini_api(request: Request):
@@ -371,7 +379,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         except ValueError as error:
             return _error('INI_INVALID', str(error), status_code=422)
         except OSError as error:
-            return _error('INI_SAVE_FAILED', 'INI 配置保存失败', {'reason': str(error)}, 500)
+            log_event('ini write failed', logging.ERROR, error_type=type(error).__name__)
+            return _error('INI_SAVE_FAILED', 'INI 配置保存失败', _safe_error_details(error), 500)
         log_event('ini write')
         return {'saved': True, 'path': selected.relative_to(root).as_posix()}
 
@@ -445,9 +454,11 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
                 _save_json(target, payload)
                 task_id = process_manager.start_file_push(target, config_file)
         except RuntimeError as error:
-            return _error('PUSH_BUSY', str(error), status_code=409)
+            log_event('push busy', logging.WARNING, error_type=type(error).__name__)
+            return _error('PUSH_BUSY', '推送任务正忙，请稍后重试', _safe_error_details(error), 409)
         except (OSError, json.JSONDecodeError) as error:
-            return _error('PUSH_FAILED', '推送文件无法读取', {'reason': str(error)})
+            log_event('push failed', logging.ERROR, error_type=type(error).__name__)
+            return _error('PUSH_FAILED', '推送文件无法读取', _safe_error_details(error))
         log_event('push', action=request.action)
         return {'task_id': task_id, 'action': request.action, 'message': '已提交'}
 
