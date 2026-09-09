@@ -148,6 +148,14 @@ class DailyGuiFileHandler(logging.Handler):
                 self._stream.write(self.format(record) + '\n')
                 self._stream.flush()
             except Exception:
+                stream = self._stream
+                self._stream = None
+                self._current_date = None
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception:
+                        pass
                 self.handleError(record)
 
     def set_max_files(self, max_files):

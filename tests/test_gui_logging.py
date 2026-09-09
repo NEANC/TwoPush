@@ -74,6 +74,42 @@ def test_date_forward_and_backward_switch_files(tmp_path):
     assert '前进日期日志' in (tmp_path / 'TwoPush-GUI_2026-09-11.log').read_text(encoding='utf-8')
 
 
+def test_failed_date_switch_resets_state_and_retries_on_next_emit(tmp_path, monkeypatch):
+    """日期切换打开失败后应重置状态并支持重试及回退。"""
+    clock = FakeClock(datetime(2026, 9, 9, 12))
+    logger = setup_gui_logger(log_dir=tmp_path, clock=clock)
+    handler = next(handler for handler in logger.handlers
+                   if getattr(handler, 'is_gui_handler', False))
+    logger.info('第一天日志')
+    original_open = open
+    failed_path = tmp_path / 'TwoPush-GUI_2026-09-10.log'
+
+    def broken_second_day_open(path, *args, **kwargs):
+        """仅模拟第二天文件首次打开失败。"""
+        if path == failed_path:
+            raise OSError('second day open failed')
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr('builtins.open', broken_second_day_open)
+    clock.value = datetime(2026, 9, 10, 12)
+    logger.info('第二天失败日志')
+    assert handler._stream is None
+    assert handler._current_date is None
+
+    monkeypatch.setattr('builtins.open', original_open)
+    logger.info('第二天成功日志')
+    clock.value = datetime(2026, 9, 9, 12)
+    logger.info('回退后日志')
+    close_gui_logger(logger)
+
+    first_day = (tmp_path / 'TwoPush-GUI_2026-09-09.log').read_text(encoding='utf-8')
+    second_day = failed_path.read_text(encoding='utf-8')
+    assert first_day.count('第一天日志') == 1
+    assert first_day.count('回退后日志') == 1
+    assert '第二天成功日志' in second_day
+    assert '第二天失败日志' not in second_day
+
+
 def test_concurrent_writes_are_complete_lines(tmp_path):
     """并发写入应保留所有完整日志行。"""
     logger = setup_gui_logger(log_dir=tmp_path,
