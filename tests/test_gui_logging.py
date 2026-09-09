@@ -158,5 +158,78 @@ def test_setup_replaces_closed_gui_handler(tmp_path):
                 if getattr(handler, 'is_gui_handler', False)]
     assert len(handlers) == 1
     assert handlers[0] is not closed_handler
+def test_setup_concurrent_initialization_keeps_one_gui_handler(tmp_path):
+    """20 个线程并发初始化只能挂载一个 GUI handler。"""
+    logger = logging.getLogger('gui-concurrent-setup-test')
+    logger.handlers.clear()
+    barrier = threading.Barrier(20)
+
+    def setup():
+        """同步后初始化 GUI logger。"""
+        barrier.wait()
+        setup_gui_logger(name=logger.name, log_dir=tmp_path,
+                         clock=FakeClock(datetime(2026, 9, 9)))
+
+    threads = [threading.Thread(target=setup) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len([handler for handler in logger.handlers
+                if getattr(handler, 'is_gui_handler', False)]) == 1
+    close_gui_logger(logger)
+    logger.handlers.clear()
+
+
+def test_close_racing_with_emit_does_not_reopen_handler(tmp_path, monkeypatch):
+    """关闭与 emit 竞态时，已关闭 handler 不得重新打开文件。"""
+    logger = setup_gui_logger(log_dir=tmp_path,
+                             clock=FakeClock(datetime(2026, 9, 9)))
+    handler = next(handler for handler in logger.handlers
+                   if getattr(handler, 'is_gui_handler', False))
+    original_open = open
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_open(*args, **kwargs):
+        """阻塞文件打开以制造关闭竞态。"""
+        entered.set()
+        release.wait()
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr('builtins.open', blocked_open)
+    emit_thread = threading.Thread(target=lambda: logger.info('race'))
+    emit_thread.start()
+    assert entered.wait(timeout=2)
+    close_thread = threading.Thread(target=lambda: close_gui_logger(logger))
+    close_thread.start()
+    release.set()
+    emit_thread.join(timeout=2)
+    close_thread.join(timeout=2)
+
+    assert handler._closed
+    assert handler._stream is None
+    assert not list(tmp_path.glob('TwoPush-GUI_*.log'))
+    logger.handlers.clear()
+
+
+def test_emit_io_error_calls_handle_error_without_propagating(tmp_path, monkeypatch):
+    """emit 的 I/O 异常应调用 handleError 且不向调用方传播。"""
+    logger = setup_gui_logger(log_dir=tmp_path,
+                             clock=FakeClock(datetime(2026, 9, 9)))
+    handler = next(handler for handler in logger.handlers
+                   if getattr(handler, 'is_gui_handler', False))
+    errors = []
+    monkeypatch.setattr(handler, 'handleError', errors.append)
+
+    def broken_open(*args, **kwargs):
+        """模拟文件打开失败。"""
+        raise OSError('open failed')
+
+    monkeypatch.setattr('builtins.open', broken_open)
+    logger.info('io error')
+
+    assert len(errors) == 1
     close_gui_logger(logger)
     logger.handlers.clear()

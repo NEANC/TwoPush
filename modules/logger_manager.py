@@ -17,6 +17,7 @@ from typing import Optional
 LOG_DIR = "logs"
 LOG_PREFIX = "TwoPush"
 _GUI_LOG_PATTERN = re.compile(r'^TwoPush-GUI_(\d{4}-\d{2}-\d{2})\.log$')
+_GUI_LOGGER_LOCK = threading.RLock()
 
 
 class ColoredFormatter(logging.Formatter):
@@ -113,6 +114,7 @@ class DailyGuiFileHandler(logging.Handler):
         self._lock = threading.RLock()
         self._current_date = None
         self._stream = None
+        self._closed = False
         self.is_gui_handler = True
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -123,17 +125,30 @@ class DailyGuiFileHandler(logging.Handler):
     def emit(self, record):
         """线程安全地写入一条日志。"""
         with self._lock:
-            current_date = self._date()
-            if self._stream is None or self._current_date != current_date:
-                if self._stream is not None:
-                    self._stream.close()
-                self._stream = open(self.log_dir / f'TwoPush-GUI_{current_date}.log', 'a', encoding='utf-8')
-                changed = self._current_date is not None
-                self._current_date = current_date
-                if changed:
-                    cleanup_gui_logs(self)
-            self._stream.write(self.format(record) + '\n')
-            self._stream.flush()
+            if self._closed:
+                return
+            try:
+                current_date = self._date()
+                if self._stream is None or self._current_date != current_date:
+                    if self._stream is not None:
+                        self._stream.close()
+                    current_path = self.log_dir / f'TwoPush-GUI_{current_date}.log'
+                    existed = current_path.exists()
+                    self._stream = open(current_path, 'a', encoding='utf-8')
+                    if self._closed:
+                        self._stream.close()
+                        self._stream = None
+                        if not existed:
+                            current_path.unlink(missing_ok=True)
+                        return
+                    changed = self._current_date is not None
+                    self._current_date = current_date
+                    if changed:
+                        cleanup_gui_logs(self)
+                self._stream.write(self.format(record) + '\n')
+                self._stream.flush()
+            except Exception:
+                self.handleError(record)
 
     def set_max_files(self, max_files):
         """设置保留的 GUI 日志文件数量。"""
@@ -142,6 +157,7 @@ class DailyGuiFileHandler(logging.Handler):
 
     def close(self):
         """幂等关闭当前日志文件。"""
+        self._closed = True
         with self._lock:
             if self._stream is not None:
                 self._stream.close()
@@ -151,22 +167,23 @@ class DailyGuiFileHandler(logging.Handler):
 
 def setup_gui_logger(name='TwoPush.GUI', log_dir=None, max_files=15, clock=None):
     """创建或复用 GUI 按日 UTF-8 日志记录器。"""
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG)
-    directory = Path(log_dir) if log_dir is not None else Path.cwd() / 'logs' / 'gui'
-    for handler in logger.handlers[:]:
-        if getattr(handler, 'is_gui_handler', False):
-            if (not handler._closed and Path(handler.log_dir) == directory
-                    and (clock is None or handler.clock is clock)):
-                handler.set_max_files(max_files)
-                return logger
-            logger.removeHandler(handler)
-            handler.close()
-    handler = DailyGuiFileHandler(directory, max_files, clock)
-    handler.setFormatter(logging.Formatter(
-        '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-    logger.addHandler(handler)
-    return logger
+    with _GUI_LOGGER_LOCK:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.DEBUG)
+        directory = Path(log_dir) if log_dir is not None else Path.cwd() / 'logs' / 'gui'
+        for handler in logger.handlers[:]:
+            if getattr(handler, 'is_gui_handler', False):
+                if (not handler._closed and Path(handler.log_dir) == directory
+                        and (clock is None or handler.clock is clock)):
+                    handler.set_max_files(max_files)
+                    return logger
+                logger.removeHandler(handler)
+                handler.close()
+        handler = DailyGuiFileHandler(directory, max_files, clock)
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+        logger.addHandler(handler)
+        return logger
 
 
 def cleanup_gui_logs(logger):
@@ -191,10 +208,11 @@ def cleanup_gui_logs(logger):
 
 def close_gui_logger(logger):
     """关闭并移除 GUI handler，不影响其他 handler。"""
-    for handler in logger.handlers[:]:
-        if getattr(handler, 'is_gui_handler', False):
-            logger.removeHandler(handler)
-            handler.close()
+    with _GUI_LOGGER_LOCK:
+        for handler in logger.handlers[:]:
+            if getattr(handler, 'is_gui_handler', False):
+                logger.removeHandler(handler)
+                handler.close()
 
 
 def set_max_files(logger, max_files):
