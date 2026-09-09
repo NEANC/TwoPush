@@ -140,3 +140,23 @@ def test_repeated_initialization_and_close_are_idempotent_and_preserve_handlers(
     assert logger.handlers == [other]
     other.close()
     logger.handlers.clear()
+
+
+def test_setup_replaces_closed_gui_handler(tmp_path):
+    """已关闭但仍挂载的 GUI handler 不应被重新复用。"""
+    logger = logging.getLogger('gui-closed-handler-test')
+    logger.handlers.clear()
+    clock = FakeClock(datetime(2026, 9, 9))
+    setup_gui_logger(log_dir=tmp_path, clock=clock, name=logger.name)
+    closed_handler = next(
+        handler for handler in logger.handlers
+        if getattr(handler, 'is_gui_handler', False))
+    closed_handler.close()
+
+    setup_gui_logger(log_dir=tmp_path, clock=clock, name=logger.name)
+    handlers = [handler for handler in logger.handlers
+                if getattr(handler, 'is_gui_handler', False)]
+    assert len(handlers) == 1
+    assert handlers[0] is not closed_handler
+    close_gui_logger(logger)
+    logger.handlers.clear()

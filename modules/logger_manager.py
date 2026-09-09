@@ -156,7 +156,8 @@ def setup_gui_logger(name='TwoPush.GUI', log_dir=None, max_files=15, clock=None)
     directory = Path(log_dir) if log_dir is not None else Path.cwd() / 'logs' / 'gui'
     for handler in logger.handlers[:]:
         if getattr(handler, 'is_gui_handler', False):
-            if Path(handler.log_dir) == directory and (clock is None or handler.clock is clock):
+            if (not handler._closed and Path(handler.log_dir) == directory
+                    and (clock is None or handler.clock is clock)):
                 handler.set_max_files(max_files)
                 return logger
             logger.removeHandler(handler)
