@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from modules.config_migration import apply_migrations
+from modules.logger_manager import sanitize_log_message
 
 
 def _get_program_dir() -> str:
@@ -53,7 +54,7 @@ def resolve_temp_folder(temp_folder_config: str, app_name: str = '',
             else:
                 result = os.path.join(program_dir, 'Temp')
         if logger:
-            logger.info(f"配置为空，使用系统临时文件夹: {result}")
+            logger.info('配置为空，使用系统临时文件夹: %s', sanitize_log_message(result))
         return result
     if temp_folder_config == 'Temp':
         return os.path.join(program_dir, 'Temp')
@@ -168,9 +169,9 @@ class ConfigManager:
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 f.write(default_config)
             os.replace(tmp_path, self.config_file)
-            self.logger.info(f"已生成默认配置文件: {self.config_file}")
-        except OSError as e:
-            self.logger.error(f"生成配置文件失败: {e}")
+            self.logger.info('已生成默认配置文件: %s', sanitize_log_message(self.config_file))
+        except OSError as error:
+            self.logger.error('生成配置文件失败: %s', type(error).__name__)
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -240,8 +241,8 @@ class ConfigManager:
             with open(tmp_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(lines))
             os.replace(tmp_path, self.config_file)
-        except OSError as e:
-            self.logger.error(f"写入配置文件失败: {e}")
+        except OSError as error:
+            self.logger.error('写入配置文件失败: %s', type(error).__name__)
             try:
                 os.unlink(tmp_path)
             except OSError:
@@ -281,8 +282,8 @@ class ConfigManager:
                 with open(tmp_path, 'w', encoding='utf-8') as f:
                     f.writelines(new_lines)
                 os.replace(tmp_path, self.config_file)
-            except OSError as e:
-                self.logger.error(f"修复配置文件失败: {e}")
+            except OSError as error:
+                self.logger.error('修复配置文件失败: %s', type(error).__name__)
                 try:
                     os.unlink(tmp_path)
                 except OSError:
@@ -334,9 +335,9 @@ class ConfigManager:
             return
         try:
             os.makedirs(temp_folder, exist_ok=True)
-            self.logger.info(f"已创建临时文件夹: {temp_folder}")
-        except (OSError, PermissionError) as e:
-            self.logger.warning(f"无法创建临时文件夹 {temp_folder}: {e}")
+            self.logger.info('已创建临时文件夹: %s', sanitize_log_message(temp_folder))
+        except (OSError, PermissionError) as error:
+            self.logger.warning('无法创建临时文件夹: %s', type(error).__name__)
             system_temp = os.environ.get('TEMP', '')
             if system_temp:
                 fallback = os.path.join(system_temp, self.app_name) if self.app_name else os.path.join(system_temp, 'Temp')
@@ -347,7 +348,7 @@ class ConfigManager:
                 else:
                     fallback = os.path.join(_get_program_dir(), 'Temp')
             self._attrs['temp_folder'] = fallback
-            self.logger.info(f"使用系统临时文件夹: {fallback}")
+            self.logger.info('使用系统临时文件夹: %s', sanitize_log_message(fallback))
             os.makedirs(fallback, exist_ok=True)
 
     def get_attr(self, key: str, default: str = '') -> str:
@@ -376,16 +377,16 @@ class ConfigManager:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.config.read_file(f)
                 break
-            except configparser.Error as e:
+            except configparser.Error as error:
                 if pass_num == 0:
-                    self.logger.warning(f"配置文件解析错误，正在尝试修复: {e}")
+                    self.logger.warning('配置文件解析错误，正在尝试修复: %s', type(error).__name__)
                     self._sanitize_config_file()
                 elif pass_num == 1:
                     self.logger.critical("修复失败，将重新生成配置文件")
                     self._generate_default_config()
                 else:
-                    self.logger.critical(f"配置文件无法修复: {e}")
-                    self.logger.critical(f"配置文件 {self.config_file} 已损坏且无法自动修复。")
+                    self.logger.critical('配置文件无法修复: %s', type(error).__name__)
+                    self.logger.critical('配置文件已损坏且无法自动修复。')
                     self.logger.critical("请检查文件内容或删除后重新运行软件以生成默认配置。")
                     raise SystemExit(1)
 
@@ -442,9 +443,9 @@ class ConfigManager:
         if temp_folder:
             try:
                 Path(temp_folder).mkdir(parents=True, exist_ok=True)
-                self.logger.debug(f"临时文件夹路径: {temp_folder}")
-            except Exception as e:
-                self.logger.error(f"临时文件夹路径错误: {e}")
+                self.logger.debug('临时文件夹路径: %s', sanitize_log_message(temp_folder))
+            except Exception as error:
+                self.logger.error('临时文件夹路径错误: %s', type(error).__name__)
                 return False
 
         self.logger.info("配置验证通过")

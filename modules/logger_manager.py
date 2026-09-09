@@ -37,8 +37,8 @@ def sanitize_log_message(message, root=None):
         text = re.sub(r'(?i)([A-Za-z]:\\[^\s,;]+)', '<path>', text)
         text = re.sub(r'(?<![\w])/(?:[^\s,;]+/)*[^\s,;]+', '<path>', text)
         return text
-    except Exception:
-        return '[日志摘要不可用]'
+    except Exception as error:
+        return f'[日志摘要不可用: {type(error).__name__}]'
 
 
 class SanitizingLoggerAdapter(logging.LoggerAdapter):
@@ -223,8 +223,9 @@ def setup_gui_logger(name='TwoPush.GUI', log_dir=None, max_files=15, clock=None)
                 logger.removeHandler(handler)
                 handler.close()
         handler = DailyGuiFileHandler(directory, max_files, clock)
-        handler.setFormatter(logging.Formatter(
-            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+        handler.setFormatter(SanitizingFormatter(
+            '%(asctime)s.%(msecs)03d | %(levelname)s | %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'))
         logger.addHandler(handler)
         return logger
 

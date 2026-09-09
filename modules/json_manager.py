@@ -7,7 +7,16 @@ import json
 import os
 import sys
 
+from modules.logger_manager import sanitize_log_message
+
 DEFAULT_TEMPLATE_FILE = "TwoPush.templates.json"
+
+
+def _log_path(logger, path):
+    """为 GUI 日志返回安全路径摘要，保留 CLI 日志兼容性。"""
+    if any(getattr(handler, 'is_gui_handler', False) for handler in logger.handlers):
+        return sanitize_log_message(path)
+    return path
 
 
 def build_default_json_template():
@@ -54,7 +63,7 @@ def write_json_template_file(path, logger, force=False, verbose_path=True):
         bool: 写入成功返回 True，否则返回 False
     """
     if os.path.exists(path) and not force:
-        logger.critical(f"JSON 模板文件已存在，请使用 --template-force 覆盖: {path}")
+        logger.critical('JSON 模板文件已存在，请使用 --template-force 覆盖: %s', _log_path(logger, path))
         return False
 
     tmp_path = f'{path}.tmp'
@@ -63,8 +72,8 @@ def write_json_template_file(path, logger, force=False, verbose_path=True):
             json.dump(build_default_json_template(), f, ensure_ascii=False, indent=4)
             f.write('\n')
         os.replace(tmp_path, path)
-    except OSError as e:
-        logger.critical(f"生成 JSON 模板文件失败 (路径: {path}): {e}")
+    except OSError as error:
+        logger.critical('生成 JSON 模板文件失败: %s', type(error).__name__)
         try:
             os.unlink(tmp_path)
         except OSError:
@@ -72,7 +81,7 @@ def write_json_template_file(path, logger, force=False, verbose_path=True):
         return False
 
     display_path = path if verbose_path else os.path.basename(path)
-    logger.info(f"已生成 JSON 模板文件: {display_path}")
+    logger.info('已生成 JSON 模板文件: %s', _log_path(logger, display_path))
     return True
 
 
@@ -137,13 +146,13 @@ def load_json_template(json_path, logger):
         dict | None: 解析后的模板字典，失败返回 None
     """
     if not os.path.exists(json_path):
-        logger.error(f"JSON 文件不存在: {json_path}")
+        logger.error('JSON 文件不存在: %s', _log_path(logger, json_path))
         return None
     try:
         with open(json_path, 'r', encoding='utf-8') as f:
             template = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"JSON 文件解析失败: {e}")
+    except (json.JSONDecodeError, OSError) as error:
+        logger.error('JSON 文件解析失败: %s', type(error).__name__)
         return None
 
     if not isinstance(template, dict):
@@ -171,6 +180,6 @@ def ensure_default_template_on_first_run(logger):
     """
     template_path = resolve_default_template_path()
     if os.path.exists(template_path):
-        logger.info(f"JSON 模板文件已存在，跳过生成: {template_path}")
+        logger.info('JSON 模板文件已存在，跳过生成: %s', sanitize_log_message(os.path.basename(template_path)))
         return
     write_json_template_file(template_path, logger, force=False, verbose_path=False)

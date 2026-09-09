@@ -738,7 +738,7 @@ def main():
 
     save_enabled = raw_read_save_enabled(args.config)
     logger = setup_logger(console_enabled=not args.silent)
-    if save_enabled:
+    if os.environ.get('TWOPUSH_SAVE_LOGS') != '0' and save_enabled:
         add_file_logger(logger, version=VERSION, log_dir='logs', log_prefix='TwoPush')
 
     handle_template_command(args, logger)

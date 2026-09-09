@@ -72,6 +72,20 @@ def test_create_app_stores_logger(tmp_path):
     app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger)
 
     assert app.state.logger is logger
+def test_create_app_logs_auth_failure_without_request_details(tmp_path, caplog):
+    """认证失败固定记录 WARNING 且不写入令牌或请求明细。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = ' + 'x' * 16 + '\n', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-auth-log-test')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger)
+    with caplog.at_level('WARNING', logger='web-auth-log-test'):
+        response = TestClient(app).get('/api/session', headers={'Authorization': 'Bearer wrong-token'})
+    assert response.status_code == 401
+    assert 'x' * 16 not in '\n'.join(record.getMessage() for record in caplog.records)
+
+
 def test_create_app_serves_home_and_sets_security_header(tmp_path):
     """应用应提供首页并设置禁止来源策略。"""
     resource_dir = tmp_path / 'web'

@@ -13,9 +13,24 @@ import modules.logger_manager as logger_manager
 from modules.logger_manager import (
     cleanup_gui_logs,
     close_gui_logger,
+    sanitize_log_message,
     set_max_files,
     setup_gui_logger,
 )
+
+
+def test_sanitize_log_message_hides_credentials_urls_and_paths():
+    """GUI 日志摘要不得泄露凭据、代理认证或绝对路径。"""
+    text = sanitize_log_message(
+        'token=abc secret: def password=ghi access_token=jkl '
+        'Authorization: Bearer mno smtp_password=pqr '
+        'http://user:pass@example.test/x C:\\Users\\name\\config.ini '
+        '/home/name/config.ini', root='C:\\Users\\name')
+    lowered = text.lower()
+    for secret in ('abc', 'def', 'ghi', 'jkl', 'mno', 'pqr', 'user', 'pass@example'):
+        assert secret not in lowered
+    assert 'C:\\Users\\name' not in text
+    assert '/home/name' not in text
 
 
 class FakeClock:

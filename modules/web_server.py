@@ -138,10 +138,10 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     app.state.workspace_root = root
     app.state.host = resolve_web_host(access_token)
 
-    def log_event(event, **fields):
+    def log_event(event, level=logging.INFO, **fields):
         """记录不包含请求明细的业务事件。"""
         summary = ' '.join(f'{key}={value}' for key, value in fields.items())
-        app.state.logger.info('Web %s%s', event, f' {summary}' if summary else '')
+        app.state.logger.log(level, 'Web %s%s', event, f' {summary}' if summary else '')
 
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
@@ -154,6 +154,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.exception_handler(HTTPException)
     async def http_error(_request, exc):
         """将 HTTP 异常转换为统一错误结构。"""
+        log_event('请求非法', logging.WARNING)
         detail = exc.detail
         if isinstance(detail, dict):
             return _error(detail.get('code', 'HTTP_ERROR'), detail.get('message', '请求失败'), detail.get('details'), exc.status_code)
@@ -162,6 +163,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.exception_handler(RequestValidationError)
     async def validation_error(_request, exc):
         """将请求校验异常转换为统一错误结构。"""
+        log_event('参数校验失败', logging.WARNING)
         errors = [{**item, 'ctx': {key: str(value) for key, value in item.get('ctx', {}).items()}}
                   for item in exc.errors()]
         if errors and errors[0].get('loc', ())[-1] == 'path':

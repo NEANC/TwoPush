@@ -104,6 +104,8 @@ class PushProcessManager:
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             env['PYTHONIOENCODING'] = 'utf-8'
+            env['TWOPUSH_GUI'] = '1'
+            env['TWOPUSH_SAVE_LOGS'] = '0'
             try:
                 self._process = subprocess.Popen(
                     self._build_command(json_path, config_path),

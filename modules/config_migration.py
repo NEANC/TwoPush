@@ -6,6 +6,8 @@
 import configparser
 import logging
 
+from modules.logger_manager import sanitize_log_message
+
 
 MIGRATION_MARKER = '__migrations__'
 
@@ -87,13 +89,13 @@ def apply_migrations(config: configparser.ConfigParser,
             if not handler(config, **kwargs):
                 continue
             desc = migration.get('description', f'#{mid}')
-            logger.info(f"检测到需要迁移 [{mid}]: {desc}")
+            logger.info('检测到需要迁移 [%s]: %s', mid, sanitize_log_message(desc))
             _mark_applied(config, mid)
             applied.add(mid)
             changed = True
             logger.info(f"配置迁移 [{mid}] 完成")
-        except Exception as e:
-            logger.warning(f"配置迁移 [{mid}] 失败: {e}")
+        except Exception as error:
+            logger.warning('配置迁移 [%s] 失败: %s', mid, type(error).__name__)
 
     return changed
 
