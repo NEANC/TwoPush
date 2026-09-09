@@ -83,6 +83,19 @@ def manager(tmp_path):
     return PushProcessManager(program_dir=tmp_path)
 
 
+def test_reader_writes_each_stream_to_parent_terminal(
+        capsys, manager):
+    """读取子进程输出时应同步写入父进程对应终端。"""
+    task = {'outputs': [], 'status': 'running'}
+    manager._read_stream(FakeStream(["标准输出\n"]), 'stdout', task)
+    manager._read_stream(FakeStream(["错误输出\n"]), 'stderr', task)
+
+    captured = capsys.readouterr()
+    assert captured.out == '标准输出\n'
+    assert captured.err == '错误输出\n'
+    assert [item['message'] for item in task['outputs']] == ['标准输出', '错误输出']
+
+
 def test_reader_failure_marks_task_failed_and_is_not_overwritten(
         monkeypatch, manager, tmp_path):
     """读取输出异常应标记任务失败，即使进程退出码为零也不能覆盖。"""

@@ -167,6 +167,9 @@ class PushProcessManager:
                         'stream': stream_name,
                         'message': line.rstrip('\r\n'),
                     })
+                    terminal = sys.stderr if stream_name == 'stderr' else sys.stdout
+                    terminal.write(line)
+                    terminal.flush()
         except Exception:
             with self._lock:
                 task['reader_failed'] = True
