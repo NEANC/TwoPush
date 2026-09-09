@@ -225,8 +225,9 @@ def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manage
     assert calls[0][1]["bufsize"] == 1
     assert calls[0][1]["env"]["PYTHONUNBUFFERED"] == "1"
     assert calls[0][1]["env"]["PYTHONIOENCODING"] == "utf-8"
-    assert calls[0][1]["env"]["TWOPUSH_GUI"] == "1"
-    assert calls[0][1]["env"]["TWOPUSH_SAVE_LOGS"] == "0"
+    assert "env" in calls[0][1]
+    assert "TWOPUSH_GUI" not in calls[0][1]["env"]
+    assert "TWOPUSH_SAVE_LOGS" not in calls[0][1]["env"]
     assert push_file.read_text(encoding="utf-8") == '{"title":"标题"}'
     assert manager.get_status()["task_id"] == task_id
     assert manager.get_status()["status"] == "success"
@@ -411,6 +412,87 @@ def test_payload_write_failure_cleans_temp_file(monkeypatch, manager, tmp_path):
     with pytest.raises(OSError):
         manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
     assert not list((tmp_path / "Temp").glob("*.json"))
+
+
+def test_gui_reader_archives_sanitized_copy_and_preserves_raw_output(
+        capsys, tmp_path):
+    """GUI 模式应归档脱敏副本，同时保留任务和终端原文。"""
+    logger = __import__('logging').getLogger('push-process-gui-test')
+    records = []
+    logger.info = lambda *args, **kwargs: records.append((args, kwargs))
+    manager = PushProcessManager(program_dir=tmp_path, gui_mode=True, logger=logger)
+    secret = 'https://user:password@example.com/api?token=secret'
+    raw = f'路径 {tmp_path} {secret}\n'
+    task = {'outputs': [], 'status': 'running'}
+
+    manager._read_stream(FakeStream([raw]), 'stdout', task)
+
+    captured = capsys.readouterr()
+    assert captured.out == raw
+    assert task['outputs'][0]['message'] == raw.rstrip('\r\n')
+    assert records[0][0][0] == '路径 <root> https://***:***@example.com/api?token=***'
+
+
+def test_gui_reader_uses_error_level_for_stderr(tmp_path):
+    """GUI 模式的标准错误应使用 ERROR 级别归档。"""
+    logger = __import__('logging').getLogger('push-process-gui-error-test')
+    records = []
+    logger.error = lambda *args, **kwargs: records.append((args, kwargs))
+    manager = PushProcessManager(program_dir=tmp_path, gui_mode=True, logger=logger)
+
+    manager._read_stream(FakeStream(['错误: token=secret\n']), 'stderr', {'outputs': [], 'status': 'running'})
+
+    assert records[0][0][0] == '错误: token=***'
+
+
+def test_cli_reader_does_not_log_or_change_environment(monkeypatch, tmp_path):
+    """CLI 模式不应注入 GUI 标记或写入日志记录器。"""
+    logger = __import__('logging').getLogger('push-process-cli-test')
+    records = []
+    logger.info = lambda *args, **kwargs: records.append((args, kwargs))
+    manager = PushProcessManager(program_dir=tmp_path, logger=logger)
+    process = FakeProcess()
+    calls = []
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *args, **kwargs: (calls.append(kwargs), process)[1])
+
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert 'TWOPUSH_GUI' not in calls[0]['env']
+    assert 'TWOPUSH_SAVE_LOGS' not in calls[0]['env']
+    assert records == []
+
+
+def test_gui_mode_injects_gui_environment(monkeypatch, tmp_path):
+    """GUI 模式应仅注入 GUI 子进程标记。"""
+    manager = PushProcessManager(program_dir=tmp_path, gui_mode=True)
+    process = FakeProcess()
+    calls = []
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *args, **kwargs: (calls.append(kwargs), process)[1])
+
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert calls[0]['env']['TWOPUSH_GUI'] == '1'
+    assert calls[0]['env']['TWOPUSH_SAVE_LOGS'] == '0'
+
+
+def test_gui_reader_logger_failure_does_not_change_success(monkeypatch, tmp_path):
+    """GUI 日志记录器异常不得影响输出和任务状态。"""
+    logger = __import__('logging').getLogger('push-process-gui-failure-test')
+    logger.info = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('日志失败'))
+    manager = PushProcessManager(program_dir=tmp_path, gui_mode=True, logger=logger)
+    process = FakeProcess()
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *args, **kwargs: process)
+
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    process.finish()
+    manager._wait_thread.join(1)
+
+    assert manager.get_status()['status'] == 'success'
+
 
 
 def test_wait_failure_marks_failed_and_cleans_temp(monkeypatch, manager, tmp_path):

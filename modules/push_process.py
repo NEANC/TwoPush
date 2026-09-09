@@ -19,10 +19,12 @@ _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 class PushProcessManager:
     """管理单个 TwoPush CLI 子进程及其输出。"""
 
-    def __init__(self, program_dir=None):
+    def __init__(self, program_dir=None, gui_mode=False, logger=None):
         """初始化控制器。"""
         self.program_dir = Path(program_dir or Path(__file__).resolve().parent.parent)
         self.temp_dir = self.program_dir / 'Temp'
+        self.gui_mode = gui_mode
+        self.logger = logger
         self._lock = threading.RLock()
         self._process = None
         self._task = None
@@ -104,8 +106,9 @@ class PushProcessManager:
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             env['PYTHONIOENCODING'] = 'utf-8'
-            env['TWOPUSH_GUI'] = '1'
-            env['TWOPUSH_SAVE_LOGS'] = '0'
+            if self.gui_mode:
+                env['TWOPUSH_GUI'] = '1'
+                env['TWOPUSH_SAVE_LOGS'] = '0'
             try:
                 self._process = subprocess.Popen(
                     self._build_command(json_path, config_path),
@@ -172,6 +175,14 @@ class PushProcessManager:
                     terminal = sys.stderr if stream_name == 'stderr' else sys.stdout
                     terminal.write(line)
                     terminal.flush()
+                    if self.gui_mode and self.logger is not None:
+                        try:
+                            from modules.logger_manager import sanitize_log_message
+                            message = sanitize_log_message(line.rstrip('\r\n'), root=self.program_dir)
+                            log_method = self.logger.error if stream_name == 'stderr' else self.logger.info
+                            log_method(message)
+                        except Exception:
+                            pass
         except Exception:
             with self._lock:
                 task['reader_failed'] = True

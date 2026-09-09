@@ -129,7 +129,13 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         if not config.validate():
             return 2
 
-        process_manager = PushProcessManager()
+        try:
+            process_manager = PushProcessManager(gui_mode=True, logger=logger)
+        except TypeError as error:
+            if not ('unexpected keyword argument' in str(error)
+                    or 'takes no arguments' in str(error)):
+                raise
+            process_manager = PushProcessManager()
         control = WebServerControl()
         app = create_app(
             os.path.dirname(os.path.abspath(config_path)), config_path,
