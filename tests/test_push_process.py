@@ -199,6 +199,7 @@ def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manage
         return process
 
     monkeypatch.setattr("modules.push_process.subprocess.Popen", fake_popen)
+    monkeypatch.setenv("PYTHONIOENCODING", "ascii")
     task_id = manager.start_file_push(push_file, config_file)
     process.finish()
     manager._wait_thread.join(1)
@@ -210,6 +211,7 @@ def test_start_file_push_builds_cli_without_modifying_source(monkeypatch, manage
     assert calls[0][1]["errors"] == "replace"
     assert calls[0][1]["bufsize"] == 1
     assert calls[0][1]["env"]["PYTHONUNBUFFERED"] == "1"
+    assert calls[0][1]["env"]["PYTHONIOENCODING"] == "utf-8"
     assert push_file.read_text(encoding="utf-8") == '{"title":"标题"}'
     assert manager.get_status()["task_id"] == task_id
     assert manager.get_status()["status"] == "success"

@@ -103,6 +103,7 @@ class PushProcessManager:
             self._stop_requested = False
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
+            env['PYTHONIOENCODING'] = 'utf-8'
             try:
                 self._process = subprocess.Popen(
                     self._build_command(json_path, config_path),
