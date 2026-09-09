@@ -313,6 +313,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             os.replace(temporary, target)
         except OSError as error:
             return _error('SAVE_FAILED', 'JSON 保存失败', {'reason': str(error)}, 500)
+        log_event('json write')
         return {'saved': True, 'path': target.relative_to(root).as_posix(), 'message': '已保存'}
 
     @app.post('/api/json/select', dependencies=[Depends(require_auth)])
@@ -332,6 +333,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             return _error('invalid_json', 'JSON 格式无效')
         except HTTPException as error:
             return _error(error.detail.get('code', 'invalid_json'), error.detail.get('message', 'JSON 模板校验失败'))
+        log_event('json validate')
         return {'valid': True, 'message': 'JSON 有效'}
 
     @app.get('/api/ini', dependencies=[__import__('fastapi').Depends(require_auth)])
@@ -341,6 +343,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         if selected.suffix.lower() != '.ini' or not selected.is_file():
             return _error('INI_NOT_FOUND', 'INI 配置不存在', status_code=404)
         try:
+            log_event('ini read')
             return {'path': selected.relative_to(root).as_posix(), 'content': selected.read_text(encoding='utf-8')}
         except OSError as error:
             return _error('INI_READ_FAILED', 'INI 配置读取失败', {'reason': str(error)}, 500)
@@ -367,6 +370,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             return _error('INI_INVALID', str(error), status_code=422)
         except OSError as error:
             return _error('INI_SAVE_FAILED', 'INI 配置保存失败', {'reason': str(error)}, 500)
+        log_event('ini write')
         return {'saved': True, 'path': selected.relative_to(root).as_posix()}
 
     @app.post('/api/ini/select', dependencies=[Depends(require_auth)])
@@ -393,6 +397,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
                         files.append(item.name)
                 except OSError:
                     continue
+        log_event('temp list')
         return {'files': sorted(files)}
 
     @app.get('/api/temp/{name}', dependencies=[Depends(require_auth)])
@@ -441,19 +446,23 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             return _error('PUSH_BUSY', str(error), status_code=409)
         except (OSError, json.JSONDecodeError) as error:
             return _error('PUSH_FAILED', '推送文件无法读取', {'reason': str(error)})
+        log_event('push', action=request.action)
         return {'task_id': task_id, 'action': request.action, 'message': '已提交'}
 
     @app.get('/api/push/status', dependencies=[Depends(require_auth)])
     @app.get('/api/status', dependencies=[Depends(require_auth)])
     async def status(cursor: int = 0):
         """返回推送状态和增量日志。"""
+        log_event('status')
         return process_manager.get_status(cursor)
 
     @app.post('/api/push/stop', dependencies=[Depends(require_auth)])
     @app.post('/api/stop', dependencies=[Depends(require_auth)])
     async def stop():
         """停止当前推送任务。"""
-        return {'stopped': process_manager.stop(), 'message': '已停止'}
+        result = {'stopped': process_manager.stop(), 'message': '已停止'}
+        log_event('push stop')
+        return result
 
     @app.post('/api/service/stop', dependencies=[Depends(require_auth)])
     @app.post('/api/server/stop', dependencies=[Depends(require_auth)])
@@ -461,6 +470,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """请求服务停止并关闭推送控制器。"""
         control.stop()
         process_manager.shutdown()
+        log_event('service stop')
         return {'stopping': True, 'message': '服务正在停止'}
 
     return app
