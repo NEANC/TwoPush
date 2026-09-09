@@ -745,3 +745,97 @@ def test_task6_missing_json_returns_not_found_error_shape(tmp_path):
     assert response.status_code == 404
     assert response.json()['error']['code'] == 'JSON_NOT_FOUND'
     assert set(response.json()['error']) == {'code', 'message', 'details'}
+
+
+@pytest.mark.parametrize(
+    ('route', 'path', 'expected'),
+    [
+        ('/api/json/select', 'selected.json', 'json select success'),
+        ('/api/ini/select', 'selected.ini', 'ini select success'),
+    ],
+)
+def test_select_routes_log_action_and_relative_path(tmp_path, route, path, expected, caplog):
+    """文件选择成功日志应区分动作并只记录相对路径。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    target = tmp_path / path
+    target.write_text('{}' if path.endswith('.json') else '[Web]\n', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-select-success-test')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger))
+
+    with caplog.at_level('INFO', logger=logger.name):
+        assert client.post(route, json={'path': path}).status_code == 200
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(expected in message and path in message for message in messages)
+    assert str(tmp_path) not in '\n'.join(messages)
+
+
+def test_select_routes_log_not_found_and_read_failure_by_action(tmp_path, monkeypatch, caplog):
+    """文件选择不存在和读取异常日志应区分类型且不泄露异常文本。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    (tmp_path / 'selected.ini').write_text('[Web]\n', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-select-error-test')
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger))
+
+    with caplog.at_level('WARNING', logger=logger.name):
+        assert client.post('/api/json/select', json={'path': 'missing.json'}).status_code == 404
+        assert client.post('/api/ini/select', json={'path': 'missing.ini'}).status_code == 404
+    assert any('json select not_found' in record.getMessage() for record in caplog.records)
+    assert any('ini select not_found' in record.getMessage() for record in caplog.records)
+
+    original_read = Path.read_text
+    def fail_ini_read(self, *args, **kwargs):
+        if self.name == 'selected.ini':
+            raise OSError('C:/secret/raw')
+        return original_read(self, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_text', fail_ini_read)
+    with caplog.at_level('ERROR', logger=logger.name):
+        response = client.post('/api/ini/select', json={'path': 'selected.ini'})
+    assert response.status_code == 500
+    assert any('ini select read_failed' in record.getMessage() and 'error_type=OSError' in record.getMessage()
+               for record in caplog.records)
+    assert 'raw' not in '\n'.join(record.getMessage() for record in caplog.records)
+
+
+def test_temp_and_files_log_security_outcomes(tmp_path, monkeypatch, caplog):
+    """临时文件和目录浏览日志应覆盖成功、非法不存在及 I/O 分支。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    program_dir = tmp_path / 'program'
+    (program_dir / 'Temp').mkdir(parents=True)
+    target = program_dir / 'Temp' / 'Temp_ok.json'
+    target.write_text('{}', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-temp-files-log-test')
+    manager = FakeProcessManager()
+    manager.program_dir = program_dir
+    client = TestClient(create_app(tmp_path, config_path, resource_dir, manager, logger=logger))
+
+    with caplog.at_level('INFO', logger=logger.name):
+        assert client.get('/api/temp/Temp_ok.json').status_code == 200
+        assert client.post('/api/temp/delete', json={'names': ['Temp_ok.json'], 'confirmed': True}).status_code == 200
+    assert any('temp read success' in record.getMessage() for record in caplog.records)
+    assert any('temp delete success' in record.getMessage() for record in caplog.records)
+
+    with caplog.at_level('WARNING', logger=logger.name):
+        assert client.get('/api/temp/invalid.json').status_code == 404
+        assert client.post('/api/temp/delete', json={'names': ['invalid.json'], 'confirmed': True}).status_code == 404
+        assert client.get('/api/files', params={'path': 'missing-dir'}).status_code == 400
+    assert any('temp read not_found' in record.getMessage() for record in caplog.records)
+    assert any('temp delete not_found' in record.getMessage() for record in caplog.records)
+    assert any('files not_found' in record.getMessage() for record in caplog.records)
+
+    monkeypatch.setattr(Path, 'iterdir', lambda self: (_ for _ in ()).throw(OSError('C:/raw')))
+    with caplog.at_level('ERROR', logger=logger.name):
+        response = client.get('/api/files')
+    assert response.status_code == 500
+    assert any('files read_failed' in record.getMessage() and 'error_type=OSError' in record.getMessage()
+               for record in caplog.records)
+    assert 'raw' not in '\n'.join(record.getMessage() for record in caplog.records)

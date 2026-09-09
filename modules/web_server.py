@@ -24,6 +24,7 @@ from modules.web_models import (
     TempDeleteRequest,
     resolve_web_host,
 )
+from modules.logger_manager import sanitize_log_message
 from modules.web_resources import get_web_resource
 
 
@@ -145,7 +146,11 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     def log_event(event, level=logging.INFO, **fields):
         """记录不包含请求明细的业务事件。"""
-        summary = ' '.join(f'{key}={value}' for key, value in fields.items())
+        safe_fields = {
+            key: sanitize_log_message(value, root=root) if isinstance(value, str) else value
+            for key, value in fields.items()
+        }
+        summary = ' '.join(f'{key}={value}' for key, value in safe_fields.items())
         app.state.logger.log(level, 'Web %s%s', event, f' {summary}' if summary else '')
 
     @app.middleware('http')
@@ -199,14 +204,20 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         try:
             checked = FileOperationRequest(path=value).path
         except ValueError as error:
+            log_event('path invalid', logging.WARNING, path=value)
             raise HTTPException(422, detail={'code': 'invalid_path', 'message': str(error)}) from error
-        return _inside(root, root.joinpath(*checked.replace('\\', '/').split('/')))
+        try:
+            return _inside(root, root.joinpath(*checked.replace('\\', '/').split('/')))
+        except ValueError:
+            log_event('path invalid', logging.WARNING, path=checked)
+            raise
 
     def safe_temp_name(value: str) -> str:
         """校验临时文件名并统一返回不存在错误。"""
         try:
             return TempDeleteRequest(names=[value], confirmed=True).names[0]
         except ValidationError as error:
+            log_event('temp path invalid', logging.WARNING, name=sanitize_log_message(value))
             raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
 
     def safe_temp_path(name: str) -> Path:
@@ -220,6 +231,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             if _is_reparse_point(temp) or _is_reparse_point(target) or target_resolved.parent != temp_resolved:
                 raise OSError('临时路径包含重解析点')
         except OSError as error:
+            log_event('temp path invalid', logging.WARNING, name=checked_name, error_type=type(error).__name__)
             raise HTTPException(404, detail={'code': 'TEMP_NOT_FOUND', 'message': '临时文件不存在'}) from error
         return target
 
@@ -274,9 +286,15 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         path = directory if path is None else path
         directory = root if not path else safe_path(path)
         if not directory.is_dir():
+            log_event('files not_found', logging.WARNING, path=path)
             return _error('NOT_DIRECTORY', '目标不是目录')
         items = []
-        for item in sorted(directory.iterdir(), key=lambda entry: entry.name.lower()):
+        try:
+            entries = sorted(directory.iterdir(), key=lambda entry: entry.name.casefold())
+        except OSError as error:
+            log_event('files read_failed', logging.ERROR, path=path, error_type=type(error).__name__)
+            return _error('FILES_READ_FAILED', '目录无法读取', _safe_error_details(error), status_code=500)
+        for item in entries:
             if _is_hidden(item):
                 continue
             try:
@@ -285,7 +303,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             except (OSError, ValueError):
                 continue
             items.append({'name': item.name, 'path': relative, 'type': 'directory' if item.is_dir() else 'file'})
-        log_event('files')
+        log_event('files success', path='' if directory == root else directory.relative_to(root).as_posix())
         return {'path': '' if directory == root else directory.relative_to(root).as_posix(), 'items': items, 'files': items}
 
     @app.get('/api/json', dependencies=[__import__('fastapi').Depends(require_auth)])
@@ -328,7 +346,17 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.post('/api/json/select', dependencies=[Depends(require_auth)])
     async def select_json(body: FileOperationRequest):
         """选择 JSON 文件并返回内容。"""
-        return await read_json(body.path)
+        target = safe_path(body.path)
+        if target.suffix.lower() != '.json' or not target.is_file():
+            log_event('json select not_found', logging.WARNING, path=body.path)
+            return _error('JSON_NOT_FOUND', 'JSON 文件不存在', status_code=404)
+        try:
+            result = json.loads(target.read_text(encoding='utf-8'))
+        except (OSError, json.JSONDecodeError) as error:
+            log_event('json select read_failed', logging.ERROR, path=body.path, error_type=type(error).__name__)
+            return _error('JSON_INVALID', 'JSON 文件无法读取', _safe_error_details(error), 500)
+        log_event('json select success', path=body.path)
+        return result
 
     @app.post('/api/json/validate', dependencies=[Depends(require_auth)])
     async def validate_json(request: Request):
@@ -389,8 +417,15 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """选择工作区内 INI 配置。"""
         target = safe_path(body.path)
         if target.suffix.lower() != '.ini' or not target.is_file():
+            log_event('ini select not_found', logging.WARNING, path=body.path)
             return _error('INI_NOT_FOUND', 'INI 配置不存在', status_code=404)
-        return {'path': target.relative_to(root).as_posix(), 'content': target.read_text(encoding='utf-8')}
+        try:
+            content = target.read_text(encoding='utf-8')
+        except OSError as error:
+            log_event('ini select read_failed', logging.ERROR, path=body.path, error_type=type(error).__name__)
+            return _error('INI_READ_FAILED', 'INI 配置读取失败', _safe_error_details(error), 500)
+        log_event('ini select success', path=body.path)
+        return {'path': target.relative_to(root).as_posix(), 'content': content}
 
     @app.get('/api/temp', dependencies=[Depends(require_auth)])
     async def list_temp():
@@ -418,23 +453,37 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         checked_name = safe_temp_name(name)
         target = safe_temp_path(checked_name)
         if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or _is_reparse_point(target):
+            log_event('temp read not_found', logging.WARNING, name=checked_name)
             return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
-        return Response(target.read_bytes(), media_type='application/json')
+        try:
+            content = target.read_bytes()
+        except OSError as error:
+            log_event('temp read read_failed', logging.ERROR, name=checked_name, error_type=type(error).__name__)
+            return _error('TEMP_READ_FAILED', '临时文件无法读取', _safe_error_details(error), 500)
+        log_event('temp read success', name=checked_name)
+        return Response(content, media_type='application/json')
 
     @app.post('/api/temp/delete', dependencies=[Depends(require_auth)])
     async def delete_temp(payload: TempDeleteRequest):
         """删除已确认的临时 JSON 文件。"""
         if not payload.confirmed:
+            log_event('temp delete invalid', logging.WARNING)
             return _error('TEMP_CONFIRM_REQUIRED', '删除临时文件必须确认', status_code=400)
         temp = app.state.program_dir / 'Temp'
         deleted = []
         for name in dict.fromkeys(payload.names):
             target = safe_temp_path(name)
             if not name.startswith('Temp_') or not name.endswith('.json') or not target.is_file() or _is_reparse_point(target):
+                log_event('temp delete not_found', logging.WARNING, name=name)
                 return _error('TEMP_NOT_FOUND', '临时文件不存在', status_code=404)
             deleted.append(name)
-        for name in deleted:
-            (temp / name).unlink()
+        try:
+            for name in deleted:
+                (temp / name).unlink()
+        except OSError as error:
+            log_event('temp delete failed', logging.ERROR, name=deleted[0], error_type=type(error).__name__)
+            return _error('TEMP_DELETE_FAILED', '临时文件删除失败', _safe_error_details(error), 500)
+        log_event('temp delete success', name=deleted[0] if deleted else '')
         return {'deleted': True, 'names': deleted, 'message': '已删除'}
 
     @app.post('/api/push', dependencies=[Depends(require_auth)])
