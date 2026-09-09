@@ -31,6 +31,22 @@ class FakeProcessManager:
         return None
 
 
+def test_frontend_starts_polling_with_an_immediate_status_request(tmp_path):
+    """推送成功后前端应立即请求已有日志，而非等待定时器。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    app_script = resource_dir / 'app.js'
+    app_script.write_text(
+        (Path(__file__).parents[1] / 'web' / 'app.js').read_text(encoding='utf-8'),
+        encoding='utf-8',
+    )
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    script = TestClient(create_app(tmp_path, config_path, resource_dir, FakeProcessManager())).get('/app.js').text
+
+    assert 'poll();' in script
+    assert 'state.timer = setInterval(poll, 1000);' in script
 def test_is_reparse_point_treats_windows_failure_sentinel_as_not_reparse(tmp_path, monkeypatch):
     """Windows 属性查询失败时应返回 False，而不是误判为重解析点。"""
     monkeypatch.setattr(web_server.os, 'name', 'nt')

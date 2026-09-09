@@ -144,13 +144,15 @@
 
   function startPolling() {
     if (state.timer) return;
-    state.timer = setInterval(function () {
+    function poll() {
       request('/api/push/status?cursor=' + state.cursor).then(function (data) {
         setMessage('push-status', data.status);
         data.outputs.forEach(function (item) { state.cursor = Math.max(state.cursor, item.sequence); document.getElementById('logs').textContent += '\n' + item.sequence + ' | ' + item.stream + ' | ' + item.message; });
         if (data.status !== 'running') { clearInterval(state.timer); state.timer = null; }
       }).catch(function () { clearInterval(state.timer); state.timer = null; });
-    }, 1000);
+    }
+    state.timer = setInterval(poll, 1000);
+    poll();
   }
 
   function updateActions() {
