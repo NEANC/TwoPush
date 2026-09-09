@@ -61,6 +61,17 @@ def test_is_reparse_point_treats_windows_failure_sentinel_as_not_reparse(tmp_pat
 
 
 
+def test_create_app_stores_logger(tmp_path):
+    """应用应保存传入的日志记录器。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    logger = __import__('logging').getLogger('web-test-logger')
+
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), logger=logger)
+
+    assert app.state.logger is logger
 def test_create_app_serves_home_and_sets_security_header(tmp_path):
     """应用应提供首页并设置禁止来源策略。"""
     resource_dir = tmp_path / 'web'

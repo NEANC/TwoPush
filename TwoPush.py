@@ -25,8 +25,13 @@ from urllib.parse import unquote_plus, urlencode, urlsplit, urlunsplit
 from modules.config_manager import ConfigManager
 from modules.logger_manager import (
     add_file_logger,
+    cleanup_gui_logs,
     cleanup_old_logs,
+    close_gui_logger,
     raw_read_save_enabled,
+    sanitize_log_message,
+    set_max_files,
+    setup_gui_logger,
     setup_logger,
 )
 from modules.notification import (
@@ -87,47 +92,61 @@ def _cleanup_web_server(server, preserve_exception=False):
 
 
 def run_web_server(config_path=DEFAULT_CONFIG_FILE):
-    """初始化并运行 Web 服务，退出时清理推送进程管理器。"""
+    """初始化并运行 Web 服务，统一处理日志与资源清理。"""
     from modules.push_process import PushProcessManager
     from modules.web_server import WebServerControl, create_app
 
-    logger = setup_logger(console_enabled=True)
-    config = ConfigManager(
-        config_file=config_path,
-        logger=logger,
-        app_name='TwoPush',
-        non_interactive=True,
-    )
-    config.load()
-    if not config.validate():
-        return 2
-
-    process_manager = PushProcessManager()
-    control = WebServerControl()
+    logger = setup_gui_logger()
+    process_manager = None
+    control = None
     server = None
+    first_error = None
     try:
+        config = ConfigManager(
+            config_file=config_path,
+            logger=logger,
+            app_name='TwoPush',
+            non_interactive=True,
+        )
+        config.load()
+        raw_max_files = None
+        try:
+            import configparser
+            raw = configparser.ConfigParser()
+            raw.read(config_path, encoding='utf-8')
+            raw_max_files = raw.get('Logs', 'max_files', fallback=None)
+        except Exception:
+            raw_max_files = None
+        try:
+            max_files = int(raw_max_files)
+            if max_files < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            max_files = 15
+            logger.warning('GUI 日志保留数量无效，使用安全默认值 15')
+        set_max_files(logger, max_files)
+        cleanup_gui_logs(logger)
+        if not config.validate():
+            return 2
+
+        process_manager = PushProcessManager()
+        control = WebServerControl()
         app = create_app(
-            os.path.dirname(os.path.abspath(config_path)),
-            config_path,
+            os.path.dirname(os.path.abspath(config_path)), config_path,
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'),
-            process_manager,
-            server_control=control,
+            process_manager, server_control=control, logger=logger,
         )
         port = WEB_DEFAULT_PORT
         access_token = config.get_attr('access_token', '')
         host = app.state.host
-
         import uvicorn
 
         def build_server(server_port):
             """按指定端口创建 Uvicorn 服务。"""
-            return uvicorn.Server(uvicorn.Config(
-                app,
-                host=host,
-                port=server_port,
-                access_log=False,
-                log_config=None,
-            ))
+            return uvicorn.Server(uvicorn.Config(app, host=host, port=server_port,
+                                                  access_log=False, log_config=None))
+
+        server_error = []
 
         def run_server():
             """运行服务并记录启动异常。"""
@@ -137,8 +156,6 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                 server_error.append(error)
 
         server = build_server(port)
-        server_error = []
-
         def watch_stop_request():
             """将 Web 停止请求转换为 Uvicorn 退出信号。"""
             while not server.should_exit:
@@ -147,8 +164,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                     return
                 time.sleep(0.05)
 
-        watcher = threading.Thread(target=watch_stop_request, daemon=True)
-        watcher.start()
+        threading.Thread(target=watch_stop_request, daemon=True).start()
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
         while not getattr(server, 'started', False):
@@ -179,17 +195,28 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         webbrowser.open(url)
         server_thread.join()
         return 0
+    except BaseException as error:
+        first_error = error
+        raise
     finally:
-        try:
-            _cleanup_web_server(server, preserve_exception=sys.exc_info()[0] is not None)
-        finally:
+        for cleanup in (
+            lambda: _cleanup_web_server(server, preserve_exception=first_error is not None),
+            lambda: control.stop() if control is not None else None,
+            lambda: process_manager.stop() if process_manager is not None else None,
+            lambda: process_manager.shutdown() if process_manager is not None else None,
+        ):
             try:
-                control.stop()
-            finally:
-                try:
-                    process_manager.stop()
-                finally:
-                    process_manager.shutdown()
+                cleanup()
+            except BaseException as error:
+                if first_error is None:
+                    first_error = error
+        try:
+            close_gui_logger(logger)
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+        if first_error is not None and sys.exc_info()[0] is None:
+            raise first_error
 
 
 _PROXY_SENSITIVE_QUERY_KEYS = frozenset({

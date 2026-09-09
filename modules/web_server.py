@@ -7,6 +7,7 @@ import ctypes
 import json
 import os
 import threading
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -90,7 +91,7 @@ def _is_hidden(path: Path) -> bool:
 
 
 def create_app(root_dir, config_path, resource_dir, process_manager,
-               server_control=None, session_state=None):
+               server_control=None, session_state=None, logger=None):
     """创建固定工作区的 FastAPI 应用。"""
     root = Path(root_dir).resolve()
     config_file = Path(config_path).resolve()
@@ -129,6 +130,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             raise first_error
 
     app = FastAPI(lifespan=lifespan)
+    app.state.logger = logger or logging.getLogger('TwoPush.GUI')
     app.state.process_manager = process_manager
     app.state.config_file = config_file
     app.state.program_dir = Path(getattr(process_manager, 'program_dir', root)).resolve()
@@ -136,10 +138,16 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     app.state.workspace_root = root
     app.state.host = resolve_web_host(access_token)
 
+    def log_event(event, **fields):
+        """记录不包含请求明细的业务事件。"""
+        summary = ' '.join(f'{key}={value}' for key, value in fields.items())
+        app.state.logger.info('Web %s%s', event, f' {summary}' if summary else '')
+
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
         """为所有响应设置安全响应头。"""
         response = await call_next(request)
+        response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         return response
 
@@ -234,6 +242,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """返回首页，允许有效令牌首次查询访问。"""
         if not authorized(request, allow_query=True):
             raise HTTPException(401, '需要有效的访问令牌')
+        log_event('首页')
         return get_web_resource('index.html', resources.parent)
 
     @app.get('/app.js')
@@ -249,6 +258,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.get('/api/session', dependencies=[__import__('fastapi').Depends(require_auth)])
     async def session_info():
         """返回不含令牌的会话信息。"""
+        log_event('session')
         return {'host': app.state.host, 'authenticated': len(access_token) >= 16}
 
     @app.get('/api/files', dependencies=[__import__('fastapi').Depends(require_auth)])
@@ -268,6 +278,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
             except (OSError, ValueError):
                 continue
             items.append({'name': item.name, 'path': relative, 'type': 'directory' if item.is_dir() else 'file'})
+        log_event('files')
         return {'path': '' if directory == root else directory.relative_to(root).as_posix(), 'items': items, 'files': items}
 
     @app.get('/api/json', dependencies=[__import__('fastapi').Depends(require_auth)])
@@ -277,6 +288,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         if target.suffix.lower() != '.json' or not target.is_file():
             return _error('JSON_NOT_FOUND', 'JSON 文件不存在', status_code=404)
         try:
+            log_event('json read')
             return json.loads(target.read_text(encoding='utf-8'))
         except (OSError, json.JSONDecodeError) as error:
             return _error('JSON_INVALID', 'JSON 文件无法读取', {'reason': str(error)})

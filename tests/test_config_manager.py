@@ -11,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_manager import ConfigManager
-from modules.logger_manager import ColoredFormatter, raw_read_save_enabled, setup_logger
+from modules.logger_manager import ColoredFormatter, raw_read_save_enabled, sanitize_log_message, setup_logger
 
 
 class FakeStdin:
@@ -119,6 +119,21 @@ def test_default_config_excludes_github_repo(tmp_path):
     assert 'github_repo' not in content
 
 
+def test_sanitize_log_message_masks_credentials_and_absolute_paths(tmp_path):
+    """日志摘要应遮蔽凭据、认证头和绝对路径。"""
+    message = (
+        f'token=abc secret: xyz password=hunter2 access_token=long '
+        f'smtp_password=mail Authorization: Bearer abc '
+        f'http://user:pass@example.com and {tmp_path / "config.ini"}'
+    )
+
+    sanitized = sanitize_log_message(message, root=tmp_path)
+
+    assert 'abc' not in sanitized
+    assert 'hunter2' not in sanitized
+    assert 'mail' not in sanitized
+    assert str(tmp_path) not in sanitized
+    assert '***' in sanitized
 def test_default_config_enables_file_logs_by_default(tmp_path):
     """默认配置应启用文件日志保存"""
     config_file = tmp_path / 'TwoPush.ini'

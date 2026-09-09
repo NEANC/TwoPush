@@ -20,7 +20,42 @@ _GUI_LOG_PATTERN = re.compile(r'^TwoPush-GUI_(\d{4}-\d{2}-\d{2})\.log$')
 _GUI_LOGGER_LOCK = threading.RLock()
 
 
-class ColoredFormatter(logging.Formatter):
+def sanitize_log_message(message, root=None):
+    """安全处理日志文本，遮蔽凭据、认证信息和绝对路径。"""
+    try:
+        text = str(message)
+        patterns = [
+            (r'(?i)(authorization\s*:\s*(?:bearer\s+)?)[^\s,;]+', r'\1***'),
+            (r'(?i)(smtp_password|access_token|token|secret|password)\s*[:=]\s*[^\s,;]+', r'\1=***'),
+            (r'(?i)(https?://|socks5?://)([^/@\s]+):([^/@\s]+)@', r'\1***:***@'),
+        ]
+        for pattern, replacement in patterns:
+            text = re.sub(pattern, replacement, text)
+        if root is not None:
+            root_text = str(Path(root).resolve())
+            text = text.replace(root_text, '<root>')
+        text = re.sub(r'(?i)([A-Za-z]:\\[^\s,;]+)', '<path>', text)
+        text = re.sub(r'(?<![\w])/(?:[^\s,;]+/)*[^\s,;]+', '<path>', text)
+        return text
+    except Exception:
+        return '[日志摘要不可用]'
+
+
+class SanitizingLoggerAdapter(logging.LoggerAdapter):
+    """为日志记录器统一应用安全摘要。"""
+
+    def process(self, msg, kwargs):
+        return sanitize_log_message(msg), kwargs
+
+
+class SanitizingFormatter(logging.Formatter):
+    """输出安全日志文本。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return sanitize_log_message(super().format(record))
+
+
+class ColoredFormatter(SanitizingFormatter):
     """带颜色的日志格式化器，仅作用于控制台输出。"""
 
     LEVEL_COLORS = {
