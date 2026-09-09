@@ -3,6 +3,7 @@
 
 """配置管理器首次运行行为测试"""
 
+import io
 import logging
 import os
 import sys
@@ -10,7 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.config_manager import ConfigManager
-from modules.logger_manager import raw_read_save_enabled, setup_logger
+from modules.logger_manager import ColoredFormatter, raw_read_save_enabled, setup_logger
 
 
 class FakeStdin:
@@ -27,6 +28,21 @@ class FakeEofStdin:
     def isatty(self):
         """返回当前标准输入是否为交互终端"""
         return True
+
+
+def test_captured_formatter_is_utf8_plain_text_without_ansi():
+    """被捕获的日志应保留中文且不包含 ANSI 控制码。"""
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(ColoredFormatter('%(message)s', strip_ansi=True))
+    logger = logging.getLogger('captured-plain-log')
+    logger.handlers.clear()
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+    logger.info('中文日志')
+
+    assert stream.getvalue() == '中文日志\n'
 
 
 def test_generate_default_config_exits_safely_on_eof(tmp_path, monkeypatch):

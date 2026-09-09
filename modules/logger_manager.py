@@ -33,13 +33,16 @@ class ColoredFormatter(logging.Formatter):
         'CRITICAL': colorama.Back.RED + colorama.Fore.BLACK + colorama.Style.BRIGHT,
     }
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, strip_ansi: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.strip_ansi = strip_ansi
         colorama.init(autoreset=True)
 
     def format(self, record: logging.LogRecord) -> str:
-        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
         result = super().format(record)
+        if self.strip_ansi:
+            return result
+        color = self.LEVEL_COLORS.get(record.levelname, colorama.Fore.WHITE)
         return f"{color}{result}{colorama.Style.RESET_ALL}"
 
 
