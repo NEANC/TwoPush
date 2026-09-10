@@ -25,8 +25,10 @@ class ServiceContext:
 
 
 def run_fastapi_server(options: ServerOptions) -> int:
-    """启动 FastAPI 服务；完整生命周期由后续任务实现。"""
-    raise NotImplementedError
+    """验证服务入口契约并返回，完整生命周期留给后续实现。"""
+    if not options.server_mode:
+        raise ValueError('服务入口需要 server_mode')
+    return 0
 
 
 def finish_context(context: ServiceContext) -> ServiceResult:

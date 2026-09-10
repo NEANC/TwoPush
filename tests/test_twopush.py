@@ -29,13 +29,31 @@ def mock_cleanup_residue(monkeypatch):
     )
 
 
-def test_parse_args_uses_config_ini_by_default(monkeypatch):
-    """未指定配置路径时应默认使用 config.ini"""
-    monkeypatch.setattr(sys, 'argv', ['TwoPush.py'])
-
+def test_parse_args_registers_server_options_and_rejects_mixed_modes(monkeypatch):
+    """服务参数应可解析，且不能与普通 CLI 混用。"""
+    monkeypatch.setattr(sys, 'argv', [
+        'TwoPush.py', '--server', '--host', '127.0.0.1', '--port', '9000',
+        '--public-url', 'https://example.test/console', '--emit-launch-token',
+    ])
     args = TwoPush.parse_args()
+    assert args.server is True
+    assert args.host == '127.0.0.1'
+    assert args.port == '9000'
+    assert args.public_url == 'https://example.test/console'
+    assert args.emit_launch_token is True
 
-    assert args.config == 'config.ini'
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--server', '--push', 'push.json'])
+    with pytest.raises(SystemExit):
+        TwoPush.parse_args()
+
+
+def test_main_routes_server_mode_to_explicit_entry(monkeypatch):
+    """--server 必须路由到明确的服务入口。"""
+    monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '--server'])
+    calls = []
+    monkeypatch.setattr(TwoPush, 'run_fastapi_server', lambda options: calls.append(options) or 7)
+    assert TwoPush.main() == 7
+    assert calls[0].server_mode is True
 
 
 def test_should_start_web_only_without_arguments(monkeypatch):

@@ -105,7 +105,8 @@ class ConfigManager:
                  comments: Optional[Dict[str, str]] = None,
                  app_name: str = '',
                  first_run_callback: Optional[Callable[[], None]] = None,
-                 non_interactive: bool = False):
+                 non_interactive: bool = False,
+                 temp_dir: Optional[str] = None):
         """
         初始化配置管理器
 
@@ -143,6 +144,7 @@ class ConfigManager:
         self.app_name = app_name
         self._first_run_callback = first_run_callback
         self.non_interactive = non_interactive
+        self.temp_dir = temp_dir
 
         # 动态属性字典
         self._attrs: Dict[str, str] = {}
@@ -422,9 +424,12 @@ class ConfigManager:
                 self._attrs[key] = val
 
         # ── 临时文件夹特殊处理 ──
-        if 'temp_folder' in self._attrs:
+        if self.temp_dir is not None:
+            self._attrs['temp_folder'] = str(self.temp_dir)
+            self._ensure_temp_folder_exists()
+        elif 'temp_folder' in self._attrs:
             temp_folder_config = self.config.get('Paths', 'temp_folder', fallback='Temp').strip()
-            self._attrs['temp_folder'] = resolve_temp_folder(
+            self._attrs['temp_folder'] = self.temp_dir or resolve_temp_folder(
                 temp_folder_config, self.app_name, _get_program_dir(), self.logger
             )
             self._ensure_temp_folder_exists()

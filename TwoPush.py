@@ -48,6 +48,7 @@ from modules.json_manager import (
     load_json_template,
 )
 from modules.server_options import ServerOptions, resolve_server_options
+from modules.server_core import run_fastapi_server
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
@@ -218,10 +219,17 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         server_sockets = getattr(server, 'servers', None) or []
         if server_sockets:
             actual_port = server_sockets[0].sockets[0].getsockname()[1]
-        url = f'http://127.0.0.1:{actual_port}{resolved.base_path}'
         launch_token = auth_store.issue_launch_token() if resolved.emit_launch_token else None
         if launch_token:
-            url += '?' + urlencode({'launch_token': launch_token})
+            from urllib.parse import parse_qsl
+            parsed_url = urlsplit(resolved.public_url or f'http://127.0.0.1:{actual_port}/')
+            query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
+            query['launch_token'] = launch_token
+            url = urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path or '/', urlencode(query), ''))
+        else:
+            default_public_url = f'http://127.0.0.1:{resolved.port}/'
+            url = (resolved.public_url if resolved.public_url != default_public_url
+                   else f'http://127.0.0.1:{actual_port}{resolved.base_path}')
         if not getattr(server, 'started', False):
             if server_thread.is_alive():
                 server_thread.join(timeout=1)
@@ -290,6 +298,11 @@ def parse_args():
         default=None,
         help='指定推送 JSON 文件路径，示例 -p C:\\path\\report.json',
     )
+    parser.add_argument('--server', action='store_true', help='启动 FastAPI 服务')
+    parser.add_argument('--host', default=None, help='服务监听地址')
+    parser.add_argument('--port', default=None, help='服务监听端口')
+    parser.add_argument('--public-url', default=None, help='服务公开访问 URL')
+    parser.add_argument('--emit-launch-token', action='store_true', help='生成一次性启动令牌')
     parser.add_argument(
         '--update', '--Update', action='store_true', dest='update',
         help='检查并执行自我更新',
@@ -329,7 +342,17 @@ def parse_args():
     # 用于文件拖放
     parser.add_argument('jsonfile',nargs='?',default=None,help=argparse.SUPPRESS)
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    server_values = (args.host, args.port, args.public_url, args.emit_launch_token)
+    ordinary_values = (args.push, args.jsonfile, args.update, args.update_force,
+                       args.template, args.template_force, args.version)
+    if args.server and any(value for value in ordinary_values):
+        parser.error('--server 不能与普通 CLI 参数混用')
+    if not args.server and any(value is not None for value in server_values[:3]):
+        parser.error('--host、--port、--public-url 只能与 --server 一起使用')
+    if not args.server and args.emit_launch_token:
+        parser.error('--emit-launch-token 只能与 --server 一起使用')
+    return args
 
 
 def is_config_path_explicit(argv):
@@ -755,6 +778,12 @@ def main():
     if should_start_web():
         return run_web_server()
     args = parse_args()
+    if args.server:
+        return run_fastapi_server(ServerOptions(
+            True, Path(args.config), host=args.host, port=args.port,
+            public_url=args.public_url, emit_launch_token=args.emit_launch_token,
+            silent=args.silent,
+        ))
 
     # 自更新内部参数
     if args.self_update_verify:
