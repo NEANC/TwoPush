@@ -123,8 +123,11 @@ def _read_config(path: Path) -> tuple[str, str | None]:
         parser.read(path, encoding='utf-8')
     except (OSError, configparser.Error) as error:
         raise _error('CONFIG_INVALID', '服务配置文件无效') from error
-    token = parser.get('Web', 'access_token', fallback='').strip()
-    temp = parser.get('Paths', 'temp_folder', fallback='').strip() or None
+    try:
+        token = parser.get('Web', 'access_token', fallback='').strip()
+        temp = parser.get('Paths', 'temp_folder', fallback='').strip() or None
+    except configparser.Error as error:
+        raise _error('CONFIG_INVALID', '服务配置文件无效') from error
     return token if len(token) >= 16 else '', temp
 
 
@@ -179,6 +182,10 @@ def probe_directory(path: Path, error_code: str) -> None:
             stream.write('probe')
             stream.flush()
     except OSError as error:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
         raise _error(error_code, '运行目录不可用') from error
     try:
         probe.unlink()

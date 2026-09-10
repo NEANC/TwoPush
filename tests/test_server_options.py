@@ -201,6 +201,75 @@ def test_probe_directory_failures_have_stable_error(operation, tmp_path, monkeyp
     assert 'secret' not in str(error.value)
 
 
+def test_probe_write_failure_cleans_probe_file(tmp_path, monkeypatch):
+    """探针写入或 flush 失败后尽力清理且不残留文件。"""
+    path = tmp_path / 'runtime'
+    path.mkdir()
+    original_open = Path.open
+
+    class FailingFlush:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+        def write(self, value):
+            return self.stream.write(value)
+
+        def flush(self):
+            raise OSError('secret flush detail')
+
+    def open_and_fail_flush(self, *args, **kwargs):
+        return FailingFlush(original_open(self, *args, **kwargs))
+
+    monkeypatch.setattr(Path, 'open', open_and_fail_flush)
+    with pytest.raises(ServerConfigError) as error:
+        probe_directory(path, 'TEMP_UNAVAILABLE')
+    assert list(path.glob('.twopush-probe-*')) == []
+    assert (error.value.code, error.value.exit_code, error.value.safe_message) == (
+        'TEMP_UNAVAILABLE', 2, '运行目录不可用')
+    assert error.value.__cause__.args == ('secret flush detail',)
+
+
+def test_probe_cleanup_failure_preserves_write_failure(tmp_path, monkeypatch):
+    """探针清理失败时仍保留首个写入异常语义。"""
+    path = tmp_path / 'runtime'
+    path.mkdir()
+    original_open = Path.open
+
+    class FailingWrite:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+        def write(self, value):
+            raise OSError('secret write detail')
+
+        def flush(self):
+            self.stream.flush()
+
+    def open_and_fail_write(self, *args, **kwargs):
+        return FailingWrite(original_open(self, *args, **kwargs))
+
+    monkeypatch.setattr(Path, 'open', open_and_fail_write)
+    monkeypatch.setattr(Path, 'unlink', lambda self: (_ for _ in ()).throw(OSError('secret delete detail')))
+    with pytest.raises(ServerConfigError) as error:
+        probe_directory(path, 'TEMP_UNAVAILABLE')
+    assert (error.value.code, error.value.exit_code, error.value.safe_message) == (
+        'TEMP_UNAVAILABLE', 2, '运行目录不可用')
+    assert error.value.__cause__.args == ('secret write detail',)
+    assert 'secret delete detail' not in str(error.value)
+
+
 def test_hostname_with_any_non_loopback_address_is_rejected(tmp_path, monkeypatch):
     """多地址主机名包含非 loopback 地址时拒绝远程监听。"""
     config = tmp_path / 'config.ini'
@@ -216,7 +285,18 @@ def test_hostname_with_any_non_loopback_address_is_rejected(tmp_path, monkeypatc
     assert error.value.code == 'AUTH_REQUIRED'
 
 
-def test_token_is_not_exposed_in_configuration_error(tmp_path):
+def test_config_interpolation_failure_is_safe_configuration_error(tmp_path):
+    """配置插值异常统一转换为不泄露详情的 CONFIG_INVALID。"""
+    config = tmp_path / 'config.ini'
+    config.write_text('[Web]\naccess_token = %\n', encoding='utf-8')
+    with pytest.raises(ServerConfigError) as error:
+        resolve_server_options(ServerOptions(True, config), {})
+    assert (error.value.code, error.value.exit_code) == ('CONFIG_INVALID', 2)
+    assert error.value.safe_message == '服务配置文件无效'
+    assert '%' not in error.value.safe_message
+    assert str(config) not in error.value.safe_message
+
+
     """配置错误消息不包含访问令牌。"""
     token = 'secret-token-value-1234'
     config = tmp_path / 'config.ini'
