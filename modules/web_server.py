@@ -27,6 +27,7 @@ from modules.web_models import (
     resolve_web_host,
 )
 from modules.logger_manager import sanitize_log_message
+from modules.version import VERSION
 from modules.web_resources import get_web_resource
 
 
@@ -42,18 +43,22 @@ class WebSessionState:
 class WebServerControl:
     """控制 Web 服务停止请求。"""
 
-    def __init__(self):
+    def __init__(self, exit_callback=None):
         """初始化服务控制状态。"""
         self.stop_requested = False
         self.lock = threading.Lock()
         self.first_error = None
+        self.exit_callback = exit_callback
 
     def stop(self):
         """记录首个停止原因并标记服务应停止。"""
         with self.lock:
-            if not self.stop_requested:
-                self.first_error = 'service_stop'
+            if self.stop_requested:
+                return
+            self.first_error = 'service_stop'
             self.stop_requested = True
+            if self.exit_callback is not None:
+                self.exit_callback()
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -310,7 +315,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def health():
         """返回不认证且不缓存的服务健康状态。"""
         stopping = control.stop_requested
-        response = JSONResponse({'ready': not stopping}, status_code=503 if stopping else 200)
+        response = JSONResponse({'status': 'stopping' if stopping else 'ready', 'version': VERSION}, status_code=503 if stopping else 200)
         response.headers['Cache-Control'] = 'no-store'
         return response
 
@@ -595,7 +600,6 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def stop_server():
         """只记录服务停止请求并立即返回。"""
         control.stop()
-        clear_auth_once()
-        return JSONResponse({'stopping': True, 'message': '服务正在停止'}, status_code=200)
+        return JSONResponse({'stopping': True, 'message': '服务正在停止'}, status_code=202)
 
     return app

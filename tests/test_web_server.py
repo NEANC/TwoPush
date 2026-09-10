@@ -63,7 +63,7 @@ def test_lifespan_clears_auth_and_health_returns_503_after_stop(tmp_path):
         assert client.post('/api/auth/launch', json={'launch_token': token}).status_code == 204
         session = client.cookies.get('twopush_session')
         client.post('/api/service/stop')
-        assert client.get('/api/health').status_code == 503
+        assert client.get('/api/health').json() == {'status': 'stopping', 'version': web_server.VERSION}
     assert not store.is_session_valid(session)
 
 
@@ -293,7 +293,7 @@ def test_task6_routes_and_push_payload_contract(tmp_path):
     assert client.post('/api/push', json={'action': 'save', 'path': 'payload.json'}).status_code == 200
     assert client.post('/api/push', json={'action': 'save_and_push', 'path': 'payload.json'}).json()['task_id'] == 'file-task'
     assert client.post('/api/push/stop').status_code == 200
-    assert client.post('/api/service/stop').status_code == 200
+    assert client.post('/api/service/stop').status_code == 202
     assert client.post('/api/json/validate', json={'content': '{"title":"t","content":"c","channels":[{}]}'}).status_code == 200
 
 
@@ -580,7 +580,7 @@ def test_stop_is_immediate_idempotent_and_health_reports_stopping(tmp_path):
     client = TestClient(app)
     first = client.post('/api/service/stop')
     second = client.post('/api/service/stop')
-    assert first.status_code == second.status_code == 200
+    assert first.status_code == second.status_code == 202
     assert client.get('/api/health').status_code == 503
 
 
