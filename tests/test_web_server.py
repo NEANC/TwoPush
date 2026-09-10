@@ -476,6 +476,77 @@ def test_lifespan_shutdown_cleans_manager_after_control_stop_error(tmp_path):
     assert manager.calls == ['stop', 'shutdown']
 
 
+def test_auth_launch_sets_strict_session_cookie_and_health_is_public(tmp_path):
+    """启动令牌应兑换为严格会话 Cookie，健康检查无需认证。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = legacy-token\n', encoding='utf-8')
+    from modules.server_auth import ServerAuthStore
+    store = ServerAuthStore('legacy-token')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(),
+                     base_path='/console', public_url_is_https=True, auth_store=store)
+    client = TestClient(app)
+    token = store.issue_launch_token()
+    response = client.post('/console/api/auth/launch', json={'launch_token': token})
+    assert response.status_code == 204
+    cookie = response.headers['set-cookie']
+    assert 'twopush_session=' in cookie
+    assert 'HttpOnly' in cookie and 'SameSite=strict' in cookie and 'Path=/console' in cookie
+    assert 'Secure' in cookie and 'Max-Age' not in cookie
+    assert client.get('/console/api/health').status_code == 200
+    assert client.get('/console/api/session').status_code == 200
+
+
+def test_launch_auth_rejects_extra_json_fields(tmp_path):
+    """启动兑换接口只接受固定的 launch_token JSON 字段。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = legacy-token\n', encoding='utf-8')
+    store = web_server.ServerAuthStore('legacy-token')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), auth_store=store)
+    token = store.issue_launch_token()
+
+    response = TestClient(app).post('/api/auth/launch', json={'launch_token': token, 'extra': True})
+
+    assert response.status_code == 422
+
+
+def test_temp_routes_use_injected_canonical_temp_dir(tmp_path):
+    """临时接口必须使用注入的规范临时目录而非程序目录。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    injected = tmp_path / 'injected-temp'
+    injected.mkdir()
+    (injected / 'Temp_ok.json').write_text('{}', encoding='utf-8')
+    manager = FakeProcessManager()
+    manager.program_dir = tmp_path / 'wrong-program'
+    app = create_app(tmp_path, config_path, resource_dir, manager, temp_dir=injected)
+
+    response = TestClient(app).get('/api/temp')
+
+    assert response.status_code == 200
+    assert response.json()['files'] == ['Temp_ok.json']
+
+
+def test_stop_is_immediate_idempotent_and_health_reports_stopping(tmp_path):
+    """服务停止只设置首因，立即返回并使健康检查返回 503。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    manager = FakeProcessManager()
+    app = create_app(tmp_path, config_path, resource_dir, manager)
+    client = TestClient(app)
+    first = client.post('/api/service/stop')
+    second = client.post('/api/service/stop')
+    assert first.status_code == second.status_code == 200
+    assert client.get('/api/health').status_code == 503
+
+
 def test_lifespan_shutdown_preserves_first_error_and_runs_all_cleanup(tmp_path):
     """多阶段清理异常时应传播最早异常并完成所有清理调用。"""
     resource_dir = tmp_path / 'web'
