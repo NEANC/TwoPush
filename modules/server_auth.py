@@ -1,29 +1,50 @@
 #!/usr/bin/env python3
 # -_- coding: utf-8 -_-
 
-"""服务认证存储的固定接口。"""
+"""服务认证存储。"""
+
+import threading
+import time
+import secrets
 
 
 class ServerAuthStore:
-    """保存服务长期认证信息的基础接口。"""
+    """保存长期令牌、启动令牌和进程内会话。"""
 
     def __init__(self, access_token, clock=None):
-        """保存长期访问令牌和可选时钟。"""
+        """初始化认证存储。"""
         self.access_token = access_token
-        self.clock = clock
+        self.clock = clock or time.time
+        self._launch_tokens = {}
+        self._sessions = set()
+        self._lock = threading.Lock()
 
     def issue_launch_token(self):
-        """签发一次性启动令牌。"""
-        raise NotImplementedError
+        """签发一个 256 位以上熵的一次性启动令牌。"""
+        token = secrets.token_urlsafe(32)
+        with self._lock:
+            self._launch_tokens[token] = self.clock() + 60
+        return token
 
     def consume_launch_token(self, token):
-        """兑换一次性启动令牌。"""
-        raise NotImplementedError
+        """原子兑换未过期启动令牌并创建进程内会话。"""
+        if not isinstance(token, str):
+            return None
+        with self._lock:
+            expires_at = self._launch_tokens.pop(token, None)
+            if expires_at is None or self.clock() >= expires_at:
+                return None
+            session = secrets.token_urlsafe(32)
+            self._sessions.add(session)
+            return session
 
     def is_session_valid(self, session):
-        """检查会话是否有效。"""
-        raise NotImplementedError
+        """检查进程内会话是否有效。"""
+        with self._lock:
+            return isinstance(session, str) and session in self._sessions
 
     def clear(self):
-        """清除令牌和会话。"""
-        raise NotImplementedError
+        """清除启动令牌和所有进程内会话。"""
+        with self._lock:
+            self._launch_tokens.clear()
+            self._sessions.clear()
