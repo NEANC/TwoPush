@@ -122,11 +122,26 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     except (OSError, configparser.Error):
         access_token = ''
 
+    auth_cleared = False
+
+    def clear_auth_once():
+        """清理认证状态且避免停止流程重复清理。"""
+        nonlocal auth_cleared
+        if auth_cleared:
+            return
+        auth.clear()
+        auth_cleared = True
+
     @asynccontextmanager
     async def lifespan(_app):
         """管理服务生命周期并在退出时清理推送任务。"""
         yield
         first_error = None
+        try:
+            clear_auth_once()
+        except Exception as error:
+            if first_error is None:
+                first_error = error
         try:
             control.stop()
         except Exception as error:
@@ -304,17 +319,14 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         """返回首页并兑换 URL 中的一次性启动令牌。"""
         launch_token = request.query_params.get('launch_token')
         if launch_token:
-            session_token = auth.consume_launch_token(launch_token)
-            if session_token is None:
+            if not auth.has_launch_token(launch_token):
                 raise HTTPException(401, '需要有效的访问令牌')
-            response = HTMLResponse(get_web_resource('index.html', resources.parent))
-            response.set_cookie('twopush_session', session_token, httponly=True,
-                                samesite='strict', secure=public_url_is_https,
-                                path=base_path or '/')
-            return response
+            return HTMLResponse(get_web_resource('index.html', resources.parent).replace(
+                b'__BASE_PATH__', base_path.encode('utf-8')))
         if not authorized(request, allow_query=True):
             raise HTTPException(401, '需要有效的访问令牌')
-        return get_web_resource('index.html', resources.parent)
+        return HTMLResponse(get_web_resource('index.html', resources.parent).replace(
+            b'__BASE_PATH__', base_path.encode('utf-8')))
 
     @app.get('/app.js')
     async def app_js():
@@ -583,6 +595,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def stop_server():
         """只记录服务停止请求并立即返回。"""
         control.stop()
+        clear_auth_once()
         return JSONResponse({'stopping': True, 'message': '服务正在停止'}, status_code=200)
 
     return app

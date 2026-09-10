@@ -1,10 +1,10 @@
 (function () {
   'use strict';
 
-  const basePath = window.location.pathname.replace(/\/$/, '');
+  const basePath = document.documentElement.dataset.basePath || '';
   function apiPath(path) { return basePath + path; }
   const query = new URLSearchParams(window.location.search);
-  if (query.get('launch_token')) window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+  const launchToken = query.get('launch_token');
   const state = { kind: 'json', path: '', directory: '', cursor: 0, timer: null, requestVersion: 0, dirty: false };
   const editor = document.getElementById('editor');
 
@@ -177,5 +177,11 @@
   document.getElementById('refresh-temp').onclick = loadTemp;
   document.getElementById('stop-service').onclick = function () { if (window.confirm('确定退出 Web 服务吗？')) request('/api/service/stop', { method: 'POST' }); };
   updateActions();
-  request('/api/session').then(function () { setMessage('session-status', '已连接'); loadFiles(); }).catch(function (error) { setMessage('session-status', error.message); });
+  const authenticate = launchToken
+    ? request('/api/auth/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ launch_token: launchToken }) })
+        .then(function () { window.history.replaceState({}, document.title, window.location.pathname + window.location.hash); })
+    : Promise.resolve();
+  authenticate.then(function () {
+    return request('/api/session');
+  }).then(function () { setMessage('session-status', '已连接'); loadFiles(); }).catch(function (error) { setMessage('session-status', error.message); });
 }());

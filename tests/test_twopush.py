@@ -101,7 +101,8 @@ def test_run_web_server_uses_config_and_opens_default_port_without_probe(monkeyp
     assert calls['config_kwargs']['non_interactive'] is True
     assert calls['loaded'] is True
     assert calls['ran'] is True
-    assert calls['url'] == 'http://127.0.0.1:52233/?token=secret+token%2F%E4%B8%AD%E6%96%87%3F%26%3D'
+    assert calls['url'].startswith('http://127.0.0.1:52233/?launch_token=')
+    assert 'access_token=' not in calls['url']
     assert calls['uvicorn_config']['host'] == '0.0.0.0'
     assert calls['uvicorn_config']['access_log'] is False
 

@@ -20,11 +20,21 @@ class ServerAuthStore:
         self._lock = threading.Lock()
 
     def issue_launch_token(self):
-        """签发一个 256 位以上熵的一次性启动令牌。"""
+        """仅为有效长期令牌签发一次性启动令牌。"""
+        if not isinstance(self.access_token, str) or len(self.access_token) < 16:
+            return None
         token = secrets.token_urlsafe(32)
         with self._lock:
             self._launch_tokens[token] = self.clock() + 60
         return token
+
+    def has_launch_token(self, token):
+        """检查启动令牌是否存在且未过期，不消耗令牌。"""
+        if not isinstance(token, str):
+            return False
+        with self._lock:
+            expires_at = self._launch_tokens.get(token)
+            return expires_at is not None and self.clock() < expires_at
 
     def consume_launch_token(self, token):
         """原子兑换未过期启动令牌并创建进程内会话。"""

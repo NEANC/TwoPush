@@ -19,10 +19,10 @@ _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 class PushProcessManager:
     """管理单个 TwoPush CLI 子进程及其输出。"""
 
-    def __init__(self, program_dir=None, gui_mode=False, logger=None):
+    def __init__(self, program_dir=None, gui_mode=False, logger=None, temp_dir=None):
         """初始化控制器。"""
         self.program_dir = Path(program_dir or Path(__file__).resolve().parent.parent)
-        self.temp_dir = self.program_dir / 'Temp'
+        self.temp_dir = Path(temp_dir).resolve() if temp_dir is not None else self.program_dir / 'Temp'
         self.gui_mode = gui_mode
         self.logger = logger
         self._lock = threading.RLock()

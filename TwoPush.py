@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import webbrowser
+from pathlib import Path
 
 from contextlib import contextmanager
 from urllib.parse import unquote_plus, urlencode, urlsplit, urlunsplit
@@ -46,6 +47,7 @@ from modules.json_manager import (
     handle_template_command,
     load_json_template,
 )
+from modules.server_options import ServerOptions, resolve_server_options
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
@@ -129,22 +131,47 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         if not config.validate():
             return 2
 
+        resolved = resolve_server_options(
+            ServerOptions(False, Path(config_path), emit_launch_token=True),
+            os.environ,
+        )
+        process_kwargs = {
+            'gui_mode': True,
+            'logger': logger,
+            'temp_dir': resolved.temp_dir,
+        }
         try:
-            process_manager = PushProcessManager(gui_mode=True, logger=logger)
+            process_manager = PushProcessManager(**process_kwargs)
         except TypeError as error:
             if not ('unexpected keyword argument' in str(error)
                     or 'takes no arguments' in str(error)):
                 raise
-            process_manager = PushProcessManager()
+            process_kwargs.pop('temp_dir', None)
+            try:
+                process_manager = PushProcessManager(**process_kwargs)
+            except TypeError as fallback_error:
+                if 'takes no arguments' not in str(fallback_error):
+                    raise
+                process_manager = PushProcessManager()
+            else:
+                try:
+                    process_manager.temp_dir = resolved.temp_dir
+                except AttributeError:
+                    pass
         control = WebServerControl()
+        from modules.server_auth import ServerAuthStore
+        auth_store = ServerAuthStore(resolved.access_token)
         app = create_app(
             os.path.dirname(os.path.abspath(config_path)), config_path,
             os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web'),
             process_manager, server_control=control, logger=logger,
+            root_path=resolved.root_path, base_path=resolved.base_path,
+            public_url_is_https=bool(resolved.public_url and resolved.public_url.startswith('https://')),
+            temp_dir=resolved.temp_dir, auth_store=auth_store,
         )
-        port = WEB_DEFAULT_PORT
-        access_token = config.get_attr('access_token', '')
-        host = app.state.host
+        port = resolved.port
+        access_token = resolved.access_token
+        host = resolved.host
         import uvicorn
 
         def build_server(server_port):
@@ -191,9 +218,10 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         server_sockets = getattr(server, 'servers', None) or []
         if server_sockets:
             actual_port = server_sockets[0].sockets[0].getsockname()[1]
-        url = f'http://127.0.0.1:{actual_port}/'
-        if len(access_token) >= 16:
-            url += '?' + urlencode({'token': access_token})
+        url = f'http://127.0.0.1:{actual_port}{resolved.base_path}'
+        launch_token = auth_store.issue_launch_token() if resolved.emit_launch_token else None
+        if launch_token:
+            url += '?' + urlencode({'launch_token': launch_token})
         if not getattr(server, 'started', False):
             if server_thread.is_alive():
                 server_thread.join(timeout=1)

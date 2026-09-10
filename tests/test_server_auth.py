@@ -6,9 +6,24 @@
 from modules.server_auth import ServerAuthStore
 
 
+def test_issue_launch_token_requires_valid_long_lived_access_token():
+    """无效长期令牌不得签发启动令牌。"""
+    for access_token in ('', 'short-token'):
+        store = ServerAuthStore(access_token)
+        assert store.issue_launch_token() is None
+
+
+def test_clear_is_idempotent():
+    """认证清理可重复调用。"""
+    store = ServerAuthStore('x' * 16)
+    store.clear()
+    store.clear()
+
+
 def test_launch_token_is_secure_expiring_and_single_use():
+    """启动令牌具有足够熵、会过期且只能使用一次。"""
     now = [100.0]
-    store = ServerAuthStore('legacy-access-token', clock=lambda: now[0])
+    store = ServerAuthStore('x' * 16, clock=lambda: now[0])
     token = store.issue_launch_token()
     assert len(token) >= 43
     assert token != store.access_token

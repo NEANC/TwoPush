@@ -31,6 +31,42 @@ class FakeProcessManager:
         return None
 
 
+def test_launch_page_keeps_token_for_frontend_exchange_without_cookie(tmp_path):
+    """首页仅校验启动令牌存在，令牌由前端通过 API 兑换。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    (resource_dir / 'index.html').write_text('<html data-base-path="__BASE_PATH__">ok</html>', encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = ' + 'x' * 16 + '\n', encoding='utf-8')
+    store = __import__('modules.server_auth', fromlist=['ServerAuthStore']).ServerAuthStore('x' * 16)
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), auth_store=store, base_path='/console')
+    token = store.issue_launch_token()
+    client = TestClient(app)
+    response = client.get('/console/?launch_token=' + token)
+    assert response.status_code == 200
+    assert 'twopush_session=' not in response.headers.get('set-cookie', '')
+    assert 'data-base-path="/console"' in response.text
+    assert client.post('/console/api/auth/launch', json={'launch_token': token}).status_code == 204
+
+
+def test_lifespan_clears_auth_and_health_returns_503_after_stop(tmp_path):
+    """服务停止时清理认证状态，停止后健康检查返回 503。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    (resource_dir / 'index.html').write_text('home', encoding='utf-8')
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = ' + 'x' * 16 + '\n', encoding='utf-8')
+    store = __import__('modules.server_auth', fromlist=['ServerAuthStore']).ServerAuthStore('x' * 16)
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), auth_store=store)
+    token = store.issue_launch_token()
+    with TestClient(app) as client:
+        assert client.post('/api/auth/launch', json={'launch_token': token}).status_code == 204
+        session = client.cookies.get('twopush_session')
+        client.post('/api/service/stop')
+        assert client.get('/api/health').status_code == 503
+    assert not store.is_session_valid(session)
+
+
 def test_frontend_starts_polling_with_an_immediate_status_request(tmp_path):
     """推送成功后前端应立即请求已有日志，而非等待定时器。"""
     resource_dir = tmp_path / 'web'
@@ -47,6 +83,7 @@ def test_frontend_starts_polling_with_an_immediate_status_request(tmp_path):
 
     assert 'poll();' in script
     assert 'state.timer = setInterval(poll, 1000);' in script
+
 def test_is_reparse_point_treats_windows_failure_sentinel_as_not_reparse(tmp_path, monkeypatch):
     """Windows 属性查询失败时应返回 False，而不是误判为重解析点。"""
     monkeypatch.setattr(web_server.os, 'name', 'nt')
@@ -481,12 +518,12 @@ def test_auth_launch_sets_strict_session_cookie_and_health_is_public(tmp_path):
     resource_dir = tmp_path / 'web'
     resource_dir.mkdir()
     config_path = tmp_path / 'config.ini'
-    config_path.write_text('[Web]\naccess_token = legacy-token\n', encoding='utf-8')
+    config_path.write_text('[Web]\naccess_token = ' + 'x' * 16 + '\n', encoding='utf-8')
     from modules.server_auth import ServerAuthStore
-    store = ServerAuthStore('legacy-token')
+    store = ServerAuthStore('x' * 16)
     app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(),
                      base_path='/console', public_url_is_https=True, auth_store=store)
-    client = TestClient(app)
+    client = TestClient(app, base_url='https://testserver')
     token = store.issue_launch_token()
     response = client.post('/console/api/auth/launch', json={'launch_token': token})
     assert response.status_code == 204
@@ -503,8 +540,8 @@ def test_launch_auth_rejects_extra_json_fields(tmp_path):
     resource_dir = tmp_path / 'web'
     resource_dir.mkdir()
     config_path = tmp_path / 'config.ini'
-    config_path.write_text('[Web]\naccess_token = legacy-token\n', encoding='utf-8')
-    store = web_server.ServerAuthStore('legacy-token')
+    config_path.write_text('[Web]\naccess_token = ' + 'x' * 16 + '\n', encoding='utf-8')
+    store = web_server.ServerAuthStore('x' * 16)
     app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager(), auth_store=store)
     token = store.issue_launch_token()
 
