@@ -62,6 +62,14 @@ def _validate_filename(value: str) -> str:
     return name
 
 
+class LaunchAuthPayload(BaseModel):
+    """启动令牌兑换载荷。"""
+
+    model_config = ConfigDict(extra='forbid')
+
+    launch_token: str
+
+
 class JsonTemplatePayload(BaseModel):
     """JSON 推送模板载荷。"""
 
