@@ -177,16 +177,30 @@ def probe_directory(path: Path, error_code: str) -> None:
     except OSError as error:
         raise _error(error_code, '运行目录不可用') from error
     probe = path / f'.twopush-probe-{secrets.token_hex(8)}'
+    stream = None
+    first_error = None
     try:
-        with probe.open('w', encoding='utf-8') as stream:
+        stream = probe.open('w', encoding='utf-8')
+        try:
             stream.write('probe')
             stream.flush()
+        except OSError as error:
+            first_error = error
     except OSError as error:
+        first_error = error
+    finally:
+        if stream is not None:
+            try:
+                stream.close()
+            except OSError as error:
+                if first_error is None:
+                    first_error = error
+    if first_error is not None:
         try:
             probe.unlink()
         except OSError:
             pass
-        raise _error(error_code, '运行目录不可用') from error
+        raise _error(error_code, '运行目录不可用') from first_error
     try:
         probe.unlink()
     except OSError as error:
