@@ -217,6 +217,9 @@ def test_probe_write_failure_cleans_probe_file(tmp_path, monkeypatch):
         def __exit__(self, *args):
             self.stream.close()
 
+        def close(self):
+            self.stream.close()
+
         def write(self, value):
             return self.stream.write(value)
 
@@ -251,6 +254,9 @@ def test_probe_cleanup_failure_preserves_write_failure(tmp_path, monkeypatch):
         def __exit__(self, *args):
             self.stream.close()
 
+        def close(self):
+            self.stream.close()
+
         def write(self, value):
             raise OSError('secret write detail')
 
@@ -267,6 +273,44 @@ def test_probe_cleanup_failure_preserves_write_failure(tmp_path, monkeypatch):
     assert (error.value.code, error.value.exit_code, error.value.safe_message) == (
         'TEMP_UNAVAILABLE', 2, '运行目录不可用')
     assert error.value.__cause__.args == ('secret write detail',)
+    assert 'secret delete detail' not in str(error.value)
+
+
+@pytest.mark.parametrize('operation, detail', [('write', 'secret write detail'), ('flush', 'secret flush detail')])
+def test_probe_first_io_failure_survives_close_and_cleanup_failures(
+        tmp_path, monkeypatch, operation, detail):
+    """write 或 flush 首次失败时，close 和清理失败不得覆盖首异常。"""
+    path = tmp_path / 'runtime'
+    path.mkdir()
+
+    class ControlledFile:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+        def write(self, value):
+            if operation == 'write':
+                raise OSError(detail)
+
+        def flush(self):
+            if operation == 'flush':
+                raise OSError(detail)
+
+        def close(self):
+            raise OSError('secret close detail')
+
+    monkeypatch.setattr(Path, 'open', lambda *args, **kwargs: ControlledFile())
+    monkeypatch.setattr(Path, 'unlink', lambda self: (_ for _ in ()).throw(OSError('secret delete detail')))
+
+    with pytest.raises(ServerConfigError) as error:
+        probe_directory(path, 'TEMP_UNAVAILABLE')
+
+    assert (error.value.code, error.value.exit_code, error.value.safe_message) == (
+        'TEMP_UNAVAILABLE', 2, '运行目录不可用')
+    assert error.value.__cause__.args == (detail,)
+    assert 'secret close detail' not in str(error.value)
     assert 'secret delete detail' not in str(error.value)
 
 
