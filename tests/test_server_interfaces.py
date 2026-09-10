@@ -4,6 +4,7 @@
 """服务模式固定接口测试。"""
 
 import inspect
+from pathlib import Path
 
 from modules.server_auth import ServerAuthStore
 from modules.server_core import finish_context, run_fastapi_server
@@ -33,22 +34,13 @@ def test_fixed_service_interfaces_are_importable():
     ))
 
 
-def test_unimplemented_behavior_is_explicit():
-    """未进入后续任务的行为明确抛出未实现异常。"""
-    options = ServerOptions(server_mode=True, config_path=__file__)
-    try:
-        resolve_server_options(options, {})
-    except NotImplementedError:
-        pass
-    else:
-        raise AssertionError('骨架解析行为必须显式声明未实现')
-
-    try:
-        run_fastapi_server(options)
-    except NotImplementedError:
-        pass
-    else:
-        raise AssertionError('骨架启动行为必须显式声明未实现')
+def test_resolve_server_options_returns_basic_result(tmp_path):
+    """解析接口返回基本结果而不是旧的未实现异常。"""
+    config_path = tmp_path / Path(__file__).name
+    config_path.write_text('[Web]\naccess_token = xxxxxxxxxxxxxxxx\n', encoding='utf-8')
+    resolved = resolve_server_options(ServerOptions(True, config_path), {})
+    assert isinstance(resolved, ResolvedServerOptions)
+    assert (resolved.server_mode, resolved.config_path, resolved.port) == (True, config_path, 52233)
 
 
 def test_windows_job_is_safe_to_import_on_current_platform():

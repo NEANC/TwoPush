@@ -3,12 +3,17 @@
 
 """服务选项解析测试。"""
 
+import secrets
+import socket
+from pathlib import Path
+
 import pytest
 
 from modules.server_options import (
     ServerConfigError,
     ServerOptions,
     build_local_url,
+    probe_directory,
     resolve_server_options,
 )
 
@@ -132,3 +137,91 @@ def test_directory_defaults_config_environment_and_empty_environment(tmp_path, m
     assert overridden.log_root == (config_dir / '../logs').resolve()
     assert overridden.temp_dir == (config_dir / 'environment').resolve()
     assert not (overridden.temp_dir / 'Temp').exists()
+
+
+def test_public_url_environment_overrides_local_default(tmp_path):
+    """非空环境公开 URL 覆盖本机默认 URL。"""
+    config = tmp_path / 'config.ini'
+    write_config(config)
+    resolved = resolve_server_options(ServerOptions(True, config), {
+        'TWOPUSH_PUBLIC_URL': 'https://public.example/base',
+    })
+    assert resolved.public_url == 'https://public.example/base/'
+    assert (resolved.root_path, resolved.base_path) == ('/base', '/base/')
+
+
+@pytest.mark.parametrize('value', ['not-a-url', 'ftp://example.test/'])
+def test_nonempty_public_url_environment_does_not_fall_back(tmp_path, value):
+    """非法非空公开 URL 返回错误而不是回退本机 URL。"""
+    config = tmp_path / 'config.ini'
+    write_config(config)
+    with pytest.raises(ServerConfigError) as error:
+        resolve_server_options(ServerOptions(True, config), {
+            'TWOPUSH_PUBLIC_URL': value,
+        })
+    assert error.value.code == 'INVALID_PUBLIC_URL'
+
+
+def test_resolve_does_not_create_runtime_directories(tmp_path, monkeypatch):
+    """解析阶段保持纯解析，不创建运行目录。"""
+    monkeypatch.chdir(tmp_path)
+    config = tmp_path / 'config.ini'
+    write_config(config, temp_folder='runtime')
+    resolved = resolve_server_options(ServerOptions(True, config), {})
+    assert not resolved.temp_dir.exists()
+    assert not resolved.log_root.exists()
+
+
+def test_probe_directory_success_leaves_no_probe_file(tmp_path):
+    """探针成功后不残留探针文件。"""
+    probe_directory(tmp_path / 'runtime', 'TEMP_UNAVAILABLE')
+    assert list((tmp_path / 'runtime').glob('.twopush-probe-*')) == []
+
+
+@pytest.mark.parametrize('operation', ['mkdir', 'write', 'delete'])
+def test_probe_directory_failures_have_stable_error(operation, tmp_path, monkeypatch):
+    """探针创建、写入、删除失败均返回稳定错误。"""
+    path = tmp_path / 'runtime'
+    probe = path / '.twopush-probe-fixed'
+    if operation == 'mkdir':
+        def fail_mkdir(*args, **kwargs):
+            raise OSError('secret mkdir detail')
+        monkeypatch.setattr(Path, 'mkdir', fail_mkdir)
+    elif operation == 'write':
+        path.mkdir()
+        monkeypatch.setattr(Path, 'open', lambda *args, **kwargs: (_ for _ in ()).throw(OSError('secret write detail')))
+    else:
+        path.mkdir()
+        monkeypatch.setattr(secrets, 'token_hex', lambda size: 'fixed')
+        monkeypatch.setattr(Path, 'unlink', lambda self: (_ for _ in ()).throw(OSError('secret delete detail')))
+    with pytest.raises(ServerConfigError) as error:
+        probe_directory(path, 'TEMP_UNAVAILABLE')
+    assert (error.value.code, error.value.exit_code, error.value.safe_message) == (
+        'TEMP_UNAVAILABLE', 2, '运行目录不可用')
+    assert 'secret' not in str(error.value)
+
+
+def test_hostname_with_any_non_loopback_address_is_rejected(tmp_path, monkeypatch):
+    """多地址主机名包含非 loopback 地址时拒绝远程监听。"""
+    config = tmp_path / 'config.ini'
+    write_config(config)
+    def addresses(*args, **kwargs):
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('192.0.2.1', 0)),
+        ]
+    monkeypatch.setattr(socket, 'getaddrinfo', addresses)
+    with pytest.raises(ServerConfigError) as error:
+        resolve_server_options(ServerOptions(True, config, host='multi.example'), {})
+    assert error.value.code == 'AUTH_REQUIRED'
+
+
+def test_token_is_not_exposed_in_configuration_error(tmp_path):
+    """配置错误消息不包含访问令牌。"""
+    token = 'secret-token-value-1234'
+    config = tmp_path / 'config.ini'
+    write_config(config, token)
+    with pytest.raises(ServerConfigError) as error:
+        resolve_server_options(ServerOptions(True, config, host='bad host'), {})
+    assert token not in str(error.value)
+    assert token not in error.value.safe_message
