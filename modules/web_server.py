@@ -13,15 +13,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import ValidationError
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from modules.server_auth import ServerAuthStore
 from modules.web_models import (
     FileOperationRequest,
     JsonTemplatePayload,
     PushRequest,
     TempDeleteRequest,
+    LaunchAuthPayload,
     resolve_web_host,
 )
 from modules.logger_manager import sanitize_log_message
@@ -44,10 +46,13 @@ class WebServerControl:
         """初始化服务控制状态。"""
         self.stop_requested = False
         self.lock = threading.Lock()
+        self.first_error = None
 
     def stop(self):
-        """标记服务应停止。"""
+        """记录首个停止原因并标记服务应停止。"""
         with self.lock:
+            if not self.stop_requested:
+                self.first_error = 'service_stop'
             self.stop_requested = True
 
 
@@ -97,13 +102,17 @@ def _is_hidden(path: Path) -> bool:
 
 
 def create_app(root_dir, config_path, resource_dir, process_manager,
-               server_control=None, session_state=None, logger=None):
+               server_control=None, session_state=None, logger=None,
+               root_path='', base_path='', public_url_is_https=False,
+               temp_dir=None, auth_store=None):
     """创建固定工作区的 FastAPI 应用。"""
     root = Path(root_dir).resolve()
     config_file = Path(config_path).resolve()
     resources = Path(resource_dir).resolve()
+    base_path = '/' + base_path.strip('/') if base_path else ''
     control = server_control or WebServerControl()
     session = session_state or WebSessionState()
+    auth = auth_store or ServerAuthStore('', clock=None)
     access_token = ''
     try:
         import configparser
@@ -135,13 +144,16 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         if first_error is not None:
             raise first_error
 
-    app = FastAPI(lifespan=lifespan)
+    app = FastAPI(lifespan=lifespan, root_path=root_path)
     app.state.logger = logger or logging.getLogger('TwoPush.GUI')
     app.state.process_manager = process_manager
     app.state.config_file = config_file
     app.state.program_dir = Path(getattr(process_manager, 'program_dir', root)).resolve()
+    app.state.temp_dir = Path(temp_dir).resolve() if temp_dir is not None else app.state.program_dir / 'Temp'
     app.state.server_control = control
     app.state.workspace_root = root
+    app.state.root_path = root_path
+    app.state.base_path = base_path
     app.state.host = resolve_web_host(access_token)
 
     def log_event(event, level=logging.INFO, **fields):
@@ -152,6 +164,14 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         }
         summary = ' '.join(f'{key}={value}' for key, value in safe_fields.items())
         app.state.logger.log(level, 'Web %s%s', event, f' {summary}' if summary else '')
+
+    @app.middleware('http')
+    async def base_path_router(request: Request, call_next):
+        """在基础路径部署时将请求映射到现有路由。"""
+        if base_path and (request.scope['path'] == base_path or request.scope['path'].startswith(base_path + '/')):
+            request.scope['path'] = request.scope['path'][len(base_path):] or '/'
+            request.scope['root_path'] = root_path + base_path
+        return await call_next(request)
 
     @app.middleware('http')
     async def security_headers(request: Request, call_next):
@@ -181,11 +201,13 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         return _error('VALIDATION_ERROR', '请求参数校验失败', {'errors': errors}, 422)
 
     def authorized(request: Request, allow_query=False):
-        """校验 Bearer 认证，避免令牌进入响应和日志。"""
+        """校验 Bearer、会话 Cookie 或兼容查询认证。"""
         if len(access_token) < 16:
             return True
         authorization = request.headers.get('authorization', '')
         if authorization == f'Bearer {access_token}':
+            return True
+        if auth.is_session_valid(request.cookies.get('twopush_session')):
             return True
         if allow_query and request.query_params.get('token') == access_token:
             with session.lock:
@@ -222,7 +244,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
 
     def safe_temp_path(name: str) -> Path:
         """校验临时目录和文件均未越过程序目录。"""
-        temp = app.state.program_dir / 'Temp'
+        temp = app.state.temp_dir
         checked_name = safe_temp_name(name)
         target = temp / checked_name
         try:
@@ -256,12 +278,42 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         temporary.write_text(content, encoding='utf-8')
         os.replace(temporary, target)
 
+    @app.post('/api/auth/launch')
+    async def launch_auth(payload: LaunchAuthPayload):
+        """兑换启动令牌并写入进程内会话 Cookie。"""
+        session_token = auth.consume_launch_token(payload.launch_token)
+        if session_token is None:
+            return _error('UNAUTHORIZED', '启动令牌无效', status_code=401)
+        response = Response(status_code=204)
+        response.set_cookie('twopush_session', session_token, httponly=True,
+                            samesite='strict', secure=public_url_is_https,
+                            path=base_path or '/')
+        return response
+
+    @app.get('/api/health')
+    @app.head('/api/health')
+    async def health():
+        """返回不认证且不缓存的服务健康状态。"""
+        stopping = control.stop_requested
+        response = JSONResponse({'ready': not stopping}, status_code=503 if stopping else 200)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+
     @app.get('/', response_class=HTMLResponse)
     async def index(request: Request):
-        """返回首页，允许有效令牌首次查询访问。"""
+        """返回首页并兑换 URL 中的一次性启动令牌。"""
+        launch_token = request.query_params.get('launch_token')
+        if launch_token:
+            session_token = auth.consume_launch_token(launch_token)
+            if session_token is None:
+                raise HTTPException(401, '需要有效的访问令牌')
+            response = HTMLResponse(get_web_resource('index.html', resources.parent))
+            response.set_cookie('twopush_session', session_token, httponly=True,
+                                samesite='strict', secure=public_url_is_https,
+                                path=base_path or '/')
+            return response
         if not authorized(request, allow_query=True):
             raise HTTPException(401, '需要有效的访问令牌')
-        log_event('首页')
         return get_web_resource('index.html', resources.parent)
 
     @app.get('/app.js')
@@ -430,7 +482,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.get('/api/temp', dependencies=[Depends(require_auth)])
     async def list_temp():
         """列出程序目录中临时 JSON 文件。"""
-        temp = app.state.program_dir / 'Temp'
+        temp = app.state.temp_dir
         try:
             temp_resolved = temp.resolve(strict=False)
         except OSError:
@@ -449,7 +501,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.get('/api/temp/{name}', dependencies=[Depends(require_auth)])
     async def read_temp(name: str):
         """读取程序目录中安全的临时 JSON 文件。"""
-        temp = app.state.program_dir / 'Temp'
+        temp = app.state.temp_dir
         checked_name = safe_temp_name(name)
         target = safe_temp_path(checked_name)
         if not checked_name.startswith('Temp_') or not checked_name.endswith('.json') or not target.is_file() or _is_reparse_point(target):
@@ -469,7 +521,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
         if not payload.confirmed:
             log_event('temp delete invalid', logging.WARNING)
             return _error('TEMP_CONFIRM_REQUIRED', '删除临时文件必须确认', status_code=400)
-        temp = app.state.program_dir / 'Temp'
+        temp = app.state.temp_dir
         deleted = []
         for name in dict.fromkeys(payload.names):
             target = safe_temp_path(name)
@@ -529,10 +581,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.post('/api/service/stop', dependencies=[Depends(require_auth)])
     @app.post('/api/server/stop', dependencies=[Depends(require_auth)])
     async def stop_server():
-        """请求服务停止并关闭推送控制器。"""
+        """只记录服务停止请求并立即返回。"""
         control.stop()
-        process_manager.shutdown()
-        log_event('service stop')
-        return {'stopping': True, 'message': '服务正在停止'}
+        return JSONResponse({'stopping': True, 'message': '服务正在停止'}, status_code=200)
 
     return app
