@@ -1,10 +1,11 @@
 (function () {
   'use strict';
 
+  const basePath = window.location.pathname.replace(/\/$/, '');
+  function apiPath(path) { return basePath + path; }
   const query = new URLSearchParams(window.location.search);
-  const token = query.get('token') || '';
-  if (token) window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
-  const state = { kind: 'json', path: '', directory: '', cursor: 0, timer: null, token: token, requestVersion: 0, dirty: false };
+  if (query.get('launch_token')) window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+  const state = { kind: 'json', path: '', directory: '', cursor: 0, timer: null, requestVersion: 0, dirty: false };
   const editor = document.getElementById('editor');
 
   function setMessage(id, message) {
@@ -14,9 +15,8 @@
   async function request(url, options) {
     const requestOptions = options || {};
     const headers = new Headers(requestOptions.headers || {});
-    if (state.token) headers.set('Authorization', 'Bearer ' + state.token);
     requestOptions.headers = headers;
-    const response = await fetch(url, requestOptions);
+    const response = await fetch(url.indexOf('/api/') === 0 ? apiPath(url) : url, requestOptions);
     if (!response.ok) {
       const body = await response.json().catch(function () { return {}; });
       throw new Error(body.error ? body.error.message : '请求失败');
