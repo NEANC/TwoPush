@@ -280,6 +280,7 @@ class WindowsProcessLauncher:
         process_handle = thread_handle = None
         pipe_handles = []
         streams = {}
+        created_streams = {}
         try:
             for stream_name, value in (('stdout', stdout), ('stderr', stderr)):
                 if value == subprocess.PIPE:
@@ -295,25 +296,34 @@ class WindowsProcessLauncher:
                 stderr_handle=streams.get('stderr', (None, None))[1])
             stdout_stream = (backend.handle_stream(streams['stdout'][0])
                              if 'stdout' in streams else stdout)
+            if 'stdout' in streams:
+                created_streams['stdout'] = stdout_stream
+                pipe_handles.remove(streams['stdout'][0])
             stderr_stream = (backend.handle_stream(streams['stderr'][0])
                              if 'stderr' in streams else stderr)
+            if 'stderr' in streams:
+                created_streams['stderr'] = stderr_stream
+                pipe_handles.remove(streams['stderr'][0])
             for read_handle, write_handle in streams.values():
-                backend.close_handle(write_handle)
-                pipe_handles.remove(write_handle)
+                if write_handle in pipe_handles:
+                    backend.close_handle(write_handle)
+                    pipe_handles.remove(write_handle)
             return WindowsLaunchedProcess(backend, process_handle, thread_handle, pid,
                                           stdout_stream, stderr_stream)
-        except Exception:
-            for stream in streams.values():
-                for handle in stream:
-                    if handle in pipe_handles:
-                        backend.close_handle(handle)
-                        pipe_handles.remove(handle)
+        except Exception as error:
+            for stream in created_streams.values():
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+            for handle in pipe_handles:
+                backend.close_handle(handle)
             if thread_handle:
                 backend.close_handle(thread_handle)
             if process_handle:
                 backend.terminate_process(process_handle, 1)
                 backend.close_handle(process_handle)
-            raise
+            raise error
 
 
 class _SubprocessBackend:
