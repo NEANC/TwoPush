@@ -5,6 +5,8 @@
 
 import json
 import os
+import signal
+import subprocess
 import sys
 import threading
 from pathlib import Path
@@ -134,10 +136,25 @@ class FailingStopProcess(FakeProcess):
         raise OSError("停止失败")
 
 
+@pytest.fixture(autouse=True)
+def fake_windows_launcher(monkeypatch):
+    """为平台模拟注入不触碰真实 Windows API 的启动器。"""
+    class TestLauncher:
+        def launch(self, command, **kwargs):
+            process = subprocess.Popen(command, **kwargs)
+            return process, 'fake-process-handle', 'fake-thread-handle'
+
+    monkeypatch.setattr('modules.push_process.windows_process_launcher', TestLauncher())
+    monkeypatch.setattr('modules.push_process.windows_job_factory', lambda: FakeJob())
+
+
 @pytest.fixture
-def manager(tmp_path):
+def manager(tmp_path, monkeypatch):
     """创建使用临时程序目录的控制器。"""
-    return PushProcessManager(program_dir=tmp_path)
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
+    manager = PushProcessManager(program_dir=tmp_path)
+    manager._windows_job_factory = lambda: FakeJob()
+    return manager
 
 
 def test_reader_writes_each_stream_to_parent_terminal(
@@ -360,9 +377,11 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
         return type("Result", (), {"returncode": 0})()
 
     monkeypatch.setattr("modules.push_process.subprocess.run", fake_run)
+    manager._windows_job_factory = lambda: FakeJob()
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
     with pytest.raises(RuntimeError):
         manager.start_file_push(tmp_path / "b.json", tmp_path / "c.ini")
+    manager._job = None
     manager.stop()
     process.finish()
     manager._wait_thread.join(1)
@@ -487,6 +506,52 @@ def test_build_command_uses_short_options(manager, tmp_path):
     command = manager._build_command(tmp_path / "push.json", tmp_path / "config.ini")
     assert command[-4:] == ["-c", str(tmp_path / "config.ini"), "-p", str(tmp_path / "push.json")]
 
+
+def test_windows_launcher_requires_real_thread_handle(monkeypatch, manager, tmp_path):
+    """Windows 启动器缺少主线程句柄时应失败且不启动 reader。"""
+    process = FakeProcess()
+    class Launcher:
+        def launch(self, *args, **kwargs):
+            return process, 5678, None
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: True)
+    manager._windows_process_launcher = Launcher()
+    monkeypatch.setattr("modules.push_process.windows_job_factory", JobFactory(FakeJob()))
+    with pytest.raises(RuntimeError, match="主线程句柄"):
+        manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
+    assert manager._reader_threads == []
+
+
+def test_posix_wait_timeout_kills_process_group(monkeypatch, manager):
+    """POSIX 等待超时应终止整个进程组。"""
+    process = FakeProcess()
+    manager._process = process
+    task = {'status': 'running', 'exit_code': None, 'outputs': [], 'reader_failed': False}
+    signals = []
+    manager._posix_process_group = type('Groups', (), {
+        'get_id': lambda self, pid: 99,
+        'signal': lambda self, pgid, signum: signals.append((pgid, signum)),
+    })()
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
+    manager._wait_process(None, task, [])
+    assert signals == [(99, signal.SIGTERM), (99, getattr(signal, 'SIGKILL', 9))]
+
+
+def test_configure_failure_preserves_original_error_when_close_fails():
+    """Job 配置失败且关闭也失败时，应保留配置首异常。"""
+    from modules.windows_job import WindowsJob
+
+    class Backend:
+        def create_job(self):
+            return 99
+
+        def configure_kill_on_close(self, handle):
+            return False
+
+        def close_handle(self, handle):
+            raise OSError('close failed')
+
+    with pytest.raises(OSError):
+        WindowsJob(backend=Backend())
 
 def test_payload_temp_file_uses_exclusive_collision_suffix(monkeypatch, manager, tmp_path):
     """临时文件已存在时应使用独占创建和后缀文件。"""
@@ -677,7 +742,7 @@ def test_windows_job_assigns_before_resume_and_ctrl_break_then_terminates(
     manager = PushProcessManager(
         program_dir=tmp_path, grace_seconds=0)
     manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
-    assert job.calls[:2] == [('assign', 5678), ('resume', 8765)]
+    assert job.calls[:2] == [('assign', 'fake-process-handle'), ('resume', 'fake-thread-handle')]
     manager.stop()
     assert ('ctrl_break', process.pid) in job.calls
     assert ('terminate',) in job.calls
