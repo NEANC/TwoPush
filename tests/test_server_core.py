@@ -152,7 +152,6 @@ def test_signal_exit_code_maps_sigint_and_sigterm():
     assert _signal_exit_code(2) == 130
     assert _signal_exit_code(15) == 0
 
-
 def test_server_core_fallback_join_timeout_is_stable_failure_with_residual_diagnostic():
     """核心回退线程未退出时应返回稳定失败并记录残留诊断。"""
     from modules.server_core import _prepare_fallback_thread
@@ -176,3 +175,114 @@ def test_server_core_fallback_join_timeout_is_stable_failure_with_residual_diagn
     assert calls[0][0] == 'join'
     assert calls[0][1] is not None
     assert any('残留' in str(item) for item in calls if item[0] == 'error')
+
+
+@pytest.mark.parametrize(('signum', 'exit_code'), [
+    (2, 130),
+    (15, 0),
+])
+def test_startup_signal_returns_signal_code_without_ready_or_stopping(
+        monkeypatch, tmp_path, signum, exit_code):
+    """启动等待期间信号应返回对应退出码且不输出就绪或停止事件。"""
+    config_path = tmp_path / 'temp.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    handlers = {}
+
+    class Config:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            return None
+        def validate(self):
+            return True
+
+    class Manager:
+        def __init__(self, **kwargs):
+            pass
+        def stop(self):
+            return None
+        def shutdown(self):
+            return None
+
+    class Server:
+        started = False
+        should_exit = False
+        app = type('App', (), {'state': type('State', (), {})()})()
+
+        def run(self):
+            handlers[signum](signum, None)
+
+    def fake_signal(signal_number, handler):
+        if callable(handler):
+            handlers[signal_number] = handler
+        return None
+
+    monkeypatch.setattr('modules.server_core.ConfigManager', Config)
+    monkeypatch.setattr('modules.server_core.PushProcessManager', Manager)
+    monkeypatch.setattr('modules.server_core._create_logger', lambda resolved: 'logger')
+    monkeypatch.setattr('modules.server_core.close_gui_logger', lambda logger: None)
+    monkeypatch.setattr('modules.server_core._new_server', lambda *args: Server())
+    monkeypatch.setattr('modules.server_core.signal.getsignal', lambda signal_number: None)
+    monkeypatch.setattr('modules.server_core.signal.signal', fake_signal)
+    output = io.StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+    options = ServerOptions(True, Path(config_path), port='0')
+
+    assert run_fastapi_server(options) == exit_code
+    assert 'server_ready' not in output.getvalue()
+    assert 'server_stopping' not in output.getvalue()
+
+
+@pytest.mark.parametrize('signum', [2, 15])
+def test_startup_signal_cleanup_failure_emits_cleanup_error(
+        monkeypatch, tmp_path, signum):
+    """启动等待期间清理失败应输出清理错误且保留信号退出码优先级。"""
+    config_path = tmp_path / 'temp.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    handlers = {}
+
+    class Config:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            return None
+        def validate(self):
+            return True
+
+    class Manager:
+        def __init__(self, **kwargs):
+            pass
+        def stop(self):
+            raise RuntimeError('cleanup failed')
+        def shutdown(self):
+            return None
+
+    class Server:
+        started = False
+        should_exit = False
+        app = type('App', (), {'state': type('State', (), {})()})()
+
+        def run(self):
+            handlers[signum](signum, None)
+
+    def fake_signal(signal_number, handler):
+        if callable(handler):
+            handlers[signal_number] = handler
+        return None
+
+    monkeypatch.setattr('modules.server_core.ConfigManager', Config)
+    monkeypatch.setattr('modules.server_core.PushProcessManager', Manager)
+    monkeypatch.setattr('modules.server_core._create_logger', lambda resolved: 'logger')
+    monkeypatch.setattr('modules.server_core.close_gui_logger', lambda logger: None)
+    monkeypatch.setattr('modules.server_core._new_server', lambda *args: Server())
+    monkeypatch.setattr('modules.server_core.signal.getsignal', lambda signal_number: None)
+    monkeypatch.setattr('modules.server_core.signal.signal', fake_signal)
+    output = io.StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+    options = ServerOptions(True, Path(config_path), port='0')
+
+    assert run_fastapi_server(options) == 4
+    assert 'server_ready' not in output.getvalue()
+    assert 'server_stopping' not in output.getvalue()
+    assert '"event":"server_error"' in output.getvalue()
+    assert '"code":"CLEANUP_FAILED"' in output.getvalue()
