@@ -62,6 +62,15 @@ def _make_server_exit_callback(server_instance):
     return lambda: setattr(server_instance, 'should_exit', True)
 
 
+def _join_server_thread(thread, logger, label):
+    """以有界时间等待服务线程并记录残留诊断。"""
+    if thread is None or not thread.is_alive():
+        return
+    thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    if thread.is_alive():
+        logger.error('%s服务线程未在收尾期限内退出，线程残留诊断已记录', label)
+
+
 def _prepare_fallback_thread(server, previous_thread, logger):
     """停止首服务线程并以有界时间等待其退出。"""
     server.should_exit = True
@@ -137,6 +146,8 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
     process_manager = None
     control = None
     server = None
+    server_thread = None
+    previous_thread = None
     first_error = None
     try:
         resolved = resolve_server_options(
@@ -198,7 +209,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
-        if server_error and _is_port_in_use_error(server_error[0]):
+        if server_error and _is_port_in_use_error(server_error[0]) and not resolved.port_explicit:
             previous_server = server
             previous_thread = server_thread
             port = _select_dynamic_web_port()
@@ -209,6 +220,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                 raise RuntimeError('服务回退清理失败')
             server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
             server_thread.start()
+            deadline = time.monotonic() + SERVER_STARTUP_DEADLINE
             while not getattr(server, 'started', False):
                 if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
                     break
@@ -230,8 +242,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                    else f'http://127.0.0.1:{actual_port}{resolved.base_path}')
         if not getattr(server, 'started', False):
             _cleanup_web_server(server, preserve_exception=True)
-            if server_thread.is_alive():
-                server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            _join_server_thread(server_thread, logger, '当前')
             raise RuntimeError('服务启动失败')
         webbrowser.open(url)
         server_thread.join()
@@ -242,6 +253,8 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
     finally:
         for cleanup in (
             lambda: _cleanup_web_server(server, preserve_exception=first_error is not None),
+            lambda: _join_server_thread(previous_thread, logger, '回退前'),
+            lambda: _join_server_thread(server_thread, logger, '当前'),
             lambda: control.stop() if control is not None else None,
             lambda: process_manager.stop() if process_manager is not None else None,
             lambda: process_manager.shutdown() if process_manager is not None else None,
