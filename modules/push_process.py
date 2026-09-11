@@ -6,25 +6,41 @@
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
+
+from modules.windows_job import WindowsJob
 
 
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
 
+def _is_windows():
+    """返回当前运行平台是否为 Windows。"""
+    return os.name == 'nt'
+
+
 class PushProcessManager:
     """管理单个 TwoPush CLI 子进程及其输出。"""
 
-    def __init__(self, program_dir=None, gui_mode=False, logger=None, temp_dir=None):
+    def __init__(self, program_dir=None, temp_dir=None, gui_mode=False, logger=None,
+                 terminal_streams=None, grace_seconds=5.0, join_timeout=2.0,
+                 windows_job_factory=None):
         """初始化控制器。"""
         self.program_dir = Path(program_dir or Path(__file__).resolve().parent.parent)
         self.temp_dir = Path(temp_dir).resolve() if temp_dir is not None else self.program_dir / 'Temp'
         self.gui_mode = gui_mode
         self.logger = logger
+        self.terminal_streams = terminal_streams
+        self.grace_seconds = grace_seconds
+        self.join_timeout = join_timeout
+        self._windows_job_factory = windows_job_factory or WindowsJob
+        self._job = None
         self._lock = threading.RLock()
         self._process = None
         self._task = None
@@ -113,8 +129,7 @@ class PushProcessManager:
                 env.pop('TWOPUSH_GUI', None)
                 env.pop('TWOPUSH_SAVE_LOGS', None)
             try:
-                self._process = subprocess.Popen(
-                    self._build_command(json_path, config_path),
+                popen_kwargs = dict(
                     shell=False,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -124,6 +139,24 @@ class PushProcessManager:
                     bufsize=1,
                     env=env,
                 )
+                if _is_windows():
+                    popen_kwargs['creationflags'] = (
+                        getattr(subprocess, 'CREATE_SUSPENDED', 0x00000004)
+                        | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200))
+                else:
+                    popen_kwargs['start_new_session'] = True
+                self._process = subprocess.Popen(
+                    self._build_command(json_path, config_path), **popen_kwargs)
+                if _is_windows() and hasattr(self._process, '_handle'):
+                    self._job = self._windows_job_factory()
+                    try:
+                        self._job.assign_process(self._process._handle)
+                        self._job.resume_process(self._process._handle)
+                    except Exception:
+                        self._job.close()
+                        self._job = None
+                        self._process.kill()
+                        raise
             except Exception:
                 self._task['status'] = 'failed'
                 raise
@@ -175,7 +208,8 @@ class PushProcessManager:
                         'stream': stream_name,
                         'message': line.rstrip('\r\n'),
                     })
-                    terminal = sys.stderr if stream_name == 'stderr' else sys.stdout
+                    terminal = ((self.terminal_streams or (sys.stdout, sys.stderr))
+                                [1 if stream_name == 'stderr' else 0])
                     terminal.write(line)
                     terminal.flush()
                     if self.gui_mode and self.logger is not None:
@@ -207,21 +241,19 @@ class PushProcessManager:
             exit_code = process.wait()
         except Exception:
             with self._lock:
-                if task:
-                    task['status'] = 'failed'
-                    task['exit_code'] = None
+                task['status'] = 'failed'
+                task['exit_code'] = None
             exit_code = None
         for reader_thread in reader_threads:
             if reader_thread.is_alive():
-                reader_thread.join()
+                reader_thread.join(self.join_timeout)
+        if self._job is not None:
+            self._job.close()
+            self._job = None
         with self._lock:
-            if task:
-                task['exit_code'] = exit_code
-                if task['status'] == 'running':
-                    if task['reader_failed'] or exit_code != 0:
-                        task['status'] = 'failed'
-                    else:
-                        task['status'] = 'success'
+            task['exit_code'] = exit_code
+            if task['status'] == 'running':
+                task['status'] = 'failed' if task['reader_failed'] or exit_code != 0 else 'success'
         if temporary_path:
             try:
                 temporary_path.unlink(missing_ok=True)
@@ -248,18 +280,30 @@ class PushProcessManager:
                     not self._wait_thread.is_alive()):
                 return False
             self._stop_requested = True
-            if os.name == 'nt':
+            if _is_windows():
                 try:
-                    result = subprocess.run(['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                    if self._job is not None:
+                        self._job.send_ctrl_break(self._process.pid)
+                        time.sleep(self.grace_seconds)
+                        self._job.terminate()
+                    else:
+                        result = subprocess.run(
+                            ['taskkill', '/PID', str(self._process.pid), '/T', '/F'], check=False)
+                        if result is not None and result.returncode != 0:
+                            self._process.terminate()
                 except OSError:
-                    self._task['status'] = 'failed'
-                    return False
-                if result is not None and result.returncode != 0:
                     self._task['status'] = 'failed'
                     return False
             else:
                 try:
-                    self._process.terminate()
+                    if hasattr(os, 'killpg'):
+                        os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+                        if self._process.poll() is None:
+                            time.sleep(self.grace_seconds)
+                            if self._process.poll() is None:
+                                os.killpg(os.getpgid(self._process.pid), getattr(signal, 'SIGKILL', 9))
+                    else:
+                        self._process.terminate()
                 except OSError:
                     self._task['status'] = 'failed'
                     return False
@@ -274,7 +318,7 @@ class PushProcessManager:
             self.stop()
         wait_thread = self._wait_thread
         if wait_thread and wait_thread is not threading.current_thread():
-            wait_thread.join(2)
+            wait_thread.join(self.join_timeout)
         if wait_thread and wait_thread.is_alive():
             with self._lock:
                 if self._task and self._task['status'] == 'running':

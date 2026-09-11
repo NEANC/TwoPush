@@ -55,11 +55,65 @@ class FakeProcess:
         self._done.wait(1)
         return self.returncode
 
+    def poll(self):
+        """返回模拟进程退出状态。"""
+        return None if not self._done.is_set() else self.returncode
+
     def finish(self):
         self._done.set()
 
     def terminate(self):
         self.finish()
+
+    def kill(self):
+        """终止模拟进程。"""
+        self.finish()
+
+
+class FakeJob:
+    """记录 Windows Job 生命周期。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def assign_process(self, handle):
+        self.calls.append(('assign', handle))
+
+    def resume_process(self, handle):
+        self.calls.append(('resume', handle))
+
+    def send_ctrl_break(self, pid):
+        self.calls.append(('ctrl_break', pid))
+
+    def terminate(self):
+        self.calls.append(('terminate',))
+
+    def close(self):
+        self.calls.append(('close',))
+
+
+class FailingJob(FakeJob):
+    """在加入进程时失败的 Windows Job。"""
+
+    def assign_process(self, handle):
+        self.calls.append(('assign', handle))
+        raise OSError('assign failed')
+
+
+class FakeWindowsProcess(FakeProcess):
+    """带 Windows 进程句柄的模拟进程。"""
+
+    _handle = 5678
+
+
+class JobFactory:
+    """提供可检查调用记录的 Job 工厂。"""
+
+    def __init__(self, job):
+        self.job = job
+
+    def __call__(self):
+        return self.job
 
 
 class FailingStream(FakeStream):
@@ -116,7 +170,7 @@ def test_reader_failure_still_allows_stop_until_task_finishes(
     process = FakeProcess(code=0)
     process.stdout = FailingStream([])
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
 
     manager._reader_threads[0].join(1)
@@ -146,7 +200,7 @@ def test_stop_failure_marks_task_failed(monkeypatch, manager, tmp_path):
     """非 Windows 停止异常应报告失败而不是伪装为已停止。"""
     process = FailingStopProcess()
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
 
     assert manager.stop() is False
@@ -294,7 +348,7 @@ def test_manager_rejects_concurrent_task_and_stop_prefers_stopped(monkeypatch, m
     """运行中只能有一个任务，停止状态应覆盖进程退出竞态。"""
     process = FakeProcess(code=0)
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "nt")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: True)
     kill_calls = []
 
     def fake_run(*args, **kwargs):
@@ -323,7 +377,7 @@ def test_stop_success_shutdown_timeout_preserves_stopped_and_defers_cleanup(
     process.stdout = BlockingStream(release_reader)
     process.stderr = BlockingStream(release_reader)
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
     temp_file = next((tmp_path / 'Temp').glob('*.json'))
 
@@ -346,7 +400,7 @@ def test_stop_then_immediate_start_waits_for_previous_task_cleanup(
     second = FakeProcess()
     processes = iter([first, second])
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: next(processes))
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_file_push(tmp_path / "a.json", tmp_path / "c.ini")
     assert manager.stop() is True
     with pytest.raises(RuntimeError):
@@ -383,7 +437,7 @@ def test_shutdown_returns_when_stop_fails_and_cleans_temp(monkeypatch, manager, 
     """停止失败时 shutdown 也应有限返回并清理临时文件。"""
     process = FailingStopProcess()
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
     temp_file = next((tmp_path / 'Temp').glob('*.json'))
     manager.shutdown()
@@ -400,7 +454,7 @@ def test_shutdown_timeout_defers_temp_cleanup_until_wait_thread_finishes(
     process.stdout = BlockingStream(release_reader)
     process.stderr = BlockingStream(release_reader)
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
     temp_file = next((tmp_path / 'Temp').glob('*.json'))
 
@@ -548,11 +602,104 @@ def test_wait_failure_marks_failed_and_cleans_temp(monkeypatch, manager, tmp_pat
     assert not list((tmp_path / "Temp").glob("*.json"))
 
 
+
+
+def test_constructor_uses_canonical_temp_dir_and_service_streams(tmp_path):
+    """显式临时目录不追加 Temp，服务流默认隔离到标准错误。"""
+    manager = PushProcessManager(
+        program_dir=tmp_path, temp_dir=tmp_path / 'canonical', terminal_streams=None)
+    assert manager.temp_dir == (tmp_path / 'canonical').resolve()
+    service_manager = PushProcessManager(
+        program_dir=tmp_path, terminal_streams=(sys.stderr, sys.stderr))
+    assert service_manager.terminal_streams == (sys.stderr, sys.stderr)
+
+
+def test_posix_start_creates_new_session(monkeypatch, manager, tmp_path):
+    """POSIX 子进程应创建独立会话。"""
+    process = FakeProcess()
+    calls = []
+
+    def fake_popen(command, **kwargs):
+        calls.append(kwargs)
+        return process
+
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', fake_popen)
+    monkeypatch.setattr('modules.push_process._is_windows', lambda: False)
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    assert calls[0]['start_new_session'] is True
+    process.finish()
+    manager._wait_thread.join(1)
+
+
+def test_reader_uses_configured_terminal_streams(monkeypatch, tmp_path):
+    """读取器应使用注入的终端流而不是污染标准输出协议。"""
+    import io
+    out = io.StringIO()
+    err = io.StringIO()
+    manager = PushProcessManager(program_dir=tmp_path, terminal_streams=(out, err))
+    task = {'outputs': [], 'status': 'running'}
+    manager._read_stream(FakeStream(['out\n']), 'stdout', task)
+    manager._read_stream(FakeStream(['err\n']), 'stderr', task)
+    assert out.getvalue() == 'out\n'
+    assert err.getvalue() == 'err\n'
+
+
+def test_posix_stop_uses_process_group_escalation(monkeypatch, manager, tmp_path):
+    """POSIX 停止应向整个进程组发送 TERM 并在超时后 KILL。"""
+    process = FakeProcess()
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *a, **k: process)
+    monkeypatch.setattr('modules.push_process._is_windows', lambda: False)
+    signals = []
+    monkeypatch.setattr('modules.push_process.os.getpgid', lambda pid: 4321, raising=False)
+    monkeypatch.setattr('modules.push_process.os.killpg', lambda pgid, sig: signals.append((pgid, sig)), raising=False)
+    monkeypatch.setattr('modules.push_process.time.monotonic', lambda: 0)
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    manager.stop()
+    assert signals[0] == (4321, __import__('signal').SIGTERM)
+    assert signals[1] == (4321, getattr(__import__('signal'), 'SIGKILL', 9))
+    process.finish()
+    manager._wait_thread.join(1)
+
+
+
+
+def test_windows_job_assigns_before_resume_and_ctrl_break_then_terminates(
+        monkeypatch, tmp_path):
+    """Windows Job 应在挂起启动后加入、恢复，并按优雅终止顺序处理。"""
+    process = FakeWindowsProcess()
+    job = FakeJob()
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *a, **k: process)
+    monkeypatch.setattr('modules.push_process._is_windows', lambda: True)
+    manager = PushProcessManager(
+        program_dir=tmp_path, windows_job_factory=JobFactory(job), grace_seconds=0)
+    manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    assert job.calls[:2] == [('assign', 5678), ('resume', 5678)]
+    manager.stop()
+    assert ('ctrl_break', process.pid) in job.calls
+    assert ('terminate',) in job.calls
+    process.finish()
+    manager._wait_thread.join(1)
+    assert ('close',) in job.calls
+
+
+def test_windows_job_failure_closes_job_and_kills_process(monkeypatch, tmp_path):
+    """Windows Job 接入失败时应关闭句柄并杀死仍挂起的进程。"""
+    process = FakeWindowsProcess()
+    job = FailingJob()
+    monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *a, **k: process)
+    monkeypatch.setattr('modules.push_process._is_windows', lambda: True)
+    manager = PushProcessManager(program_dir=tmp_path, windows_job_factory=JobFactory(job))
+    with pytest.raises(OSError):
+        manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
+    assert ('close',) in job.calls
+    assert process.poll() == 0
+
+
 def test_shutdown_waits_for_task_and_is_idempotent(monkeypatch, manager, tmp_path):
     """关闭应等待任务线程完成并确保停止状态，重复停止无副作用。"""
     process = FakeProcess()
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
-    monkeypatch.setattr("modules.push_process.os.name", "posix")
+    monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
     terminate_calls = []
     monkeypatch.setattr(process, "terminate", lambda: (terminate_calls.append(True), process.finish()))
     manager.start_payload_push({"title": "内容"}, tmp_path / "配置.ini")
