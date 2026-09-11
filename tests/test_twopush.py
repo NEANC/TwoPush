@@ -464,6 +464,73 @@ def test_run_web_server_browser_failure_joins_server_thread(monkeypatch, tmp_pat
     assert calls == [TwoPush.DEFAULT_THREAD_JOIN_TIMEOUT]
 
 
+def test_run_web_server_stop_requested_with_stuck_thread_fails_and_cleans_up(monkeypatch, tmp_path):
+    """停止请求后服务线程不退出时应有界失败并统一清理。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeServer:
+        started = True
+        should_exit = False
+        def __init__(self, config):
+            pass
+        def run(self):
+            calls.append('run')
+        def shutdown(self):
+            calls.append('shutdown')
+
+    class StuckThread:
+        def __init__(self, **kwargs):
+            self.alive = True
+        def start(self):
+            pass
+        def join(self, timeout=None):
+            calls.append(('join', timeout))
+        def is_alive(self):
+            return self.alive
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    def open_browser(url):
+        FakeControl.stop_requested = True
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush.threading, 'Thread', StuckThread)
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(open_browser)}))
+
+    with pytest.raises(RuntimeError, match='服务停止失败'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+
+    assert 'shutdown' in calls
+    assert calls[-3:] == ['control.stop', 'manager.stop', 'manager.shutdown']
+    assert all(item[1] is not None for item in calls if isinstance(item, tuple) and item[0] == 'join')
+
+
 def test_run_web_server_fallback_gets_independent_startup_deadline(monkeypatch, tmp_path):
     """首轮耗时后回退服务仍应获得完整启动窗口。"""
     calls = []
@@ -537,6 +604,85 @@ def test_run_web_server_fallback_gets_independent_startup_deadline(monkeypatch, 
         TwoPush.run_web_server(str(tmp_path / 'config.ini'))
     assert calls == ['first']
     assert len(FakeServer.instances) == 2
+
+
+
+
+def test_run_web_server_fallback_stops_old_thread_before_new_constructor(monkeypatch, tmp_path):
+    """回退构造失败时应先停止并清理首个服务线程。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            calls.append('manager.stop')
+        def shutdown(self):
+            calls.append('manager.shutdown')
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            calls.append('control.stop')
+
+    class FakeServer:
+        instances = []
+        def __init__(self, config):
+            FakeServer.instances.append(self)
+            self.started = False
+            self.should_exit = False
+            if len(FakeServer.instances) == 2:
+                calls.append('new_constructor')
+                raise RuntimeError('new server unavailable')
+        def run(self):
+            calls.append('old_run')
+            error = OSError(10048, 'occupied')
+            error.winerror = 10048
+            errors[0].append(error)
+        def shutdown(self):
+            calls.append('old_shutdown')
+
+    errors = []
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            self.alive = True
+        def start(self):
+            errors.append(self.args[1])
+            self.target(*self.args)
+            self.alive = False
+        def join(self, timeout=None):
+            calls.append(('old_join', timeout))
+            self.alive = False
+        def is_alive(self):
+            return self.alive
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush.threading, 'Thread', FakeThread)
+    monkeypatch.setattr(TwoPush.time, 'monotonic', lambda: 0)
+    monkeypatch.setattr(TwoPush.time, 'sleep', lambda _: None)
+
+    with pytest.raises(RuntimeError, match='new server unavailable'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+
+    assert calls.index('old_shutdown') < calls.index('new_constructor')
+    assert any(item[0] == 'old_join' and item[1] is not None for item in calls if isinstance(item, tuple))
 
 
 def test_run_web_server_does_not_fallback_explicit_port(monkeypatch, tmp_path):
