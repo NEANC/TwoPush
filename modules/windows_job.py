@@ -5,6 +5,7 @@
 
 import ctypes
 import os
+from ctypes import wintypes
 
 
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
@@ -23,6 +24,21 @@ class _CtypesBackend:
 
     def __init__(self):
         self.kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        self.kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+        self.kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        self.kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPVOID, wintypes.DWORD]
+        self.kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        self.kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+        self.kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        self.kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+        self.kernel32.ResumeThread.restype = wintypes.DWORD
+        self.kernel32.GenerateConsoleCtrlEvent.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        self.kernel32.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
+        self.kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.kernel32.TerminateJobObject.restype = wintypes.BOOL
+        self.kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel32.CloseHandle.restype = wintypes.BOOL
 
     def create_job(self):
         """创建 Job Object。"""

@@ -37,12 +37,15 @@ class _PosixProcessGroup:
         return os.killpg(pgid, signum)
 
 
+windows_job_factory = WindowsJob
+posix_process_group = _PosixProcessGroup()
+
+
 class PushProcessManager:
     """管理单个 TwoPush CLI 子进程及其输出。"""
 
     def __init__(self, program_dir=None, temp_dir=None, gui_mode=False, logger=None,
-                 terminal_streams=None, grace_seconds=5.0, join_timeout=2.0,
-                 windows_job_factory=None, posix_process_group=None):
+                 terminal_streams=None, grace_seconds=5.0, join_timeout=2.0):
         """初始化控制器。"""
         self.program_dir = Path(program_dir or Path(__file__).resolve().parent.parent)
         self.temp_dir = Path(temp_dir).resolve() if temp_dir is not None else self.program_dir / 'Temp'
@@ -51,8 +54,8 @@ class PushProcessManager:
         self.terminal_streams = terminal_streams
         self.grace_seconds = grace_seconds
         self.join_timeout = join_timeout
-        self._windows_job_factory = windows_job_factory or WindowsJob
-        self._posix_process_group = posix_process_group or _PosixProcessGroup()
+        self._windows_job_factory = globals()['windows_job_factory']
+        self._posix_process_group = globals()['posix_process_group']
         self._job = None
         self._lock = threading.RLock()
         self._process = None
@@ -169,17 +172,39 @@ class PushProcessManager:
                 self._process = subprocess.Popen(
                     self._build_command(json_path, config_path), **popen_kwargs)
                 if _is_windows() and hasattr(self._process, '_handle'):
-                    self._job = self._windows_job_factory()
+                    if not hasattr(self._process, '_thread_handle'):
+                        self._process.kill()
+                        raise RuntimeError('无法获取 Windows 子进程主线程句柄')
+                    self._job = (self._windows_job_factory or windows_job_factory)()
                     try:
                         self._job.assign_process(self._process._handle)
-                        self._job.resume_process(
-                            getattr(self._process, '_thread_handle', self._process._handle))
+                        self._job.resume_process(self._process._thread_handle)
                     except Exception:
-                        self._job.close()
-                        self._job = None
-                        self._process.kill()
+                        try:
+                            self._job.close()
+                        finally:
+                            self._job = None
+                        try:
+                            self._process.kill()
+                        except Exception:
+                            pass
                         raise
             except Exception:
+                if self._job is not None:
+                    try:
+                        self._job.close()
+                    except Exception:
+                        pass
+                    self._job = None
+                if self._process is not None:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
+                    try:
+                        self._process.wait(timeout=self.join_timeout)
+                    except Exception:
+                        pass
                 self._task['status'] = 'failed'
                 raise
             stdout_thread = threading.Thread(
@@ -261,7 +286,7 @@ class PushProcessManager:
         process = self._process
         deadline = time.monotonic() + self.join_timeout
         try:
-            exit_code = process.wait()
+            exit_code = process.wait(timeout=self.join_timeout)
         except Exception:
             with self._lock:
                 task['status'] = 'failed'
@@ -272,8 +297,12 @@ class PushProcessManager:
             if reader_thread.is_alive():
                 reader_thread.join(remaining)
         if self._job is not None:
-            self._job.close()
-            self._job = None
+            try:
+                self._job.close()
+            except Exception:
+                pass
+            finally:
+                self._job = None
         with self._lock:
             task['exit_code'] = exit_code
             if task['status'] == 'running':
@@ -319,11 +348,16 @@ class PushProcessManager:
                         if result is not None and result.returncode != 0:
                             self._process.terminate()
                 except OSError:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
                     self._task['status'] = 'failed'
                     return False
             else:
                 try:
                     if (hasattr(self._posix_process_group, 'get_id')
+                            and hasattr(self._posix_process_group, 'signal')
                             and hasattr(os, 'getpgid') and hasattr(os, 'killpg')):
                         pgid = self._posix_process_group.get_id(self._process.pid)
                         self._posix_process_group.signal(pgid, signal.SIGTERM)
@@ -335,6 +369,10 @@ class PushProcessManager:
                     else:
                         self._process.terminate()
                 except OSError:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
                     self._task['status'] = 'failed'
                     return False
             self._task['status'] = 'stopped'
@@ -345,7 +383,9 @@ class PushProcessManager:
         with self._lock:
             stop_requested = self._stop_requested
         if not stop_requested:
-            self.stop()
+            stopped = self.stop()
+        else:
+            stopped = True
         wait_thread = self._wait_thread
         if wait_thread and wait_thread is not threading.current_thread():
             deadline = time.monotonic() + self.join_timeout
@@ -358,3 +398,8 @@ class PushProcessManager:
         with self._lock:
             if self._task and self._task['status'] == 'running':
                 self._task['status'] = 'stopped'
+        if not stopped and self._temporary_path:
+            try:
+                self._temporary_path.unlink(missing_ok=True)
+            except OSError:
+                pass

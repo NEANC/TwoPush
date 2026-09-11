@@ -51,8 +51,10 @@ class FakeProcess:
         self.returncode = code
         self._done = threading.Event()
 
-    def wait(self):
-        self._done.wait(1)
+    def wait(self, timeout=None):
+        self._done.wait(1 if timeout is None else timeout)
+        if not self._done.is_set():
+            raise TimeoutError('等待超时')
         return self.returncode
 
     def poll(self):
@@ -101,9 +103,10 @@ class FailingJob(FakeJob):
 
 
 class FakeWindowsProcess(FakeProcess):
-    """带 Windows 进程句柄的模拟进程。"""
+    """带 Windows 进程和主线程句柄的模拟进程。"""
 
     _handle = 5678
+    _thread_handle = 8765
 
 
 class JobFactory:
@@ -670,10 +673,11 @@ def test_windows_job_assigns_before_resume_and_ctrl_break_then_terminates(
     job = FakeJob()
     monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *a, **k: process)
     monkeypatch.setattr('modules.push_process._is_windows', lambda: True)
+    monkeypatch.setattr('modules.push_process.windows_job_factory', JobFactory(job))
     manager = PushProcessManager(
-        program_dir=tmp_path, windows_job_factory=JobFactory(job), grace_seconds=0)
+        program_dir=tmp_path, grace_seconds=0)
     manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
-    assert job.calls[:2] == [('assign', 5678), ('resume', 5678)]
+    assert job.calls[:2] == [('assign', 5678), ('resume', 8765)]
     manager.stop()
     assert ('ctrl_break', process.pid) in job.calls
     assert ('terminate',) in job.calls
@@ -688,7 +692,8 @@ def test_windows_job_failure_closes_job_and_kills_process(monkeypatch, tmp_path)
     job = FailingJob()
     monkeypatch.setattr('modules.push_process.subprocess.Popen', lambda *a, **k: process)
     monkeypatch.setattr('modules.push_process._is_windows', lambda: True)
-    manager = PushProcessManager(program_dir=tmp_path, windows_job_factory=JobFactory(job))
+    manager = PushProcessManager(program_dir=tmp_path)
+    manager._windows_job_factory = JobFactory(job)
     with pytest.raises(OSError):
         manager.start_file_push(tmp_path / 'a.json', tmp_path / 'c.ini')
     assert ('close',) in job.calls
