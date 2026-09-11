@@ -14,7 +14,7 @@ import time
 import uuid
 from pathlib import Path
 
-from modules.windows_job import WindowsJob
+from modules.windows_job import WindowsJob, WindowsProcessLauncher
 
 
 _INVALID_NAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -38,6 +38,7 @@ class _PosixProcessGroup:
 
 
 windows_job_factory = WindowsJob
+windows_process_launcher = None
 posix_process_group = _PosixProcessGroup()
 
 
@@ -55,12 +56,15 @@ class PushProcessManager:
         self.grace_seconds = grace_seconds
         self.join_timeout = join_timeout
         self._windows_job_factory = globals()['windows_job_factory']
+        self._windows_process_launcher = (globals()['windows_process_launcher']
+                                          or WindowsProcessLauncher())
         self._posix_process_group = globals()['posix_process_group']
         self._job = None
         self._lock = threading.RLock()
         self._process = None
         self._task = None
         self._stop_requested = False
+        self._stop_escalated = False
         self._reader_threads = []
         self._wait_thread = None
         self._temporary_path = None
@@ -143,6 +147,7 @@ class PushProcessManager:
             }
             self._task = task
             self._stop_requested = False
+            self._stop_escalated = False
             env = os.environ.copy()
             env['PYTHONUNBUFFERED'] = '1'
             env['PYTHONIOENCODING'] = 'utf-8'
@@ -169,26 +174,20 @@ class PushProcessManager:
                         | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0x00000200))
                 else:
                     popen_kwargs['start_new_session'] = True
-                self._process = subprocess.Popen(
-                    self._build_command(json_path, config_path), **popen_kwargs)
-                if _is_windows() and hasattr(self._process, '_handle'):
-                    if not hasattr(self._process, '_thread_handle'):
-                        self._process.kill()
+                if _is_windows():
+                    self._process, process_handle, thread_handle = self._windows_process_launcher.launch(
+                        self._build_command(json_path, config_path), **popen_kwargs)
+                    if process_handle is None or thread_handle is None:
                         raise RuntimeError('无法获取 Windows 子进程主线程句柄')
-                    self._job = (self._windows_job_factory or windows_job_factory)()
-                    try:
-                        self._job.assign_process(self._process._handle)
-                        self._job.resume_process(self._process._thread_handle)
-                    except Exception:
-                        try:
-                            self._job.close()
-                        finally:
-                            self._job = None
-                        try:
-                            self._process.kill()
-                        except Exception:
-                            pass
-                        raise
+                    job_factory = self._windows_job_factory
+                    if job_factory is WindowsJob:
+                        job_factory = globals()['windows_job_factory']
+                    self._job = job_factory()
+                    self._job.assign_process(process_handle)
+                    self._job.resume_process(thread_handle)
+                else:
+                    self._process = subprocess.Popen(
+                        self._build_command(json_path, config_path), **popen_kwargs)
             except Exception:
                 if self._job is not None:
                     try:
@@ -281,15 +280,50 @@ class PushProcessManager:
                     if task['status'] == 'running':
                         task['status'] = 'failed'
 
+    def _stop_posix_process_group(self, process):
+        """向 POSIX 独立进程组执行一次 TERM 到 KILL 的停止升级。"""
+        with self._lock:
+            if self._stop_escalated:
+                return
+            self._stop_escalated = True
+        try:
+            pgid = self._posix_process_group.get_id(process.pid)
+            self._posix_process_group.signal(pgid, signal.SIGTERM)
+            if process.poll() is None:
+                time.sleep(self.grace_seconds)
+                if process.poll() is None:
+                    self._posix_process_group.signal(pgid, getattr(signal, 'SIGKILL', 9))
+        except (AttributeError, OSError):
+            try:
+                process.kill()
+            except Exception:
+                pass
+
     def _wait_process(self, temporary_path, task, reader_threads):
         """等待子进程和输出线程结束，更新状态并清理临时文件。"""
         process = self._process
         deadline = time.monotonic() + self.join_timeout
         try:
             exit_code = process.wait(timeout=self.join_timeout)
-        except Exception:
+        except subprocess.TimeoutExpired:
+            if not _is_windows():
+                self._stop_posix_process_group(process)
+            else:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
             with self._lock:
-                task['status'] = 'failed'
+                if task['status'] != 'stopped':
+                    task['status'] = 'failed'
+                task['exit_code'] = None
+            exit_code = None
+        except Exception:
+            if not _is_windows():
+                self._stop_posix_process_group(process)
+            with self._lock:
+                if task['status'] != 'stopped':
+                    task['status'] = 'failed'
                 task['exit_code'] = None
             exit_code = None
         for reader_thread in reader_threads:
@@ -359,13 +393,7 @@ class PushProcessManager:
                     if (hasattr(self._posix_process_group, 'get_id')
                             and hasattr(self._posix_process_group, 'signal')
                             and hasattr(os, 'getpgid') and hasattr(os, 'killpg')):
-                        pgid = self._posix_process_group.get_id(self._process.pid)
-                        self._posix_process_group.signal(pgid, signal.SIGTERM)
-                        if self._process.poll() is None:
-                            time.sleep(self.grace_seconds)
-                            if self._process.poll() is None:
-                                self._posix_process_group.signal(
-                                    pgid, getattr(signal, 'SIGKILL', 9))
+                        self._stop_posix_process_group(self._process)
                     else:
                         self._process.terminate()
                 except OSError:
