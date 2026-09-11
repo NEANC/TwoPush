@@ -48,7 +48,7 @@ from modules.json_manager import (
     load_json_template,
 )
 from modules.server_options import ServerOptions, resolve_server_options
-from modules.server_core import run_fastapi_server
+from modules.server_core import run_fastapi_server, run_server_with_protocol
 from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
@@ -95,7 +95,7 @@ def _cleanup_web_server(server, preserve_exception=False):
 
 
 def run_web_server(config_path=DEFAULT_CONFIG_FILE):
-    """初始化并运行 Web 服务，统一处理日志与资源清理。"""
+    """初始化并运行 Web 服务，保留浏览器模式异常与清理契约。"""
     from modules.push_process import PushProcessManager
     from modules.web_server import WebServerControl, create_app
 
@@ -105,37 +105,28 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
     server = None
     first_error = None
     try:
-        config = ConfigManager(
-            config_file=config_path,
-            logger=logger,
-            app_name='TwoPush',
-            non_interactive=True,
-        )
-        config.load()
-        raw_max_files = None
-        try:
-            import configparser
-            raw = configparser.ConfigParser()
-            raw.read(config_path, encoding='utf-8')
-            raw_max_files = raw.get('Logs', 'max_files', fallback=None)
-        except Exception:
-            raw_max_files = None
-        try:
-            max_files = int(raw_max_files)
-            if max_files < 1:
-                raise ValueError
-        except (TypeError, ValueError):
-            max_files = 15
-            logger.warning('GUI 日志保留数量无效，使用安全默认值 15')
-        set_max_files(logger, max_files)
-        cleanup_gui_logs(logger)
-        if not config.validate():
-            return 2
-
         resolved = resolve_server_options(
             ServerOptions(False, Path(config_path), emit_launch_token=True),
             os.environ,
         )
+        config_kwargs = {
+            'config_file': config_path,
+            'logger': logger,
+            'app_name': 'TwoPush',
+            'non_interactive': True,
+            'temp_dir': resolved.temp_dir,
+        }
+        try:
+            config = ConfigManager(**config_kwargs)
+        except TypeError as error:
+            if 'unexpected keyword argument' not in str(error):
+                raise
+            config_kwargs.pop('temp_dir')
+            config = ConfigManager(**config_kwargs)
+        config.load()
+        if not config.validate():
+            return 2
+
         process_kwargs = {
             'gui_mode': True,
             'logger': logger,
@@ -171,7 +162,6 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             temp_dir=resolved.temp_dir, auth_store=auth_store,
         )
         port = resolved.port
-        access_token = resolved.access_token
         host = resolved.host
         import uvicorn
 
@@ -190,15 +180,6 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                 server_error.append(error)
 
         server = build_server(port)
-        def watch_stop_request():
-            """将 Web 停止请求转换为 Uvicorn 退出信号。"""
-            while not server.should_exit:
-                if control.stop_requested:
-                    server.should_exit = True
-                    return
-                time.sleep(0.05)
-
-        threading.Thread(target=watch_stop_request, daemon=True).start()
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
         while not getattr(server, 'started', False):
