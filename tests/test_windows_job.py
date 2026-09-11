@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from modules.windows_job import WindowsJob, WindowsProcessLauncher
+from modules.windows_job import WindowsJob, WindowsLaunchedProcess, WindowsProcessLauncher
 
 
 
@@ -183,6 +183,105 @@ def test_launcher_closes_created_streams_without_reclosing_transferred_reads(mon
     assert ('terminate', 101, 1) in backend.calls
     assert ('close_handle', 101) in backend.calls
     assert ('close_handle', 102) in backend.calls
+
+
+def test_launcher_keeps_startup_error_when_every_cleanup_operation_fails(monkeypatch):
+    """启动异常清理失败时应继续尝试全部资源并保留首因。"""
+    import modules.windows_job as windows_job
+
+    class FailingBackend:
+        def __init__(self):
+            self.calls = []
+
+        def create_pipe(self):
+            handles = ((11, 12), (21, 22))[len([call for call in self.calls if call[0] == 'pipe'])]
+            self.calls.append(('pipe', handles))
+            return handles
+
+        def make_inheritable(self, handle):
+            pass
+
+        def make_non_inheritable(self, handle):
+            pass
+
+        def create_process(self, **kwargs):
+            return 101, 102, 103
+
+        def close_handle(self, handle):
+            self.calls.append(('close_handle', handle))
+            raise OSError(f'关闭句柄失败: {handle}')
+
+        def terminate_process(self, handle, code):
+            self.calls.append(('terminate', handle, code))
+            raise OSError('终止失败')
+
+        def handle_stream(self, handle):
+            if handle == 21:
+                raise RuntimeError('包装首因')
+            stream = io.BytesIO()
+            original_close = stream.close
+
+            def close():
+                self.calls.append(('close_stream', handle))
+                original_close()
+                raise OSError('关闭流失败')
+
+            stream.close = close
+            return stream
+
+    backend = FailingBackend()
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
+
+    with pytest.raises(RuntimeError, match='包装首因'):
+        WindowsProcessLauncher(backend).launch(
+            ['python.exe'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    assert backend.calls.count(('close_stream', 11)) == 1
+    assert [call for call in backend.calls if call[0] == 'close_handle'] == [
+        ('close_handle', 12), ('close_handle', 21), ('close_handle', 22),
+        ('close_handle', 102), ('close_handle', 101)]
+    assert backend.calls.count(('terminate', 101, 1)) == 1
+
+
+def test_launched_process_close_removes_failed_resources_and_is_idempotent():
+    """包装器关闭失败时仍应收尾全部资源且重复关闭不重试。"""
+    class FailingBackend:
+        def __init__(self):
+            self.calls = []
+
+        def close_handle(self, handle):
+            self.calls.append(('close_handle', handle))
+            raise OSError(f'关闭句柄失败: {handle}')
+
+    backend = FailingBackend()
+    streams = []
+    for name in ('stdout', 'stderr'):
+        stream = io.BytesIO()
+        original_close = stream.close
+
+        def close(name=name, original_close=original_close):
+            streams.append(name)
+            original_close()
+            raise OSError(f'关闭流失败: {name}')
+
+        stream.close = close
+        streams.append(f'{name}:created')
+        if name == 'stdout':
+            stdout = stream
+        else:
+            stderr = stream
+
+    process = WindowsLaunchedProcess(backend, 101, 102, 103, stdout, stderr)
+    with pytest.raises(OSError, match='102'):
+        process.close()
+    process.close()
+
+    assert backend.calls == [('close_handle', 102), ('close_handle', 101)]
+    assert streams == ['stdout:created', 'stderr:created', 'stdout', 'stderr']
+    assert process.thread_handle is None
+    assert process.process_handle is None
+    assert process.stdout is None
+    assert process.stderr is None
 
 
 def test_launcher_preserves_flags_without_environment(monkeypatch):
