@@ -23,6 +23,9 @@ from modules.server_protocol import ServerProtocolWriter
 from modules.web_server import WebServerControl, create_app
 
 
+DEFAULT_THREAD_JOIN_TIMEOUT = 1.0
+
+
 class ServiceResult:
     """表示服务生命周期结束结果。"""
 
@@ -36,6 +39,16 @@ class ServiceContext:
 
     def __init__(self, value=None):
         self.value = value
+
+
+def _prepare_fallback_thread(server, previous_thread, logger):
+    """停止首服务线程并以有界时间等待其退出。"""
+    server.should_exit = True
+    previous_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    if previous_thread.is_alive():
+        logger.error('首个服务线程未在回退前退出')
+        return False
+    return True
 
 
 def _is_bind_error(error):
@@ -197,11 +210,13 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             time.sleep(0.01)
         if errors and _is_bind_error(errors[0]) and not resolved.port_explicit:
             previous_server = server
+            previous_thread = thread
             server = _new_server(app, resolved.host, 0, control)
             control.exit_callback = make_exit_callback(server)
             errors = []
+            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
+                raise RuntimeError('服务回退清理失败')
             thread = threading.Thread(target=serve, args=(server, errors), daemon=True)
-            previous_server.should_exit = True
             thread.start()
             while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
                 time.sleep(0.01)
