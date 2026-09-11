@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -400,10 +401,19 @@ def test_stop_success_shutdown_timeout_preserves_stopped_and_defers_cleanup(
     process.stderr = BlockingStream(release_reader)
     monkeypatch.setattr("modules.push_process.subprocess.Popen", lambda *args, **kwargs: process)
     monkeypatch.setattr("modules.push_process._is_windows", lambda: False)
+    manager.grace_seconds = 5.0
+    manager._posix_process_group = type('Groups', (), {
+        'get_id': lambda self, pid: 99,
+        'signal': lambda self, pgid, signum: None,
+    })()
     manager.start_payload_push({'title': '内容'}, tmp_path / '配置.ini')
     temp_file = next((tmp_path / 'Temp').glob('*.json'))
 
+    started_at = time.monotonic()
     manager.shutdown()
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < manager.join_timeout * 1.5
 
     assert manager.get_status()['status'] == 'stopped'
     assert manager._wait_thread.is_alive()

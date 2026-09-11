@@ -311,7 +311,7 @@ class PushProcessManager:
             pgid = self._posix_process_group.get_id(process.pid)
             self._posix_process_group.signal(pgid, signal.SIGTERM)
             if process.poll() is None:
-                time.sleep(self.grace_seconds)
+                time.sleep(min(self.grace_seconds, self.join_timeout))
                 if process.poll() is None:
                     self._posix_process_group.signal(pgid, getattr(signal, 'SIGKILL', 9))
         except (AttributeError, OSError):
