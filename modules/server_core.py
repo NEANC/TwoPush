@@ -146,6 +146,7 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
     manager = None
     server = None
     control = None
+    thread = None
     first_error = None
     old_handlers = {}
     try:
@@ -250,6 +251,10 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
     finally:
         if server is not None:
             server.should_exit = True
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            if thread.is_alive():
+                logger.error('服务线程未在收尾期限内退出，线程残留诊断已记录')
         for sig, handler in old_handlers.items():
             try:
                 signal.signal(sig, handler)
