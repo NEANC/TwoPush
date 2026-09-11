@@ -6,8 +6,26 @@ from pathlib import Path
 
 import pytest
 
-from modules.server_core import _create_config, _create_manager, run_fastapi_server
+from modules.server_core import _create_config, _create_manager, _server_app, run_fastapi_server
 from modules.server_options import ServerOptions
+
+
+def test_server_app_uses_loaded_app_for_factory_config():
+    """工厂模式应使用 Uvicorn 配置加载后的 ASGI 应用。"""
+    loaded_app = object()
+    config = type('Config', (), {'app': 'factory:app', 'loaded_app': loaded_app})()
+    server = type('Server', (), {'config': config})()
+
+    assert _server_app(server) is loaded_app
+
+
+def test_server_app_uses_config_app_without_server_app_attribute():
+    """健康检查应从配置取得应用而不读取已移除的 Server.app。"""
+    app = object()
+    config = type('Config', (), {'app': app})()
+    server = type('Server', (), {'config': config})()
+
+    assert _server_app(server) is app
 
 
 def test_supported_kwargs_handles_inspection_errors_without_dropping_business_parameters(monkeypatch):
@@ -113,11 +131,14 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
     class Listener:
         sockets = [Socket()]
 
+    class App:
+        state = type('State', (), {'health_status': 'ready'})()
+
     class Server:
         started = True
         should_exit = False
         servers = [Listener()]
-        app = type('App', (), {'state': type('State', (), {'health_status': 'ready'})()})()
+        config = type('Config', (), {'app': App()})()
         def run(self):
             return None
     monkeypatch.setattr('modules.server_core._new_server', lambda *args: Server())
