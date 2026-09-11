@@ -120,6 +120,71 @@ def test_launcher_wraps_pipe_handles_as_binary_streams_and_closes_failure(monkey
     assert ('close', 102) in backend.calls and ('close', 101) in backend.calls
 
 
+def test_launcher_closes_created_streams_without_reclosing_transferred_reads(monkeypatch):
+    """第二路包装失败时应关闭已创建流，并只关闭仍由启动器拥有的句柄。"""
+    import modules.windows_job as windows_job
+
+    class PipeBackend:
+        def __init__(self):
+            self.calls = []
+            self.streams = {}
+            self.pipe_count = 0
+
+        def create_pipe(self):
+            handles = ((11, 12), (21, 22))[self.pipe_count]
+            self.pipe_count += 1
+            self.calls.append(('pipe', handles))
+            return handles
+
+        def make_inheritable(self, handle):
+            self.calls.append(('inherit', handle))
+
+        def make_non_inheritable(self, handle):
+            self.calls.append(('noninherit', handle))
+
+        def create_process(self, **kwargs):
+            self.calls.append(('create', kwargs))
+            return 101, 102, 103
+
+        def close_handle(self, handle):
+            self.calls.append(('close_handle', handle))
+
+        def terminate_process(self, handle, code):
+            self.calls.append(('terminate', handle, code))
+            return True
+
+        def handle_stream(self, handle):
+            if handle == 21:
+                raise RuntimeError('stderr 包装失败')
+            stream = io.BytesIO()
+            original_close = stream.close
+
+            def close():
+                self.calls.append(('close_stream', handle))
+                original_close()
+
+            stream.close = close
+            self.streams[handle] = stream
+            return stream
+
+    backend = PipeBackend()
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
+
+    with pytest.raises(RuntimeError, match='stderr 包装失败'):
+        WindowsProcessLauncher(backend).launch(
+            ['python.exe'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    assert backend.streams[11].closed
+    assert ('close_stream', 11) in backend.calls
+    assert ('close_handle', 11) not in backend.calls
+    assert ('close_handle', 12) in backend.calls
+    assert ('close_handle', 21) in backend.calls
+    assert ('close_handle', 22) in backend.calls
+    assert ('terminate', 101, 1) in backend.calls
+    assert ('close_handle', 101) in backend.calls
+    assert ('close_handle', 102) in backend.calls
+
+
 def test_launcher_preserves_flags_without_environment(monkeypatch):
     """未传环境时不得追加 Unicode 环境标志。"""
     import modules.windows_job as windows_job
