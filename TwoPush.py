@@ -57,11 +57,18 @@ WEB_DEFAULT_PORT = 52233
 
 def _supported_kwargs(callable_object, kwargs):
     """按构造签名过滤明确不支持的参数。"""
-    signature = inspect.signature(callable_object)
+    try:
+        signature = inspect.signature(callable_object)
+    except (TypeError, ValueError):
+        return dict(kwargs)
     parameters = signature.parameters.values()
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return dict(kwargs)
-    supported = {parameter.name for parameter in parameters}
+    supported = {
+        parameter.name for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                              inspect.Parameter.KEYWORD_ONLY)
+    }
     return {key: value for key, value in kwargs.items() if key in supported}
 
 
@@ -157,29 +164,30 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             return uvicorn.Server(uvicorn.Config(app, host=host, port=server_port,
                                                   access_log=False, log_config=None))
 
-        server_error = []
-
-        def run_server():
-            """运行服务并记录启动异常。"""
+        def run_server(server_instance, errors):
+            """运行指定服务实例并记录启动异常。"""
             try:
-                server.run()
+                server_instance.run()
             except BaseException as error:
-                server_error.append(error)
+                errors.append(error)
 
         server = build_server(port)
         control.exit_callback = lambda: setattr(server, 'should_exit', True)
-        server_thread = threading.Thread(target=run_server, daemon=True)
+        server_error = []
+        server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
         server_thread.start()
         while not getattr(server, 'started', False):
             if server_error or server.should_exit or not server_thread.is_alive():
                 break
             time.sleep(0.05)
         if server_error and _is_port_in_use_error(server_error[0]):
+            previous_server = server
             port = _select_dynamic_web_port()
             server = build_server(port)
             control.exit_callback = lambda: setattr(server, 'should_exit', True)
-            server_error.clear()
-            server_thread = threading.Thread(target=run_server, daemon=True)
+            server_error = []
+            _cleanup_web_server(previous_server, preserve_exception=True)
+            server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
             server_thread.start()
             while not getattr(server, 'started', False):
                 if server_error or server.should_exit or not server_thread.is_alive():
