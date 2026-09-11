@@ -121,6 +121,35 @@ def test_select_dynamic_web_port_returns_bindable_port():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(('127.0.0.1', fallback_port))
 
+def test_browser_fallback_callback_stays_bound_to_new_server(monkeypatch):
+    """浏览器服务回退后停止回调必须固定新实例。"""
+    old_server = type('Server', (), {'should_exit': False})()
+    new_server = type('Server', (), {'should_exit': False})()
+    callback = TwoPush._make_server_exit_callback(new_server)
+    callback()
+    assert new_server.should_exit is True
+    assert old_server.should_exit is False
+
+
+def test_browser_fallback_join_timeout_is_reported_without_dropping_thread():
+    """浏览器回退线程超时应保留清理错误并返回未退出状态。"""
+    calls = []
+
+    class Thread:
+        def join(self, timeout=None):
+            calls.append(('join', timeout))
+
+        def is_alive(self):
+            return True
+
+    server = type('Server', (), {'should_exit': False})()
+    logger = type('Logger', (), {'error': lambda self, *args: calls.append(('error', args))})()
+    assert TwoPush._prepare_fallback_thread(server, Thread(), logger) is False
+    assert server.should_exit is True
+    assert calls[0][1] is not None
+    assert any(item[0] == 'error' for item in calls)
+
+
 def test_run_web_server_uses_config_and_opens_default_port_without_probe(monkeypatch, tmp_path):
     """Web 服务优先交给 Uvicorn 绑定默认端口，首页 URL 使用本机地址。"""
     calls = {}
