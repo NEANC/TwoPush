@@ -254,8 +254,8 @@ def test_run_web_server_uses_actual_socket_port_and_cleans_up(monkeypatch, tmp_p
     assert 'manager.shutdown' in calls
 
 
-def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monkeypatch, tmp_path):
-    """Web 服务线程启动失败时应及时退出并清理资源。"""
+def test_browser_startup_deadline_stops_server_and_raises_stable_error(monkeypatch, tmp_path):
+    """浏览器服务启动超时应停止服务、清理并抛出稳定错误。"""
     calls = []
 
     class FakeConfig:
@@ -265,8 +265,6 @@ def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monk
             pass
         def validate(self):
             return True
-        def get_attr(self, key, default=''):
-            return default
 
     class FakeManager:
         def stop(self):
@@ -286,8 +284,8 @@ def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monk
             pass
         def run(self):
             calls.append('run')
-        def close(self):
-            calls.append('close')
+        def shutdown(self):
+            calls.append('shutdown')
 
     class FakeUvicorn:
         Config = staticmethod(lambda app, **kwargs: kwargs)
@@ -298,9 +296,15 @@ def test_run_web_server_startup_failure_does_not_wait_forever_and_cleans_up(monk
     monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
     monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
     monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {'open': staticmethod(lambda url: calls.append(url))}))
+    monkeypatch.setattr(TwoPush.time, 'monotonic', lambda: 10)
 
-    assert TwoPush.run_web_server(str(tmp_path / 'config.ini')) == 1
-    assert calls == ['run', 'close', 'control.stop', 'manager.stop', 'manager.shutdown']
+    with pytest.raises(RuntimeError, match='服务启动失败'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+
+    assert 'shutdown' in calls
+    assert calls[-3:] == ['control.stop', 'manager.stop', 'manager.shutdown']
+
+
 
 
 def test_run_web_server_browser_failure_cleans_up(monkeypatch, tmp_path):
