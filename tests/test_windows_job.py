@@ -27,10 +27,16 @@ class FakeBackend:
         self.create_result = create_result
         self.assign_result = assign_result
         self.calls = []
+        self.configure_result = True
+        self.resume_result = True
 
     def create_job(self):
         self.calls.append(('create_job',))
         return self.create_result
+
+    def configure_kill_on_close(self, job_handle):
+        self.calls.append(('configure_kill_on_close', job_handle))
+        return self.configure_result
 
     def assign_process(self, job_handle, process_handle):
         self.calls.append(('assign_process', job_handle, process_handle))
@@ -65,6 +71,7 @@ def test_windows_job_fake_backend_covers_lifecycle_without_platform_patch():
     job.close()
     assert backend.calls == [
         ('create_job',),
+        ('configure_kill_on_close', 99),
         ('assign_process', 99, 123),
         ('resume_process', 123),
         ('send_ctrl_break', 456),

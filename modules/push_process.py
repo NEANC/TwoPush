@@ -25,12 +25,24 @@ def _is_windows():
     return os.name == 'nt'
 
 
+class _PosixProcessGroup:
+    """封装 POSIX 进程组操作，便于替换和测试。"""
+
+    def get_id(self, pid):
+        """获取进程组 ID。"""
+        return os.getpgid(pid)
+
+    def signal(self, pgid, signum):
+        """向进程组发送信号并返回系统调用结果。"""
+        return os.killpg(pgid, signum)
+
+
 class PushProcessManager:
     """管理单个 TwoPush CLI 子进程及其输出。"""
 
     def __init__(self, program_dir=None, temp_dir=None, gui_mode=False, logger=None,
                  terminal_streams=None, grace_seconds=5.0, join_timeout=2.0,
-                 windows_job_factory=None):
+                 windows_job_factory=None, posix_process_group=None):
         """初始化控制器。"""
         self.program_dir = Path(program_dir or Path(__file__).resolve().parent.parent)
         self.temp_dir = Path(temp_dir).resolve() if temp_dir is not None else self.program_dir / 'Temp'
@@ -40,6 +52,7 @@ class PushProcessManager:
         self.grace_seconds = grace_seconds
         self.join_timeout = join_timeout
         self._windows_job_factory = windows_job_factory or WindowsJob
+        self._posix_process_group = posix_process_group or _PosixProcessGroup()
         self._job = None
         self._lock = threading.RLock()
         self._process = None
@@ -49,6 +62,14 @@ class PushProcessManager:
         self._wait_thread = None
         self._temporary_path = None
         self._sequence = 0
+
+    def _log_diagnostic(self, message):
+        """记录停止流程诊断信息，不让日志异常影响终止。"""
+        if self.logger is not None:
+            try:
+                self.logger.warning(message)
+            except Exception:
+                pass
 
     def _build_command(self, json_path, config_path):
         """构造 TwoPush CLI 命令。"""
@@ -151,7 +172,8 @@ class PushProcessManager:
                     self._job = self._windows_job_factory()
                     try:
                         self._job.assign_process(self._process._handle)
-                        self._job.resume_process(self._process._handle)
+                        self._job.resume_process(
+                            getattr(self._process, '_thread_handle', self._process._handle))
                     except Exception:
                         self._job.close()
                         self._job = None
@@ -237,6 +259,7 @@ class PushProcessManager:
     def _wait_process(self, temporary_path, task, reader_threads):
         """等待子进程和输出线程结束，更新状态并清理临时文件。"""
         process = self._process
+        deadline = time.monotonic() + self.join_timeout
         try:
             exit_code = process.wait()
         except Exception:
@@ -245,8 +268,9 @@ class PushProcessManager:
                 task['exit_code'] = None
             exit_code = None
         for reader_thread in reader_threads:
+            remaining = max(0.0, deadline - time.monotonic())
             if reader_thread.is_alive():
-                reader_thread.join(self.join_timeout)
+                reader_thread.join(remaining)
         if self._job is not None:
             self._job.close()
             self._job = None
@@ -283,7 +307,10 @@ class PushProcessManager:
             if _is_windows():
                 try:
                     if self._job is not None:
-                        self._job.send_ctrl_break(self._process.pid)
+                        try:
+                            self._job.send_ctrl_break(self._process.pid)
+                        except (OSError, RuntimeError) as error:
+                            self._log_diagnostic(f'控制台中断不可用，直接终止作业: {error}')
                         time.sleep(self.grace_seconds)
                         self._job.terminate()
                     else:
@@ -296,12 +323,15 @@ class PushProcessManager:
                     return False
             else:
                 try:
-                    if hasattr(os, 'killpg'):
-                        os.killpg(os.getpgid(self._process.pid), signal.SIGTERM)
+                    if (hasattr(self._posix_process_group, 'get_id')
+                            and hasattr(os, 'getpgid') and hasattr(os, 'killpg')):
+                        pgid = self._posix_process_group.get_id(self._process.pid)
+                        self._posix_process_group.signal(pgid, signal.SIGTERM)
                         if self._process.poll() is None:
                             time.sleep(self.grace_seconds)
                             if self._process.poll() is None:
-                                os.killpg(os.getpgid(self._process.pid), getattr(signal, 'SIGKILL', 9))
+                                self._posix_process_group.signal(
+                                    pgid, getattr(signal, 'SIGKILL', 9))
                     else:
                         self._process.terminate()
                 except OSError:
@@ -318,7 +348,8 @@ class PushProcessManager:
             self.stop()
         wait_thread = self._wait_thread
         if wait_thread and wait_thread is not threading.current_thread():
-            wait_thread.join(self.join_timeout)
+            deadline = time.monotonic() + self.join_timeout
+            wait_thread.join(max(0.0, deadline - time.monotonic()))
         if wait_thread and wait_thread.is_alive():
             with self._lock:
                 if self._task and self._task['status'] == 'running':
