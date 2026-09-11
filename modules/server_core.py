@@ -48,7 +48,31 @@ def _create_logger(resolved):
 
 def _signal_exit_code(signum):
     """将终止信号映射为命令行退出码。"""
-    return 128 + signum
+    return 130 if signum == signal.SIGINT else 0 if signum == signal.SIGTERM else 1
+
+
+def _actual_socket(server):
+    """读取服务监听器的真实 socket 和端口。"""
+    sockets = getattr(server, 'servers', None) or []
+    if not sockets or not getattr(sockets[0], 'sockets', None):
+        raise RuntimeError('服务未创建真实监听 socket')
+    socket = sockets[0].sockets[0]
+    return socket, socket.getsockname()[1]
+
+
+def _probe_health(app):
+    """通过 ASGI 请求确认健康接口已经返回 200。"""
+    if not hasattr(app, 'router'):
+        return True
+    import httpx
+
+    async def request():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url='http://127.0.0.1') as client:
+            response = await client.get('/api/health')
+            return response.status_code == 200
+
+    return asyncio.run(request())
 
 
 def _prepare_fallback_thread(server, previous_thread, logger):
@@ -156,9 +180,12 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
     manager = None
     server = None
     control = None
+    auth_store = None
     thread = None
     signal_number = None
     first_error = None
+    exit_code = None
+    ready_emitted = False
     old_handlers = {}
     try:
         resolved = resolve_server_options(options, os.environ)
@@ -169,7 +196,8 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
         config = _create_config(resolved, logger)
         config.load()
         if not config.validate():
-            return 2
+            exit_code = 2
+            return exit_code
         manager = _create_manager(resolved, logger)
         control = WebServerControl()
         auth_store = ServerAuthStore(resolved.access_token)
@@ -238,54 +266,74 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
                 time.sleep(0.01)
         if errors or not getattr(server, 'started', False):
             raise errors[0] if errors else RuntimeError('服务启动失败')
-        sockets = getattr(server, 'servers', None) or []
-        actual_port = sockets[0].sockets[0].getsockname()[1] if sockets else resolved.port
+        _socket, actual_port = _actual_socket(server)
+        if getattr(server.app.state, 'health_status', None) != 'ready' or not _probe_health(server.app):
+            raise RuntimeError('服务健康检查未就绪')
         launch_token = auth_store.issue_launch_token() if resolved.emit_launch_token else None
         url = resolved.public_url or f'http://127.0.0.1:{actual_port}/'
+        if resolved.port == 0:
+            url = url.replace(':0/', f':{actual_port}/')
         if launch_token:
             separator = '&' if '?' in url else '?'
             url = f'{url}{separator}launch_token={launch_token}'
         protocol.ready(pid=os.getpid(), bind_host=resolved.host, bind_port=actual_port,
                        url=url, auth_required=bool(resolved.access_token),
                        launch_token_included=launch_token is not None)
+        ready_emitted = True
         if open_browser and launch_token:
             webbrowser.open(url)
         thread.join()
-        return _signal_exit_code(signal_number) if signal_number is not None else 0
+        if errors:
+            raise errors[0]
+        exit_code = _signal_exit_code(signal_number) if signal_number is not None else 0
     except ServerConfigError as error:
         first_error = error
+        exit_code = error.exit_code
         protocol.error(code=error.code, message=error.safe_message)
-        return error.exit_code
     except BaseException as error:
         first_error = error
+        exit_code = 4
         try:
-            protocol.error(code='SERVER_ERROR', message='服务启动或运行失败')
+            if ready_emitted:
+                protocol.stopping(reason='error')
+            protocol.error(code='SERVER_RUNTIME_ERROR', message='服务运行失败')
         except Exception:
             pass
-        return 1
+        return exit_code
     finally:
         if server is not None:
             server.should_exit = True
         if thread is not None and thread.is_alive():
             thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
-            if thread.is_alive():
+            if thread.is_alive() and logger is not None:
                 logger.error('服务线程未在收尾期限内退出，线程残留诊断已记录')
         for sig, handler in old_handlers.items():
             try:
                 signal.signal(sig, handler)
             except (ValueError, OSError):
                 pass
+        cleanup_error = None
         for action in (
             lambda: control.stop() if control else None,
             lambda: manager.stop() if manager else None,
             lambda: manager.shutdown() if manager else None,
+            lambda: auth_store.clear() if auth_store else None,
             lambda: close_gui_logger(logger),
         ):
             try:
                 action()
+            except Exception as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+        if cleanup_error is not None and first_error is None:
+            exit_code = 4
+            try:
+                if ready_emitted and not (control and control.stop_requested):
+                    protocol.stopping(reason='error')
+                protocol.error(code='CLEANUP_FAILED', message='服务清理失败')
             except Exception:
-                if first_error is None:
-                    first_error = RuntimeError('服务清理失败')
+                pass
+        return exit_code
 
 
 def run_fastapi_server(options):

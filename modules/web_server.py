@@ -55,10 +55,11 @@ class WebServerControl:
         with self.lock:
             if self.stop_requested:
                 return
-            self.first_error = 'service_stop'
+            if self.first_error is None:
+                self.first_error = 'service_stop'
             self.stop_requested = True
-            if self.exit_callback is not None:
-                self.exit_callback()
+        if self.exit_callback is not None:
+            self.exit_callback()
 
 
 def _is_reparse_point(path: Path) -> bool:
@@ -127,44 +128,17 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     except (OSError, configparser.Error):
         access_token = ''
 
-    auth_cleared = False
-
-    def clear_auth_once():
-        """清理认证状态且避免停止流程重复清理。"""
-        nonlocal auth_cleared
-        if auth_cleared:
-            return
-        auth.clear()
-        auth_cleared = True
-
     @asynccontextmanager
     async def lifespan(_app):
-        """管理服务生命周期并在退出时清理推送任务。"""
-        yield
-        first_error = None
+        """维护应用状态，不负责外部资源清理。"""
+        app.state.health_status = 'ready'
         try:
-            clear_auth_once()
-        except Exception as error:
-            if first_error is None:
-                first_error = error
-        try:
-            control.stop()
-        except Exception as error:
-            first_error = error
-        try:
-            process_manager.stop()
-        except Exception as error:
-            if first_error is None:
-                first_error = error
-        try:
-            process_manager.shutdown()
-        except Exception as error:
-            if first_error is None:
-                first_error = error
-        if first_error is not None:
-            raise first_error
+            yield
+        finally:
+            app.state.health_status = 'stopping'
 
     app = FastAPI(lifespan=lifespan, root_path=root_path)
+    app.state.health_status = 'starting'
     app.state.logger = logger or logging.getLogger('TwoPush.GUI')
     app.state.process_manager = process_manager
     app.state.config_file = config_file
@@ -314,8 +288,8 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     @app.head('/api/health')
     async def health():
         """返回不认证且不缓存的服务健康状态。"""
-        stopping = control.stop_requested
-        response = JSONResponse({'status': 'stopping' if stopping else 'ready', 'version': VERSION}, status_code=503 if stopping else 200)
+        status = app.state.health_status
+        response = JSONResponse({'status': status, 'version': VERSION}, status_code=200 if status == 'ready' else 503)
         response.headers['Cache-Control'] = 'no-store'
         return response
 
@@ -600,6 +574,7 @@ def create_app(root_dir, config_path, resource_dir, process_manager,
     async def stop_server():
         """只记录服务停止请求并立即返回。"""
         control.stop()
+        app.state.health_status = 'stopping'
         return JSONResponse({'stopping': True, 'message': '服务正在停止'}, status_code=202)
 
     return app

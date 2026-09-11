@@ -106,10 +106,18 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
 
     monkeypatch.setattr('modules.server_core.ConfigManager', Config)
     monkeypatch.setattr('modules.server_core.PushProcessManager', Manager)
+    class Socket:
+        def getsockname(self):
+            return ('127.0.0.1', 4567)
+
+    class Listener:
+        sockets = [Socket()]
+
     class Server:
         started = True
         should_exit = False
-        servers = []
+        servers = [Listener()]
+        app = type('App', (), {'state': type('State', (), {'health_status': 'ready'})()})()
         def run(self):
             return None
     monkeypatch.setattr('modules.server_core._new_server', lambda *args: Server())
@@ -120,8 +128,8 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
     assert run_fastapi_server(options) == 0
     assert captured['config']['temp_dir'] == captured['manager']['temp_dir']
     assert '"event":"server_ready"' in output.getvalue()
-    assert '"bind_port":0' in output.getvalue()
-    assert 'http://127.0.0.1:0/' in output.getvalue()
+    assert '"bind_port":4567' in output.getvalue()
+    assert 'http://127.0.0.1:4567/' in output.getvalue()
 
 
 def test_server_core_uses_resolved_log_root(monkeypatch, tmp_path):
@@ -142,7 +150,7 @@ def test_signal_exit_code_maps_sigint_and_sigterm():
     from modules.server_core import _signal_exit_code
 
     assert _signal_exit_code(2) == 130
-    assert _signal_exit_code(15) == 143
+    assert _signal_exit_code(15) == 0
 
 
 def test_server_core_fallback_join_timeout_is_stable_failure_with_residual_diagnostic():

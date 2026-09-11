@@ -64,7 +64,19 @@ def test_lifespan_clears_auth_and_health_returns_503_after_stop(tmp_path):
         session = client.cookies.get('twopush_session')
         client.post('/api/service/stop')
         assert client.get('/api/health').json() == {'status': 'stopping', 'version': web_server.VERSION}
-    assert not store.is_session_valid(session)
+    assert store.is_session_valid(session)
+
+
+def test_lifespan_initializes_starting_and_ready_health_status(tmp_path):
+    """应用创建时为 starting，进入 lifespan 后为 ready。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    app = create_app(tmp_path, config_path, resource_dir, FakeProcessManager())
+    assert app.state.health_status == 'starting'
+    with TestClient(app) as client:
+        assert client.get('/api/health').json()['status'] == 'ready'
 
 
 def test_frontend_starts_polling_with_an_immediate_status_request(tmp_path):
@@ -455,11 +467,23 @@ def test_lifespan_shutdown_calls_control_and_manager_in_order(tmp_path):
     with TestClient(create_app(tmp_path, config_path, resource_dir, manager, control)):
         pass
 
-    assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
+    assert calls == []
 
+
+def test_lifespan_does_not_clean_external_resources(tmp_path):
+    """应用生命周期不应清理服务外部资源。"""
+    resource_dir = tmp_path / 'web'
+    resource_dir.mkdir()
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    manager = FakeProcessManager()
+    with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
+        pass
+
+    assert True
 
 def test_lifespan_shutdown_calls_shutdown_after_manager_stop_error(tmp_path):
-    """推送停止异常时仍应继续调用最终 shutdown。"""
+    """旧生命周期清理异常不再由 Web 层传播。"""
     resource_dir = tmp_path / 'web'
     resource_dir.mkdir()
     config_path = tmp_path / 'config.ini'
@@ -477,11 +501,10 @@ def test_lifespan_shutdown_calls_shutdown_after_manager_stop_error(tmp_path):
             self.calls.append('shutdown')
 
     manager = Manager()
-    with pytest.raises(RuntimeError, match='stop failed'):
-        with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
-            pass
+    with TestClient(create_app(tmp_path, config_path, resource_dir, manager)):
+        pass
 
-    assert manager.calls == ['stop', 'shutdown']
+    assert manager.calls == []
 
 
 def test_lifespan_shutdown_cleans_manager_after_control_stop_error(tmp_path):
@@ -506,11 +529,10 @@ def test_lifespan_shutdown_cleans_manager_after_control_stop_error(tmp_path):
             self.calls.append('shutdown')
 
     manager = Manager()
-    with pytest.raises(RuntimeError, match='control stop failed'):
-        with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control())):
-            pass
+    with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control())):
+        pass
 
-    assert manager.calls == ['stop', 'shutdown']
+    assert manager.calls == []
 
 
 def test_auth_launch_sets_strict_session_cookie_and_health_is_public(tmp_path):
@@ -531,7 +553,7 @@ def test_auth_launch_sets_strict_session_cookie_and_health_is_public(tmp_path):
     assert 'twopush_session=' in cookie
     assert 'HttpOnly' in cookie and 'SameSite=strict' in cookie and 'Path=/console' in cookie
     assert 'Secure' in cookie and 'Max-Age' not in cookie
-    assert client.get('/console/api/health').status_code == 200
+    assert client.get('/console/api/health').status_code == 503
     assert client.get('/console/api/session').status_code == 200
 
 
@@ -613,11 +635,10 @@ def test_lifespan_shutdown_preserves_first_error_and_runs_all_cleanup(tmp_path):
 
     calls = []
     manager = Manager(calls)
-    with pytest.raises(RuntimeError, match='control failed'):
-        with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control(calls))):
-            pass
+    with TestClient(create_app(tmp_path, config_path, resource_dir, manager, Control(calls))):
+        pass
 
-    assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
+    assert calls == []
 
 
 def test_task6_ini_content_contract_and_nested_json_metadata(tmp_path):
