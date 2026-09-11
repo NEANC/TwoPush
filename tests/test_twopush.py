@@ -3,6 +3,7 @@
 
 """TwoPush 主流程与通道解析测试"""
 
+import inspect
 import json
 import logging
 import os
@@ -27,6 +28,47 @@ def mock_cleanup_residue(monkeypatch):
         'modules.self_updater.SelfUpdater._cleanup_update_residue',
         lambda logger, temp_folder=None, clean_cache=True: None,
     )
+
+
+def test_supported_kwargs_handles_uninspectable_callable_without_dropping_parameters(monkeypatch):
+    """签名不可检查时应保留全部业务参数。"""
+    kwargs = {'config_file': 'config.ini', 'logger': 'logger', 'temp_dir': 'Temp'}
+    monkeypatch.setattr(TwoPush.inspect, 'signature', lambda _: (_ for _ in ()).throw(ValueError('不可检查')))
+
+    assert TwoPush._supported_kwargs(object(), kwargs) == kwargs
+
+
+def test_supported_kwargs_keeps_named_parameters_and_discards_positional_only(monkeypatch):
+    """可检查签名只保留可用的命名参数。"""
+    def constructor(positional_only, named, *args, keyword_only):
+        pass
+
+    signature = inspect.Signature([
+        inspect.Parameter('positional_only', inspect.Parameter.POSITIONAL_ONLY),
+        inspect.Parameter('named', inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter('args', inspect.Parameter.VAR_POSITIONAL),
+        inspect.Parameter('keyword_only', inspect.Parameter.KEYWORD_ONLY),
+    ])
+    monkeypatch.setattr(TwoPush.inspect, 'signature', lambda _: signature)
+
+    assert TwoPush._supported_kwargs(constructor, {'positional_only': 1, 'named': 2,
+                                                    'keyword_only': 3}) == {
+        'named': 2, 'keyword_only': 3,
+    }
+
+
+def test_supported_kwargs_preserves_internal_type_error_single_call(monkeypatch):
+    """构造内部 TypeError 不应由兼容逻辑重复调用。"""
+    calls = []
+
+    class Constructor:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+            raise TypeError('内部错误')
+
+    with pytest.raises(TypeError, match='内部错误'):
+        Constructor(**TwoPush._supported_kwargs(Constructor, {'business': 'value'}))
+    assert calls == [{'business': 'value'}]
 
 
 def test_parse_args_registers_server_options_and_rejects_mixed_modes(monkeypatch):
