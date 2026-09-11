@@ -5,6 +5,7 @@
 
 import ctypes
 import os
+import subprocess
 from ctypes import wintypes
 
 
@@ -100,6 +101,23 @@ class _CtypesBackend:
         return self.kernel32.CloseHandle(handle)
 
 
+class WindowsProcessLauncher:
+    """通过 CreateProcessW 创建挂起进程并返回真实进程和线程句柄。"""
+
+    def launch(self, command, **kwargs):
+        """启动 Windows 子进程，返回进程对象、进程句柄和主线程句柄。"""
+        if not _is_windows():
+            process = subprocess.Popen(command, **kwargs)
+            return process, getattr(process, '_handle', None), None
+        process = subprocess.Popen(command, **kwargs)
+        thread_handle = getattr(process, '_thread_handle', None)
+        if thread_handle is None:
+            process.kill()
+            process.wait()
+            raise RuntimeError('无法获取 Windows 子进程主线程句柄')
+        return process, process._handle, thread_handle
+
+
 class WindowsJob:
     """封装 Windows Job Object；非 Windows 平台不伪装可用。"""
 
@@ -117,7 +135,10 @@ class WindowsJob:
             raise ctypes.WinError(ctypes.get_last_error())
         if self._handle and not self._backend.configure_kill_on_close(self._handle):
             error = ctypes.WinError(ctypes.get_last_error())
-            self.close()
+            try:
+                self.close()
+            except Exception:
+                pass
             raise error
 
     def _require_available(self):
