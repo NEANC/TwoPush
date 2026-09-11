@@ -211,7 +211,8 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
         def emit_stop(server_instance):
             """输出唯一停止事件并请求指定 Uvicorn 实例退出。"""
             try:
-                protocol.stopping(reason='signal' if control.first_error == 'signal' else 'api')
+                if ready_emitted:
+                    protocol.stopping(reason='signal' if control.first_error == 'signal' else 'api')
             except RuntimeError:
                 pass
             if server_instance is not None:
@@ -265,6 +266,9 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
                 time.sleep(0.01)
         if errors or not getattr(server, 'started', False):
+            if signal_number is not None:
+                exit_code = _signal_exit_code(signal_number)
+                return exit_code
             raise errors[0] if errors else RuntimeError('服务启动失败')
         _socket, actual_port = _actual_socket(server)
         if getattr(server.app.state, 'health_status', None) != 'ready' or not _probe_health(server.app):
