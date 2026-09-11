@@ -4,10 +4,59 @@
 """Windows Job 接口契约测试。"""
 
 import os
+import subprocess
+import sys
 
 import pytest
 
-from modules.windows_job import WindowsJob
+from modules.windows_job import WindowsJob, WindowsProcessLauncher
+
+
+
+
+def test_launcher_uses_create_process_backend_and_preserves_launch_contract(monkeypatch):
+    """启动器应传递安全命令行、环境块、目录和创建标志，并返回包装器。"""
+    import modules.windows_job as windows_job
+
+    class FakeBackend:
+        def __init__(self):
+            self.calls = []
+
+        def create_process(self, **kwargs):
+            self.calls.append(kwargs)
+            return (123, 456, 789)
+
+        def close_handle(self, handle):
+            self.calls.append({'close': handle})
+
+    backend = FakeBackend()
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
+    launcher = WindowsProcessLauncher(backend=backend)
+    process = launcher.launch(
+        ['python.exe', 'a b.py', '"quoted"'], cwd='C:/work',
+        env={'B': '2', 'A': '1'}, stdout=None, stderr=None,
+        creationflags=0x204)
+
+    call = backend.calls[0]
+    assert call['command_line'] == subprocess.list2cmdline(
+        ['python.exe', 'a b.py', '"quoted"'])
+    assert call['cwd'] == 'C:/work'
+    assert call['creation_flags'] == 0x204
+    assert call['environment'].startswith('A=1\x00B=2\x00')
+    assert (process.pid, process.process_handle, process.thread_handle) == (789, 123, 456)
+    process.close()
+    assert {'close': 456} in backend.calls
+    assert {'close': 123} in backend.calls
+
+
+def test_launcher_is_importable_without_windows_backend(monkeypatch):
+    """非 Windows 导入不应初始化 WinDLL。"""
+    import modules.windows_job as windows_job
+
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: False)
+    process = WindowsProcessLauncher().launch([sys.executable, '-c', 'pass'])
+    assert process.process_handle is not None
+    process.wait()
 
 
 def test_windows_job_does_not_fake_availability_on_non_windows():

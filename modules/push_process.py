@@ -175,8 +175,14 @@ class PushProcessManager:
                 else:
                     popen_kwargs['start_new_session'] = True
                 if _is_windows():
-                    self._process, process_handle, thread_handle = self._windows_process_launcher.launch(
+                    launched = self._windows_process_launcher.launch(
                         self._build_command(json_path, config_path), **popen_kwargs)
+                    if isinstance(launched, tuple):
+                        self._process, process_handle, thread_handle = launched
+                    else:
+                        self._process = launched
+                        process_handle = self._process.process_handle
+                        thread_handle = self._process.thread_handle
                     if process_handle is None or thread_handle is None:
                         raise RuntimeError('无法获取 Windows 子进程主线程句柄')
                     job_factory = self._windows_job_factory
@@ -185,6 +191,9 @@ class PushProcessManager:
                     self._job = job_factory()
                     self._job.assign_process(process_handle)
                     self._job.resume_process(thread_handle)
+                    close_thread_handle = getattr(self._process, 'close_thread_handle', None)
+                    if close_thread_handle is not None:
+                        close_thread_handle()
                 else:
                     self._process = subprocess.Popen(
                         self._build_command(json_path, config_path), **popen_kwargs)
@@ -196,6 +205,12 @@ class PushProcessManager:
                         pass
                     self._job = None
                 if self._process is not None:
+                    close_thread_handle = getattr(self._process, 'close_thread_handle', None)
+                    if close_thread_handle is not None:
+                        try:
+                            close_thread_handle()
+                        except Exception:
+                            pass
                     try:
                         self._process.kill()
                     except Exception:
