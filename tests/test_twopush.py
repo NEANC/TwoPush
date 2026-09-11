@@ -400,6 +400,212 @@ def test_run_web_server_constructor_failure_cleans_up(monkeypatch, tmp_path):
     assert calls == ['control.stop', 'manager.stop', 'manager.shutdown']
 
 
+def test_run_web_server_browser_failure_joins_server_thread(monkeypatch, tmp_path):
+    """浏览器打开失败时应有界等待实际服务线程。"""
+    calls = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            pass
+        def shutdown(self):
+            pass
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            pass
+
+    class FakeServer:
+        started = True
+        should_exit = False
+        def __init__(self, config):
+            pass
+        def run(self):
+            pass
+        def shutdown(self):
+            pass
+
+    class FakeThread:
+        def __init__(self):
+            self.alive = True
+        def start(self):
+            pass
+        def join(self, timeout=None):
+            calls.append(timeout)
+            self.alive = False
+        def is_alive(self):
+            return self.alive
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush.threading, 'Thread', lambda **kwargs: FakeThread())
+    monkeypatch.setattr(TwoPush, 'webbrowser', type('Browser', (), {
+        'open': staticmethod(lambda url: (_ for _ in ()).throw(RuntimeError('browser unavailable'))),
+    }))
+
+    with pytest.raises(RuntimeError, match='browser unavailable'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+    assert calls == [TwoPush.DEFAULT_THREAD_JOIN_TIMEOUT]
+
+
+def test_run_web_server_fallback_gets_independent_startup_deadline(monkeypatch, tmp_path):
+    """首轮耗时后回退服务仍应获得完整启动窗口。"""
+    calls = []
+    monotonic_values = iter([0, 9, 10, 10, 19, 20])
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            pass
+        def shutdown(self):
+            pass
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            pass
+
+    class FakeServer:
+        instances = []
+        def __init__(self, config):
+            self.started = False
+            self.should_exit = False
+            self.servers = []
+            FakeServer.instances.append(self)
+        def run(self):
+            if len(FakeServer.instances) == 1:
+                calls.append('first')
+                error = OSError(10048, 'occupied')
+                error.winerror = 10048
+                server_errors[0].append(error)
+        def shutdown(self):
+            pass
+
+    server_errors = []
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            self.alive = True
+        def start(self):
+            server_errors.append(self.args[1])
+            self.target(*self.args)
+            self.alive = False
+        def join(self, timeout=None):
+            self.alive = False
+        def is_alive(self):
+            return self.alive
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush.threading, 'Thread', FakeThread)
+    monkeypatch.setattr(TwoPush.time, 'monotonic', lambda: next(monotonic_values))
+    monkeypatch.setattr(TwoPush.time, 'sleep', lambda _: None)
+
+    with pytest.raises(RuntimeError, match='服务启动失败'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+    assert calls == ['first']
+    assert len(FakeServer.instances) == 2
+
+
+def test_run_web_server_does_not_fallback_explicit_port(monkeypatch, tmp_path):
+    """显式端口启动失败时不得切换动态端口。"""
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            pass
+        def validate(self):
+            return True
+        def get_attr(self, key, default=''):
+            return default
+
+    class FakeManager:
+        def stop(self):
+            pass
+        def shutdown(self):
+            pass
+
+    class FakeControl:
+        stop_requested = False
+        def stop(self):
+            pass
+
+    class FakeServer:
+        count = 0
+        def __init__(self, config):
+            FakeServer.count += 1
+            self.started = False
+            self.should_exit = False
+        def run(self):
+            error = OSError(10048, 'occupied')
+            error.winerror = 10048
+            errors[0].append(error)
+        def shutdown(self):
+            pass
+
+    errors = []
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            self.alive = True
+        def start(self):
+            errors.append(self.args[1])
+            self.target(*self.args)
+            self.alive = False
+        def join(self, timeout=None):
+            self.alive = False
+        def is_alive(self):
+            return self.alive
+
+    class FakeUvicorn:
+        Config = staticmethod(lambda app, **kwargs: kwargs)
+        Server = FakeServer
+
+    monkeypatch.setattr(TwoPush, 'ConfigManager', FakeConfig)
+    monkeypatch.setenv('TWOPUSH_SERVER_PORT', '9000')
+    monkeypatch.setitem(sys.modules, 'uvicorn', FakeUvicorn)
+    monkeypatch.setattr('modules.push_process.PushProcessManager', FakeManager)
+    monkeypatch.setattr('modules.web_server.WebServerControl', FakeControl)
+    monkeypatch.setattr(TwoPush.threading, 'Thread', FakeThread)
+    monkeypatch.setattr(TwoPush.time, 'monotonic', lambda: 10)
+    monkeypatch.setattr(TwoPush.time, 'sleep', lambda _: None)
+
+    with pytest.raises(RuntimeError, match='服务启动失败'):
+        TwoPush.run_web_server(str(tmp_path / 'config.ini'))
+    assert FakeServer.count == 1
 def test_parse_args_single_dash_long_option_abbreviated_by_argparse(monkeypatch):
     """argparse 短选项缩写与位置参数共存时，裸文本会被位置参数截获"""
     monkeypatch.setattr(sys, 'argv', ['TwoPush.py', '-config', 'value'])
