@@ -54,6 +54,7 @@ from modules.version import VERSION
 DEFAULT_CONFIG_FILE = "config.ini"
 WEB_DEFAULT_PORT = 52233
 DEFAULT_THREAD_JOIN_TIMEOUT = 1.0
+SERVER_STARTUP_DEADLINE = 10.0
 
 
 def _make_server_exit_callback(server_instance):
@@ -192,8 +193,9 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         server_error = []
         server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
         server_thread.start()
+        deadline = time.monotonic() + SERVER_STARTUP_DEADLINE
         while not getattr(server, 'started', False):
-            if server_error or server.should_exit or not server_thread.is_alive():
+            if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
                 break
             time.sleep(0.05)
         if server_error and _is_port_in_use_error(server_error[0]):
@@ -208,7 +210,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
             server_thread.start()
             while not getattr(server, 'started', False):
-                if server_error or server.should_exit or not server_thread.is_alive():
+                if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
                     break
                 time.sleep(0.05)
         actual_port = port
@@ -227,9 +229,10 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             url = (resolved.public_url if resolved.public_url != default_public_url
                    else f'http://127.0.0.1:{actual_port}{resolved.base_path}')
         if not getattr(server, 'started', False):
+            _cleanup_web_server(server, preserve_exception=True)
             if server_thread.is_alive():
-                server_thread.join(timeout=1)
-            return 1
+                server_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+            raise RuntimeError('服务启动失败')
         webbrowser.open(url)
         server_thread.join()
         return 0
