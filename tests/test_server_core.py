@@ -120,6 +120,29 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
     assert run_fastapi_server(options) == 0
     assert captured['config']['temp_dir'] == captured['manager']['temp_dir']
     assert '"event":"server_ready"' in output.getvalue()
+    assert '"bind_port":0' in output.getvalue()
+    assert 'http://127.0.0.1:0/' in output.getvalue()
+
+
+def test_server_core_uses_resolved_log_root(monkeypatch, tmp_path):
+    """核心应将解析后的日志目录传给服务日志器。"""
+    captured = {}
+    resolved = type('Resolved', (), {'log_root': tmp_path / 'logs'})()
+
+    monkeypatch.setattr('modules.server_core.setup_gui_logger',
+                        lambda **kwargs: captured.update(kwargs) or 'logger')
+
+    from modules.server_core import _create_logger
+    assert _create_logger(resolved) == 'logger'
+    assert captured['log_dir'] == tmp_path / 'logs'
+
+
+def test_signal_exit_code_maps_sigint_and_sigterm():
+    """服务信号应映射为标准命令行退出码。"""
+    from modules.server_core import _signal_exit_code
+
+    assert _signal_exit_code(2) == 130
+    assert _signal_exit_code(15) == 143
 
 
 def test_server_core_fallback_join_timeout_is_stable_failure_with_residual_diagnostic():
