@@ -53,6 +53,22 @@ from modules.version import VERSION
 
 DEFAULT_CONFIG_FILE = "config.ini"
 WEB_DEFAULT_PORT = 52233
+DEFAULT_THREAD_JOIN_TIMEOUT = 1.0
+
+
+def _make_server_exit_callback(server_instance):
+    """创建固定绑定服务实例的退出回调。"""
+    return lambda: setattr(server_instance, 'should_exit', True)
+
+
+def _prepare_fallback_thread(server, previous_thread, logger):
+    """停止首服务线程并以有界时间等待其退出。"""
+    server.should_exit = True
+    previous_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    if previous_thread.is_alive():
+        logger.error('首个服务线程未在回退前退出')
+        return False
+    return True
 
 
 def _supported_kwargs(callable_object, kwargs):
@@ -172,7 +188,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                 errors.append(error)
 
         server = build_server(port)
-        control.exit_callback = lambda: setattr(server, 'should_exit', True)
+        control.exit_callback = _make_server_exit_callback(server)
         server_error = []
         server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
         server_thread.start()
@@ -182,11 +198,13 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             time.sleep(0.05)
         if server_error and _is_port_in_use_error(server_error[0]):
             previous_server = server
+            previous_thread = server_thread
             port = _select_dynamic_web_port()
             server = build_server(port)
-            control.exit_callback = lambda: setattr(server, 'should_exit', True)
+            control.exit_callback = _make_server_exit_callback(server)
             server_error = []
-            _cleanup_web_server(previous_server, preserve_exception=True)
+            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
+                raise RuntimeError('服务回退清理失败')
             server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
             server_thread.start()
             while not getattr(server, 'started', False):
