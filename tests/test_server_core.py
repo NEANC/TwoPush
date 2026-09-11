@@ -257,7 +257,7 @@ def test_startup_signal_returns_signal_code_without_ready_or_stopping(
 @pytest.mark.parametrize('signum', [2, 15])
 def test_startup_signal_cleanup_failure_emits_cleanup_error(
         monkeypatch, tmp_path, signum):
-    """启动等待期间清理失败应输出清理错误且保留信号退出码优先级。"""
+    """启动等待期间清理失败应输出 CLEANUP_FAILED 并返回清理失败码。"""
     config_path = tmp_path / 'temp.ini'
     config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
     handlers = {}
@@ -306,6 +306,7 @@ def test_startup_signal_cleanup_failure_emits_cleanup_error(
     assert 'server_ready' not in output.getvalue()
     assert 'server_stopping' not in output.getvalue()
     assert '"event":"server_error"' in output.getvalue()
+    assert '"code":"CLEANUP_FAILED"' in output.getvalue()
 def test_protocol_stream_none_uses_stdout(monkeypatch):
     """显式传入 None 时协议输出应使用标准输出。"""
     import modules.server_core as server_core
