@@ -233,21 +233,40 @@ class WindowsLaunchedProcess:
 
     def close_thread_handle(self):
         """关闭启动线程句柄而保留进程句柄。"""
-        if self.thread_handle is not None:
-            self._backend.close_handle(self.thread_handle)
-            self.thread_handle = None
+        handle = self.thread_handle
+        self.thread_handle = None
+        if handle is not None:
+            self._backend.close_handle(handle)
 
     def close(self):
         """关闭包装器拥有的全部句柄和流。"""
-        self.close_thread_handle()
-        if self.process_handle:
-            self._backend.close_handle(self.process_handle)
-            self.process_handle = None
+        first_error = None
+        handle = self.thread_handle
+        self.thread_handle = None
+        if handle is not None:
+            try:
+                self._backend.close_handle(handle)
+            except Exception as error:
+                first_error = error
+        handle = self.process_handle
+        self.process_handle = None
+        if handle:
+            try:
+                self._backend.close_handle(handle)
+            except Exception as error:
+                if first_error is None:
+                    first_error = error
         for stream_name in ('stdout', 'stderr'):
             stream = getattr(self, stream_name)
+            setattr(self, stream_name, None)
             if stream is not None:
-                stream.close()
-                setattr(self, stream_name, None)
+                try:
+                    stream.close()
+                except Exception as error:
+                    if first_error is None:
+                        first_error = error
+        if first_error is not None:
+            raise first_error
 
 
 class WindowsProcessLauncher:
@@ -311,18 +330,33 @@ class WindowsProcessLauncher:
             return WindowsLaunchedProcess(backend, process_handle, thread_handle, pid,
                                           stdout_stream, stderr_stream)
         except Exception as error:
+            cleanup_errors = []
             for stream in created_streams.values():
                 try:
                     stream.close()
-                except Exception:
-                    pass
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
             for handle in pipe_handles:
-                backend.close_handle(handle)
+                try:
+                    backend.close_handle(handle)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
             if thread_handle:
-                backend.close_handle(thread_handle)
+                try:
+                    backend.close_handle(thread_handle)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
             if process_handle:
-                backend.terminate_process(process_handle, 1)
-                backend.close_handle(process_handle)
+                try:
+                    backend.terminate_process(process_handle, 1)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+                try:
+                    backend.close_handle(process_handle)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+            if cleanup_errors:
+                error.add_note(f'启动清理异常: {cleanup_errors!r}')
             raise error
 
 
