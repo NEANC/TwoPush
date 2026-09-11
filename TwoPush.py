@@ -55,6 +55,16 @@ DEFAULT_CONFIG_FILE = "config.ini"
 WEB_DEFAULT_PORT = 52233
 
 
+def _supported_kwargs(callable_object, kwargs):
+    """按构造签名过滤明确不支持的参数。"""
+    signature = inspect.signature(callable_object)
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return dict(kwargs)
+    supported = {parameter.name for parameter in parameters}
+    return {key: value for key, value in kwargs.items() if key in supported}
+
+
 def should_start_web():
     """判断是否应在无参数模式启动 Web 服务。"""
     return len(sys.argv) == 1
@@ -116,13 +126,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             'non_interactive': True,
             'temp_dir': resolved.temp_dir,
         }
-        try:
-            config = ConfigManager(**config_kwargs)
-        except TypeError as error:
-            if 'unexpected keyword argument' not in str(error):
-                raise
-            config_kwargs.pop('temp_dir')
-            config = ConfigManager(**config_kwargs)
+        config = ConfigManager(**_supported_kwargs(ConfigManager, config_kwargs))
         config.load()
         if not config.validate():
             return 2
@@ -132,24 +136,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             'logger': logger,
             'temp_dir': resolved.temp_dir,
         }
-        try:
-            process_manager = PushProcessManager(**process_kwargs)
-        except TypeError as error:
-            if not ('unexpected keyword argument' in str(error)
-                    or 'takes no arguments' in str(error)):
-                raise
-            process_kwargs.pop('temp_dir', None)
-            try:
-                process_manager = PushProcessManager(**process_kwargs)
-            except TypeError as fallback_error:
-                if 'takes no arguments' not in str(fallback_error):
-                    raise
-                process_manager = PushProcessManager()
-            else:
-                try:
-                    process_manager.temp_dir = resolved.temp_dir
-                except AttributeError:
-                    pass
+        process_manager = PushProcessManager(**_supported_kwargs(PushProcessManager, process_kwargs))
         control = WebServerControl()
         from modules.server_auth import ServerAuthStore
         auth_store = ServerAuthStore(resolved.access_token)
@@ -180,6 +167,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
                 server_error.append(error)
 
         server = build_server(port)
+        control.exit_callback = lambda: setattr(server, 'should_exit', True)
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
         while not getattr(server, 'started', False):
@@ -189,6 +177,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         if server_error and _is_port_in_use_error(server_error[0]):
             port = _select_dynamic_web_port()
             server = build_server(port)
+            control.exit_callback = lambda: setattr(server, 'should_exit', True)
             server_error.clear()
             server_thread = threading.Thread(target=run_server, daemon=True)
             server_thread.start()
