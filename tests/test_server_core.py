@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from modules.server_core import _create_config, _create_manager, _server_app, run_fastapi_server
-from modules.server_options import ServerOptions
+from modules.server_options import ServerConfigError, ServerOptions
 
 
 def test_server_app_uses_loaded_app_for_factory_config():
@@ -306,4 +306,68 @@ def test_startup_signal_cleanup_failure_emits_cleanup_error(
     assert 'server_ready' not in output.getvalue()
     assert 'server_stopping' not in output.getvalue()
     assert '"event":"server_error"' in output.getvalue()
-    assert '"code":"CLEANUP_FAILED"' in output.getvalue()
+def test_protocol_stream_none_uses_stdout(monkeypatch):
+    """显式传入 None 时协议输出应使用标准输出。"""
+    import modules.server_core as server_core
+
+    writer = type('Writer', (), {})
+    captured = {}
+    class Protocol:
+        def error(self, **kwargs):
+            return None
+    protocol = Protocol()
+    monkeypatch.setattr(server_core, 'ServerProtocolWriter',
+                        lambda stream: (captured.setdefault('stream', stream), protocol)[1])
+    monkeypatch.setattr(server_core, 'resolve_server_options',
+                        lambda *args: (_ for _ in ()).throw(ServerConfigError(
+                            'CONFIG_INVALID', 2, '无效配置')))
+    options = ServerOptions(True, Path('config.ini'))
+
+    assert server_core.run_server_with_protocol(options, None) == 2
+    assert captured['stream'] is __import__('sys').stdout
+
+
+def test_startup_signal_handler_is_installed_before_configuration(monkeypatch, tmp_path):
+    """最小信号处理器必须先于配置读取和日志创建安装。"""
+    import modules.server_core as server_core
+    order = []
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    monkeypatch.setattr(server_core.signal, 'signal',
+                        lambda signum, handler: order.append(('signal', signum)) or None)
+    monkeypatch.setattr(server_core.signal, 'getsignal', lambda signum: None)
+    monkeypatch.setattr(server_core, 'resolve_server_options',
+                        lambda *args: order.append(('config',)) or (_ for _ in ()).throw(
+                            ServerConfigError('CONFIG_INVALID', 2, '无效配置')))
+    monkeypatch.setattr(server_core, '_create_logger', lambda resolved: order.append(('logger',)) or None)
+
+    server_core.run_server_with_protocol(ServerOptions(True, config_path), None)
+
+    assert order[0][0] == 'signal'
+
+
+def test_explicit_bind_failure_emits_bind_failed(monkeypatch, tmp_path):
+    """显式端口绑定失败应返回 3 并输出稳定错误码。"""
+    import modules.server_core as server_core
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+
+    class Server:
+        started = False
+        should_exit = False
+        def run(self):
+            raise OSError(10048, 'address in use')
+
+    monkeypatch.setattr(server_core, '_new_server', lambda *args: Server())
+    monkeypatch.setattr(server_core, '_create_logger', lambda resolved: type(
+        'L', (), {'error': lambda *a: None, 'info': lambda *a: None,
+                  'warning': lambda *a: None, 'debug': lambda *a: None})())
+    output = io.StringIO()
+    monkeypatch.setattr('sys.stdout', output)
+
+    assert server_core._is_bind_error(OSError(10048, 'address in use'))
+    result = server_core.run_server_with_protocol(
+        ServerOptions(True, config_path, port='52233'), output)
+
+    assert result == 3
+    assert '"code":"BIND_FAILED"' in output.getvalue()
