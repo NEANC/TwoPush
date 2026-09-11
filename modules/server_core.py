@@ -60,6 +60,16 @@ def _actual_socket(server):
     return socket, socket.getsockname()[1]
 
 
+def _server_app(server):
+    """获取 Uvicorn 配置中的实际 ASGI 应用，兼容工厂模式。"""
+    config = getattr(server, 'config', None)
+    app = getattr(config, 'app', None)
+    loaded_app = getattr(config, 'loaded_app', None)
+    if getattr(config, 'factory', False) or isinstance(app, str):
+        return loaded_app
+    return app or loaded_app
+
+
 def _probe_health(app):
     """通过 ASGI 请求确认健康接口已经返回 200。"""
     if not hasattr(app, 'router'):
@@ -271,7 +281,8 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
                 return exit_code
             raise errors[0] if errors else RuntimeError('服务启动失败')
         _socket, actual_port = _actual_socket(server)
-        if getattr(server.app.state, 'health_status', None) != 'ready' or not _probe_health(server.app):
+        app = _server_app(server)
+        if getattr(app.state, 'health_status', None) != 'ready' or not _probe_health(app):
             raise RuntimeError('服务健康检查未就绪')
         launch_token = auth_store.issue_launch_token() if resolved.emit_launch_token else None
         url = resolved.public_url or f'http://127.0.0.1:{actual_port}/'
