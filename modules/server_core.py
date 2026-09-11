@@ -69,11 +69,18 @@ def _new_server(app, host, port, control):
 
 def _supported_kwargs(callable_object, kwargs):
     """按构造签名过滤明确不支持的关键参数。"""
-    signature = inspect.signature(callable_object)
+    try:
+        signature = inspect.signature(callable_object)
+    except (TypeError, ValueError):
+        return dict(kwargs)
     parameters = signature.parameters.values()
     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return dict(kwargs)
-    supported = {parameter.name for parameter in parameters}
+    supported = {
+        parameter.name for parameter in parameters
+        if parameter.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                              inspect.Parameter.KEYWORD_ONLY)
+    }
     return {key: value for key, value in kwargs.items() if key in supported}
 
 
@@ -147,14 +154,14 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
                          public_url_is_https=bool(resolved.public_url and resolved.public_url.startswith('https://')),
                          temp_dir=resolved.temp_dir, auth_store=auth_store)
 
-        def emit_stop():
-            """输出唯一停止事件并请求 Uvicorn 退出。"""
+        def emit_stop(server_instance):
+            """输出唯一停止事件并请求指定 Uvicorn 实例退出。"""
             try:
                 protocol.stopping(reason='signal' if control.first_error == 'signal' else 'api')
             except RuntimeError:
                 pass
-            if server is not None:
-                server.should_exit = True
+            if server_instance is not None:
+                server_instance.should_exit = True
 
         def stop_from_signal(signum, _frame):
             """记录首个系统信号并请求服务停止。"""
@@ -169,26 +176,32 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             except (ValueError, OSError):
                 pass
 
-        server = _new_server(app, resolved.host, resolved.port, control)
-        control.exit_callback = emit_stop
-        errors = []
+        def make_exit_callback(server_instance):
+            """创建只绑定当前服务实例的退出回调。"""
+            return lambda: emit_stop(server_instance)
 
-        def serve():
-            """运行 Uvicorn 并保存启动异常。"""
+        def serve(server_instance, errors):
+            """运行指定 Uvicorn 实例并保存启动异常。"""
             try:
-                server.run()
+                server_instance.run()
             except BaseException as error:
                 errors.append(error)
 
-        thread = threading.Thread(target=serve, daemon=True)
+        server = _new_server(app, resolved.host, resolved.port, control)
+        control.exit_callback = make_exit_callback(server)
+        errors = []
+        thread = threading.Thread(target=serve, args=(server, errors), daemon=True)
         thread.start()
         deadline = time.monotonic() + 10
         while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
             time.sleep(0.01)
         if errors and _is_bind_error(errors[0]) and not resolved.port_explicit:
+            previous_server = server
             server = _new_server(app, resolved.host, 0, control)
-            errors.clear()
-            thread = threading.Thread(target=serve, daemon=True)
+            control.exit_callback = make_exit_callback(server)
+            errors = []
+            thread = threading.Thread(target=serve, args=(server, errors), daemon=True)
+            previous_server.should_exit = True
             thread.start()
             while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
                 time.sleep(0.01)
