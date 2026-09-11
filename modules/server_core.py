@@ -271,7 +271,6 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                old_handlers[sig] = signal.getsignal(sig)
                 signal.signal(sig, stop_from_signal)
             except (ValueError, OSError):
                 pass
