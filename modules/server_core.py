@@ -46,7 +46,7 @@ def _prepare_fallback_thread(server, previous_thread, logger):
     server.should_exit = True
     previous_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
     if previous_thread.is_alive():
-        logger.error('首个服务线程未在回退前退出')
+        logger.error('首个服务线程未在回退前退出，线程残留诊断已记录')
         return False
     return True
 
@@ -211,11 +211,11 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
         if errors and _is_bind_error(errors[0]) and not resolved.port_explicit:
             previous_server = server
             previous_thread = thread
+            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
+                raise RuntimeError('服务回退清理失败')
             server = _new_server(app, resolved.host, 0, control)
             control.exit_callback = make_exit_callback(server)
             errors = []
-            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
-                raise RuntimeError('服务回退清理失败')
             thread = threading.Thread(target=serve, args=(server, errors), daemon=True)
             thread.start()
             while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
