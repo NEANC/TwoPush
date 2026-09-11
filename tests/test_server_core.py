@@ -120,3 +120,27 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
     assert run_fastapi_server(options) == 0
     assert captured['config']['temp_dir'] == captured['manager']['temp_dir']
     assert '"event":"server_ready"' in output.getvalue()
+
+
+def test_server_core_fallback_stops_and_bounded_joins_previous_thread(monkeypatch, tmp_path):
+    """核心回退前应停止首线程并执行有界 join，且线程替身不得被丢弃。"""
+    from modules.server_core import _prepare_fallback_thread
+
+    calls = []
+
+    class Thread:
+        def join(self, timeout=None):
+            calls.append(('join', timeout))
+
+        def is_alive(self):
+            return True
+
+    server = type('Server', (), {'should_exit': False})()
+    result = _prepare_fallback_thread(server, Thread(), logger=type(
+        'Logger', (), {'error': lambda self, *args: calls.append(('error', args))})())
+
+    assert server.should_exit is True
+    assert result is False
+    assert calls[0][0] == 'join'
+    assert calls[0][1] is not None
+    assert any(item[0] == 'error' for item in calls)
