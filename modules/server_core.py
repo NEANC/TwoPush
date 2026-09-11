@@ -311,7 +311,7 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             if errors:
                 if isinstance(errors[0], _StartupSignal):
                     signal_number = errors[0].signum
-                    return _signal_exit_code(signal_number)
+                    raise _StartupSignal(signal_number)
                 first_error = errors[0]
                 exit_code = 3
                 code = 'BIND_FAILED' if _is_bind_error(errors[0]) else 'SERVER_START_FAILED'
@@ -321,7 +321,7 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             if signal_number is not None or startup_signal['number'] is not None:
                 signal_number = signal_number or startup_signal['number']
                 first_error = _StartupSignal(signal_number)
-                return _signal_exit_code(signal_number)
+                raise _StartupSignal(signal_number)
             protocol.error(code='SERVER_START_FAILED', message='服务启动失败')
             return 3
         _socket, actual_port = _actual_socket(server)
