@@ -72,13 +72,42 @@ def _join_server_thread(thread, logger, label):
 
 
 def _prepare_fallback_thread(server, previous_thread, logger):
-    """停止首服务线程并以有界时间等待其退出。"""
-    server.should_exit = True
+    """停止首服务并以有界时间等待其线程退出。"""
+    _cleanup_web_server(server, preserve_exception=True)
     previous_thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
     if previous_thread.is_alive():
         logger.error('首个服务线程未在回退前退出')
         return False
     return True
+
+
+def _wait_for_server(server, thread, control, errors, logger):
+    """循环等待服务结束，并响应异常、停止请求和启动截止时间。"""
+    deadline = time.monotonic() + SERVER_STARTUP_DEADLINE
+    while not getattr(server, 'started', False):
+        if errors or server.should_exit or control.stop_requested or not thread.is_alive():
+            break
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+
+
+def _wait_for_running_server(server, thread, control, errors, logger):
+    """有界等待运行中的服务线程并返回停止原因。"""
+    while thread.is_alive():
+        if errors:
+            _cleanup_web_server(server, preserve_exception=True)
+            _join_server_thread(thread, logger, '当前')
+            raise RuntimeError('服务线程异常退出') from errors[0]
+        if control.stop_requested or server.should_exit:
+            _cleanup_web_server(server, preserve_exception=True)
+            _join_server_thread(thread, logger, '当前')
+            if thread.is_alive():
+                raise RuntimeError('服务停止失败')
+            return
+        thread.join(timeout=DEFAULT_THREAD_JOIN_TIMEOUT)
+    if errors:
+        raise RuntimeError('服务线程异常退出') from errors[0]
 
 
 def _supported_kwargs(callable_object, kwargs):
@@ -204,27 +233,19 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
         server_error = []
         server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
         server_thread.start()
-        deadline = time.monotonic() + SERVER_STARTUP_DEADLINE
-        while not getattr(server, 'started', False):
-            if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
-                break
-            time.sleep(0.05)
+        _wait_for_server(server, server_thread, control, server_error, logger)
         if server_error and _is_port_in_use_error(server_error[0]) and not resolved.port_explicit:
             previous_server = server
             previous_thread = server_thread
+            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
+                raise RuntimeError('服务回退清理失败')
             port = _select_dynamic_web_port()
             server = build_server(port)
             control.exit_callback = _make_server_exit_callback(server)
             server_error = []
-            if not _prepare_fallback_thread(previous_server, previous_thread, logger):
-                raise RuntimeError('服务回退清理失败')
             server_thread = threading.Thread(target=run_server, args=(server, server_error), daemon=True)
             server_thread.start()
-            deadline = time.monotonic() + SERVER_STARTUP_DEADLINE
-            while not getattr(server, 'started', False):
-                if server_error or server.should_exit or not server_thread.is_alive() or time.monotonic() >= deadline:
-                    break
-                time.sleep(0.05)
+            _wait_for_server(server, server_thread, control, server_error, logger)
         actual_port = port
         server_sockets = getattr(server, 'servers', None) or []
         if server_sockets:
@@ -245,7 +266,7 @@ def run_web_server(config_path=DEFAULT_CONFIG_FILE):
             _join_server_thread(server_thread, logger, '当前')
             raise RuntimeError('服务启动失败')
         webbrowser.open(url)
-        server_thread.join()
+        _wait_for_running_server(server, server_thread, control, server_error, logger)
         return 0
     except BaseException as error:
         first_error = error
