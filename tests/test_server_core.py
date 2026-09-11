@@ -372,3 +372,170 @@ def test_explicit_bind_failure_emits_bind_failed(monkeypatch, tmp_path):
 
     assert result == 3
     assert '"code":"BIND_FAILED"' in output.getvalue()
+
+
+@pytest.mark.parametrize('signum', [2, 15])
+def test_server_restores_original_handlers_after_complete_run(monkeypatch, tmp_path, signum):
+    """完整服务运行后应恢复启动前预置的信号处理器对象。"""
+    import modules.server_core as server_core
+
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    original_handlers = {2: object(), 15: object()}
+    current_handlers = dict(original_handlers)
+    installed_handlers = {}
+
+    class Config:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            return None
+        def validate(self):
+            return True
+
+    class Manager:
+        def __init__(self, **kwargs):
+            pass
+        def stop(self):
+            return None
+        def shutdown(self):
+            return None
+
+    class App:
+        state = type('State', (), {'health_status': 'ready'})()
+
+    class Socket:
+        def getsockname(self):
+            return ('127.0.0.1', 4567)
+
+    class Listener:
+        sockets = [Socket()]
+
+    class Server:
+        started = True
+        should_exit = False
+        servers = [Listener()]
+        config = type('Config', (), {'app': App()})()
+
+        def run(self):
+            installed_handlers[signum](signum, None)
+
+    def fake_getsignal(signal_number):
+        return current_handlers[signal_number]
+
+    def fake_signal(signal_number, handler):
+        installed_handlers[signal_number] = handler
+        current_handlers[signal_number] = handler
+
+    monkeypatch.setattr(server_core, 'ConfigManager', Config)
+    monkeypatch.setattr(server_core, 'PushProcessManager', Manager)
+    monkeypatch.setattr(server_core, '_new_server', lambda *args: Server())
+    monkeypatch.setattr(server_core, 'create_app', lambda *args, **kwargs: App())
+    monkeypatch.setattr(server_core, '_probe_health', lambda app: True)
+    monkeypatch.setattr(server_core, 'close_gui_logger', lambda logger: None)
+    monkeypatch.setattr(server_core, '_create_logger', lambda resolved: 'logger')
+    monkeypatch.setattr(server_core.signal, 'getsignal', fake_getsignal)
+    monkeypatch.setattr(server_core.signal, 'signal', fake_signal)
+
+    assert server_core.run_server_with_protocol(
+        ServerOptions(True, config_path, port='0'), io.StringIO()) == (130 if signum == 2 else 0)
+    assert installed_handlers[2] is original_handlers[2]
+    assert installed_handlers[15] is original_handlers[15]
+
+
+def test_server_restores_original_handlers_after_startup_failure(monkeypatch, tmp_path):
+    """服务启动失败后应恢复启动前预置的信号处理器对象。"""
+    import modules.server_core as server_core
+
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    original_handlers = {2: object(), 15: object()}
+    installed_handlers = {}
+
+    class Config:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            return None
+        def validate(self):
+            return True
+
+    class Manager:
+        def __init__(self, **kwargs):
+            pass
+        def stop(self):
+            return None
+        def shutdown(self):
+            return None
+
+    class Server:
+        started = False
+        should_exit = False
+
+        def run(self):
+            raise OSError(10048, 'address in use')
+
+    def fake_signal(signal_number, handler):
+        installed_handlers[signal_number] = handler
+
+    monkeypatch.setattr(server_core, 'ConfigManager', Config)
+    monkeypatch.setattr(server_core, 'PushProcessManager', Manager)
+    monkeypatch.setattr(server_core, '_new_server', lambda *args: Server())
+    monkeypatch.setattr(server_core, '_create_logger', lambda resolved: 'logger')
+    monkeypatch.setattr(server_core, 'close_gui_logger', lambda logger: None)
+    monkeypatch.setattr(server_core.signal, 'getsignal', lambda signum: original_handlers[signum])
+    monkeypatch.setattr(server_core.signal, 'signal', fake_signal)
+
+    assert server_core.run_server_with_protocol(
+        ServerOptions(True, config_path, port='52233'), io.StringIO()) == 3
+    assert installed_handlers[2] is original_handlers[2]
+    assert installed_handlers[15] is original_handlers[15]
+
+
+def test_server_restores_original_handlers_after_startup_signal(monkeypatch, tmp_path):
+    """启动期收到信号后应恢复启动前预置的信号处理器对象。"""
+    import modules.server_core as server_core
+
+    config_path = tmp_path / 'config.ini'
+    config_path.write_text('[Web]\naccess_token = \n', encoding='utf-8')
+    original_handlers = {2: object(), 15: object()}
+    installed_handlers = {}
+
+    class Config:
+        def __init__(self, **kwargs):
+            pass
+        def load(self):
+            return None
+        def validate(self):
+            return True
+
+    class Manager:
+        def __init__(self, **kwargs):
+            pass
+        def stop(self):
+            return None
+        def shutdown(self):
+            return None
+
+    class Server:
+        started = False
+        should_exit = False
+
+        def run(self):
+            installed_handlers[2](2, None)
+
+    def fake_signal(signal_number, handler):
+        installed_handlers[signal_number] = handler
+
+    monkeypatch.setattr(server_core, 'ConfigManager', Config)
+    monkeypatch.setattr(server_core, 'PushProcessManager', Manager)
+    monkeypatch.setattr(server_core, '_new_server', lambda *args: Server())
+    monkeypatch.setattr(server_core, '_create_logger', lambda resolved: 'logger')
+    monkeypatch.setattr(server_core, 'close_gui_logger', lambda logger: None)
+    monkeypatch.setattr(server_core.signal, 'getsignal', lambda signum: original_handlers[signum])
+    monkeypatch.setattr(server_core.signal, 'signal', fake_signal)
+
+    assert server_core.run_server_with_protocol(
+        ServerOptions(True, config_path, port='0'), io.StringIO()) == 130
+    assert installed_handlers[2] is original_handlers[2]
+    assert installed_handlers[15] is original_handlers[15]
