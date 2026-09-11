@@ -3,6 +3,8 @@
 
 """Windows Job 接口契约测试。"""
 
+import ctypes
+import io
 import os
 import subprocess
 import sys
@@ -29,6 +31,26 @@ def test_launcher_uses_create_process_backend_and_preserves_launch_contract(monk
         def close_handle(self, handle):
             self.calls.append({'close': handle})
 
+        def create_pipe(self):
+            self.calls.append({'pipe': True})
+            return 111, 222
+
+        def make_inheritable(self, handle):
+            self.calls.append({'inherit': handle})
+
+        def make_non_inheritable(self, handle):
+            self.calls.append({'noninherit': handle})
+
+        def handle_stream(self, handle):
+            stream = io.BytesIO()
+            stream.handle = handle
+            original_close = stream.close
+            def close():
+                self.calls.append(('close', handle))
+                original_close()
+            stream.close = close
+            return stream
+
     backend = FakeBackend()
     monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
     launcher = WindowsProcessLauncher(backend=backend)
@@ -41,12 +63,78 @@ def test_launcher_uses_create_process_backend_and_preserves_launch_contract(monk
     assert call['command_line'] == subprocess.list2cmdline(
         ['python.exe', 'a b.py', '"quoted"'])
     assert call['cwd'] == 'C:/work'
-    assert call['creation_flags'] == 0x204
+    assert call['creation_flags'] == 0x204 | windows_job._CREATE_UNICODE_ENVIRONMENT
     assert call['environment'].startswith('A=1\x00B=2\x00')
     assert (process.pid, process.process_handle, process.thread_handle) == (789, 123, 456)
     process.close()
     assert {'close': 456} in backend.calls
     assert {'close': 123} in backend.calls
+
+
+def test_launcher_wraps_pipe_handles_as_binary_streams_and_closes_failure(monkeypatch):
+    """PIPE 应创建可读二进制流，并在启动失败时清理全部句柄。"""
+    import modules.windows_job as windows_job
+
+    class PipeBackend:
+        def __init__(self):
+            self.calls = []
+
+        def create_pipe(self):
+            self.calls.append(('pipe',))
+            return 11, 12
+
+        def make_inheritable(self, handle):
+            self.calls.append(('inherit', handle))
+
+        def make_non_inheritable(self, handle):
+            self.calls.append(('noninherit', handle))
+
+        def create_process(self, **kwargs):
+            self.calls.append(('create', kwargs))
+            return 101, 102, 103
+
+        def close_handle(self, handle):
+            self.calls.append(('close', handle))
+
+        def terminate_process(self, handle, code):
+            self.calls.append(('terminate', handle, code))
+            return True
+
+        def handle_stream(self, handle):
+            stream = io.BytesIO()
+            original_close = stream.close
+            def close():
+                self.calls.append(('close', handle))
+                original_close()
+            stream.close = close
+            return stream
+
+    backend = PipeBackend()
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
+    process = WindowsProcessLauncher(backend).launch(
+        ['python.exe'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert process.stdout.readable() and process.stderr.readable()
+    assert not isinstance(process.stdout, int) and not isinstance(process.stderr, int)
+    process.close()
+    assert ('close', 12) in backend.calls and ('close', 11) in backend.calls
+    assert ('close', 102) in backend.calls and ('close', 101) in backend.calls
+
+
+def test_launcher_preserves_flags_without_environment(monkeypatch):
+    """未传环境时不得追加 Unicode 环境标志。"""
+    import modules.windows_job as windows_job
+    class Backend:
+        def create_process(self, **kwargs):
+            self.call = kwargs
+            return 1, 2, 3
+        def close_handle(self, handle):
+            pass
+    backend = Backend()
+    monkeypatch.setattr(windows_job, '_is_windows', lambda: True)
+    process = WindowsProcessLauncher(backend).launch(['x'], creationflags=7)
+    assert backend.call['creation_flags'] == 7 | windows_job._CREATE_SUSPENDED | windows_job._CREATE_NEW_PROCESS_GROUP
+    assert backend.call['environment'] is None
+    process.close()
 
 
 def test_launcher_is_importable_without_windows_backend(monkeypatch):

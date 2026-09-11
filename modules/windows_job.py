@@ -4,6 +4,7 @@
 """Windows Job Object 和原生进程启动接口。"""
 
 import ctypes
+import io
 import os
 import subprocess
 from ctypes import wintypes
@@ -13,6 +14,7 @@ _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
 _CREATE_SUSPENDED = 0x00000004
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
+_CREATE_UNICODE_ENVIRONMENT = 0x00000400
 _WAIT_OBJECT_0 = 0
 _WAIT_TIMEOUT = 258
 _INFINITE = 0xFFFFFFFF
@@ -64,8 +66,14 @@ class _CtypesBackend:
                                      wintypes.DWORD, wintypes.LPVOID, wintypes.LPCWSTR,
                                      ctypes.POINTER(_StartupInfo), ctypes.POINTER(_ProcessInformation)]
         k.CreateProcessW.restype = wintypes.BOOL
+        k.GetStdHandle.argtypes = [wintypes.DWORD]
+        k.GetStdHandle.restype = wintypes.HANDLE
         k.CloseHandle.argtypes = [wintypes.HANDLE]
         k.CloseHandle.restype = wintypes.BOOL
+        k.CreatePipe.argtypes = [ctypes.POINTER(wintypes.HANDLE), ctypes.POINTER(wintypes.HANDLE), wintypes.LPVOID, wintypes.DWORD]
+        k.CreatePipe.restype = wintypes.BOOL
+        k.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+        k.SetHandleInformation.restype = wintypes.BOOL
         k.ResumeThread.argtypes = [wintypes.HANDLE]
         k.ResumeThread.restype = wintypes.DWORD
         k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
@@ -84,6 +92,30 @@ class _CtypesBackend:
         k.GenerateConsoleCtrlEvent.restype = wintypes.BOOL
         k.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
         k.TerminateJobObject.restype = wintypes.BOOL
+
+    def create_pipe(self):
+        """创建匿名管道并返回读写句柄。"""
+        read_handle = wintypes.HANDLE()
+        write_handle = wintypes.HANDLE()
+        if not self.kernel32.CreatePipe(ctypes.byref(read_handle), ctypes.byref(write_handle), None, 0):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return read_handle.value, write_handle.value
+
+    def make_inheritable(self, handle):
+        """允许句柄被子进程继承。"""
+        if not self.kernel32.SetHandleInformation(handle, 1, 1):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def make_non_inheritable(self, handle):
+        """禁止句柄被子进程继承。"""
+        if not self.kernel32.SetHandleInformation(handle, 1, 0):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def handle_stream(self, handle):
+        """将 Windows 读句柄包装为二进制文件流。"""
+        import msvcrt
+        descriptor = msvcrt.open_osfhandle(handle, os.O_BINARY)
+        return os.fdopen(descriptor, 'rb', closefd=True)
 
     def create_process(self, command_line, cwd, environment, creation_flags, stdout_handle, stderr_handle):
         """调用 CreateProcessW，并返回真实句柄和 PID。"""
@@ -211,9 +243,11 @@ class WindowsLaunchedProcess:
         if self.process_handle:
             self._backend.close_handle(self.process_handle)
             self.process_handle = None
-        for stream in (self.stdout, self.stderr):
+        for stream_name in ('stdout', 'stderr'):
+            stream = getattr(self, stream_name)
             if stream is not None:
                 stream.close()
+                setattr(self, stream_name, None)
 
 
 class WindowsProcessLauncher:
@@ -233,6 +267,8 @@ class WindowsProcessLauncher:
         command_line = subprocess.list2cmdline([os.fspath(item) for item in command])
         env = kwargs.pop('env', None)
         environment = None if env is None else ''.join(f'{key}={env[key]}\x00' for key in sorted(env)) + '\x00'
+        if environment is not None:
+            flags |= _CREATE_UNICODE_ENVIRONMENT
         cwd = os.fspath(kwargs.pop('cwd', None)) if kwargs.get('cwd') is not None else None
         stdout = kwargs.pop('stdout', None)
         stderr = kwargs.pop('stderr', None)
@@ -242,12 +278,36 @@ class WindowsProcessLauncher:
         kwargs.pop('universal_newlines', None)
         kwargs.pop('bufsize', None)
         process_handle = thread_handle = None
+        pipe_handles = []
+        streams = {}
         try:
+            for stream_name, value in (('stdout', stdout), ('stderr', stderr)):
+                if value == subprocess.PIPE:
+                    read_handle, write_handle = backend.create_pipe()
+                    pipe_handles.extend((read_handle, write_handle))
+                    backend.make_inheritable(write_handle)
+                    backend.make_non_inheritable(read_handle)
+                    streams[stream_name] = (read_handle, write_handle)
             process_handle, thread_handle, pid = backend.create_process(
                 command_line=command_line, cwd=cwd, environment=environment,
-                creation_flags=flags, stdout_handle=None, stderr_handle=None)
-            return WindowsLaunchedProcess(backend, process_handle, thread_handle, pid, stdout, stderr)
+                creation_flags=flags,
+                stdout_handle=streams.get('stdout', (None, None))[1],
+                stderr_handle=streams.get('stderr', (None, None))[1])
+            stdout_stream = (backend.handle_stream(streams['stdout'][0])
+                             if 'stdout' in streams else stdout)
+            stderr_stream = (backend.handle_stream(streams['stderr'][0])
+                             if 'stderr' in streams else stderr)
+            for read_handle, write_handle in streams.values():
+                backend.close_handle(write_handle)
+                pipe_handles.remove(write_handle)
+            return WindowsLaunchedProcess(backend, process_handle, thread_handle, pid,
+                                          stdout_stream, stderr_stream)
         except Exception:
+            for stream in streams.values():
+                for handle in stream:
+                    if handle in pipe_handles:
+                        backend.close_handle(handle)
+                        pipe_handles.remove(handle)
             if thread_handle:
                 backend.close_handle(thread_handle)
             if process_handle:

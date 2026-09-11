@@ -219,6 +219,12 @@ class PushProcessManager:
                         self._process.wait(timeout=self.join_timeout)
                     except Exception:
                         pass
+                    close_process = getattr(self._process, 'close', None)
+                    if close_process is not None:
+                        try:
+                            close_process()
+                        except Exception:
+                            pass
                 self._task['status'] = 'failed'
                 raise
             stdout_thread = threading.Thread(
@@ -360,6 +366,12 @@ class PushProcessManager:
             try:
                 temporary_path.unlink(missing_ok=True)
             except OSError:
+                pass
+        close_process = getattr(process, 'close', None)
+        if close_process is not None:
+            try:
+                close_process()
+            except Exception:
                 pass
 
     def get_status(self, cursor=0):
