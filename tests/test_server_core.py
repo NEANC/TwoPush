@@ -122,8 +122,8 @@ def test_server_core_injects_canonical_temp_dir_and_emits_ready(monkeypatch, tmp
     assert '"event":"server_ready"' in output.getvalue()
 
 
-def test_server_core_fallback_stops_and_bounded_joins_previous_thread(monkeypatch, tmp_path):
-    """核心回退前应停止首线程并执行有界 join，且线程替身不得被丢弃。"""
+def test_server_core_fallback_join_timeout_is_stable_failure_with_residual_diagnostic():
+    """核心回退线程未退出时应返回稳定失败并记录残留诊断。"""
     from modules.server_core import _prepare_fallback_thread
 
     calls = []
@@ -136,11 +136,12 @@ def test_server_core_fallback_stops_and_bounded_joins_previous_thread(monkeypatc
             return True
 
     server = type('Server', (), {'should_exit': False})()
-    result = _prepare_fallback_thread(server, Thread(), logger=type(
-        'Logger', (), {'error': lambda self, *args: calls.append(('error', args))})())
+    logger = type('Logger', (), {'error': lambda self, *args: calls.append(('error', args))})()
 
-    assert server.should_exit is True
+    result = _prepare_fallback_thread(server, Thread(), logger)
+
     assert result is False
+    assert server.should_exit is True
     assert calls[0][0] == 'join'
     assert calls[0][1] is not None
-    assert any(item[0] == 'error' for item in calls)
+    assert any('残留' in str(item) for item in calls if item[0] == 'error')
