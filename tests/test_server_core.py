@@ -1,5 +1,6 @@
 """服务核心生命周期测试。"""
 
+import inspect
 import io
 from pathlib import Path
 
@@ -7,6 +8,33 @@ import pytest
 
 from modules.server_core import _create_config, _create_manager, run_fastapi_server
 from modules.server_options import ServerOptions
+
+
+def test_supported_kwargs_handles_inspection_errors_without_dropping_business_parameters(monkeypatch):
+    """签名检查失败时应保留完整参数。"""
+    kwargs = {'logger': 'logger', 'temp_dir': 'Temp'}
+    monkeypatch.setattr('modules.server_core.inspect.signature',
+                        lambda _: (_ for _ in ()).throw(TypeError('不可检查')))
+
+    from modules.server_core import _supported_kwargs
+    assert _supported_kwargs(object(), kwargs) == kwargs
+
+
+def test_supported_kwargs_filters_positional_only_and_varargs(monkeypatch):
+    """签名过滤不应把仅位置参数或可变位置参数当作关键字参数。"""
+    signature = inspect.Signature([
+        inspect.Parameter('positional_only', inspect.Parameter.POSITIONAL_ONLY),
+        inspect.Parameter('named', inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter('args', inspect.Parameter.VAR_POSITIONAL),
+        inspect.Parameter('keyword_only', inspect.Parameter.KEYWORD_ONLY),
+    ])
+    monkeypatch.setattr('modules.server_core.inspect.signature', lambda _: signature)
+
+    from modules.server_core import _supported_kwargs
+    assert _supported_kwargs(object(), {'positional_only': 1, 'named': 2,
+                                        'keyword_only': 3, 'args': 4}) == {
+        'named': 2, 'keyword_only': 3,
+    }
 
 
 def test_constructor_compatibility_filters_unsupported_signature_parameters(monkeypatch, tmp_path):
