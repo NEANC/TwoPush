@@ -811,6 +811,9 @@ def main():
     if should_start_web():
         return run_web_server()
     args = parse_args()
+    if args.version:
+        print(f"TwoPush {VERSION}")
+        return 0
     if args.server:
         return run_fastapi_server(ServerOptions(
             True, Path(args.config), host=args.host, port=args.port,
@@ -826,7 +829,7 @@ def main():
 
     if args.version:
         print(f"TwoPush {VERSION}")
-        sys.exit(0)
+        return 0
 
     if not args.silent:
         print("TwoPush - 基于 onepush 的通知推送工具")

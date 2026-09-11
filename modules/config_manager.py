@@ -339,19 +339,8 @@ class ConfigManager:
             os.makedirs(temp_folder, exist_ok=True)
             self.logger.info('已创建临时文件夹: %s', sanitize_log_message(temp_folder))
         except (OSError, PermissionError) as error:
-            self.logger.warning('无法创建临时文件夹: %s', type(error).__name__)
-            system_temp = os.environ.get('TEMP', '')
-            if system_temp:
-                fallback = os.path.join(system_temp, self.app_name) if self.app_name else os.path.join(system_temp, 'Temp')
-            else:
-                local_app_data = os.environ.get('LOCALAPPDATA', '')
-                if local_app_data:
-                    fallback = os.path.join(local_app_data, 'Temp', self.app_name) if self.app_name else os.path.join(local_app_data, 'Temp')
-                else:
-                    fallback = os.path.join(_get_program_dir(), 'Temp')
-            self._attrs['temp_folder'] = fallback
-            self.logger.info('使用系统临时文件夹: %s', sanitize_log_message(fallback))
-            os.makedirs(fallback, exist_ok=True)
+            self.logger.error('无法创建临时文件夹: %s', type(error).__name__)
+            raise
 
     def get_attr(self, key: str, default: str = '') -> str:
         """读取已加载的配置属性"""

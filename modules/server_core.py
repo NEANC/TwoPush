@@ -9,9 +9,11 @@ import inspect
 import logging
 import os
 import signal
+import sys
 import threading
 import time
 import webbrowser
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pathlib import Path
 
 from modules.config_manager import ConfigManager
@@ -24,6 +26,13 @@ from modules.web_server import WebServerControl, create_app
 
 
 DEFAULT_THREAD_JOIN_TIMEOUT = 1.0
+
+
+class _StartupSignal(Exception):
+    """表示初始化阶段已收到终止信号。"""
+
+    def __init__(self, signum):
+        self.signum = signum
 
 
 class ServiceResult:
@@ -98,7 +107,9 @@ def _prepare_fallback_thread(server, previous_thread, logger):
 def _is_bind_error(error):
     """判断异常是否为端口占用。"""
     return isinstance(error, OSError) and (
-        error.errno == errno.EADDRINUSE or getattr(error, 'winerror', None) == 10048
+        error.errno in (errno.EADDRINUSE, 10048) or
+        getattr(error, 'winerror', None) == 10048 or
+        error.args[:1] == (10048,)
     )
 
 
@@ -185,7 +196,7 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
 
     if not options.server_mode:
         raise ValueError('服务入口需要 server_mode')
-    protocol = ServerProtocolWriter(protocol_stream or os.sys.stdout)
+    protocol = ServerProtocolWriter(sys.stdout if protocol_stream is None else protocol_stream)
     logger = None
     manager = None
     server = None
@@ -197,15 +208,36 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
     exit_code = None
     ready_emitted = False
     old_handlers = {}
+    startup_signal = {'number': None}
+
+    def minimal_signal_handler(signum, _frame):
+        """在初始化早期记录信号并写入最小 stderr 诊断。"""
+        if startup_signal['number'] is None:
+            startup_signal['number'] = signum
+        try:
+            os.sys.stderr.write('TwoPush 服务收到终止信号\n')
+            os.sys.stderr.flush()
+        except OSError:
+            pass
+        if control is None:
+            raise _StartupSignal(signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            old_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, minimal_signal_handler)
+        except (ValueError, OSError):
+            pass
     try:
         resolved = resolve_server_options(options, os.environ)
-        logger = _create_logger(resolved)
         from modules.server_options import probe_directory
         probe_directory(resolved.temp_dir, 'TEMP_DIR_UNAVAILABLE')
         probe_directory(resolved.log_root, 'LOG_DIR_UNAVAILABLE')
+        logger = _create_logger(resolved)
         config = _create_config(resolved, logger)
         config.load()
         if not config.validate():
+            protocol.error(code='CONFIG_INVALID', message='服务配置无效')
             exit_code = 2
             return exit_code
         manager = _create_manager(resolved, logger)
@@ -276,21 +308,39 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             while not getattr(server, 'started', False) and thread.is_alive() and time.monotonic() < deadline:
                 time.sleep(0.01)
         if errors or not getattr(server, 'started', False):
-            if signal_number is not None:
-                exit_code = _signal_exit_code(signal_number)
+            if errors:
+                if isinstance(errors[0], _StartupSignal):
+                    signal_number = errors[0].signum
+                    return _signal_exit_code(signal_number)
+                first_error = errors[0]
+                exit_code = 3
+                code = 'BIND_FAILED' if _is_bind_error(errors[0]) else 'SERVER_START_FAILED'
+                message = '服务端口绑定失败' if code == 'BIND_FAILED' else '服务启动失败'
+                protocol.error(code=code, message=message)
                 return exit_code
-            raise errors[0] if errors else RuntimeError('服务启动失败')
+            if signal_number is not None or startup_signal['number'] is not None:
+                signal_number = signal_number or startup_signal['number']
+                first_error = _StartupSignal(signal_number)
+                return _signal_exit_code(signal_number)
+            protocol.error(code='SERVER_START_FAILED', message='服务启动失败')
+            return 3
         _socket, actual_port = _actual_socket(server)
         app = _server_app(server)
         if getattr(app.state, 'health_status', None) != 'ready' or not _probe_health(app):
             raise RuntimeError('服务健康检查未就绪')
         launch_token = auth_store.issue_launch_token() if resolved.emit_launch_token else None
-        url = resolved.public_url or f'http://127.0.0.1:{actual_port}/'
-        if resolved.port == 0:
-            url = url.replace(':0/', f':{actual_port}/')
+        parsed_url = urlsplit(resolved.public_url or f'http://127.0.0.1:{actual_port}/')
+        if resolved.port == 0 and parsed_url.port == 0:
+            netloc = parsed_url.hostname or '127.0.0.1'
+            if ':' in netloc:
+                netloc = f'[{netloc}]'
+            netloc = f'{netloc}:{actual_port}'
+            parsed_url = parsed_url._replace(netloc=netloc)
+        query = dict(parse_qsl(parsed_url.query, keep_blank_values=True))
         if launch_token:
-            separator = '&' if '?' in url else '?'
-            url = f'{url}{separator}launch_token={launch_token}'
+            query['launch_token'] = launch_token
+        url = urlunsplit((parsed_url.scheme, parsed_url.netloc, parsed_url.path or '/',
+                          urlencode(query), ''))
         protocol.ready(pid=os.getpid(), bind_host=resolved.host, bind_port=actual_port,
                        url=url, auth_required=bool(resolved.access_token),
                        launch_token_included=launch_token is not None)
@@ -301,17 +351,21 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
         if errors:
             raise errors[0]
         exit_code = _signal_exit_code(signal_number) if signal_number is not None else 0
+    except _StartupSignal as error:
+        first_error = error
+        exit_code = _signal_exit_code(error.signum)
     except ServerConfigError as error:
         first_error = error
         exit_code = error.exit_code
         protocol.error(code=error.code, message=error.safe_message)
     except BaseException as error:
         first_error = error
-        exit_code = 4
+        exit_code = 3 if _is_bind_error(error) else 4
         try:
             if ready_emitted:
                 protocol.stopping(reason='error')
-            protocol.error(code='SERVER_RUNTIME_ERROR', message='服务运行失败')
+            protocol.error(code='BIND_FAILED' if _is_bind_error(error) else 'SERVER_RUNTIME_ERROR',
+                          message='服务端口绑定失败' if _is_bind_error(error) else '服务运行失败')
         except Exception:
             pass
         return exit_code
@@ -333,14 +387,14 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
             lambda: manager.stop() if manager else None,
             lambda: manager.shutdown() if manager else None,
             lambda: auth_store.clear() if auth_store else None,
-            lambda: close_gui_logger(logger),
+            lambda: close_gui_logger(logger) if logger is not None else None,
         ):
             try:
                 action()
             except Exception as error:
                 if cleanup_error is None:
                     cleanup_error = error
-        if cleanup_error is not None and first_error is None:
+        if cleanup_error is not None:
             exit_code = 4
             try:
                 if ready_emitted and not (control and control.stop_requested):
@@ -348,7 +402,8 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
                 protocol.error(code='CLEANUP_FAILED', message='服务清理失败')
             except Exception:
                 pass
-        return exit_code
+
+    return exit_code
 
 
 def run_fastapi_server(options):
