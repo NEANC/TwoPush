@@ -5,6 +5,7 @@
 
 import asyncio
 import errno
+import inspect
 import logging
 import os
 import signal
@@ -66,6 +67,16 @@ def _new_server(app, host, port, control):
     return server
 
 
+def _supported_kwargs(callable_object, kwargs):
+    """按构造签名过滤明确不支持的关键参数。"""
+    signature = inspect.signature(callable_object)
+    parameters = signature.parameters.values()
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return dict(kwargs)
+    supported = {parameter.name for parameter in parameters}
+    return {key: value for key, value in kwargs.items() if key in supported}
+
+
 def _create_config(resolved, logger):
     """创建配置管理器，并兼容不支持临时目录参数的旧替身。"""
     config_kwargs = {
@@ -75,13 +86,7 @@ def _create_config(resolved, logger):
         'non_interactive': True,
         'temp_dir': resolved.temp_dir,
     }
-    try:
-        return ConfigManager(**config_kwargs)
-    except TypeError as error:
-        if 'unexpected keyword argument' not in str(error):
-            raise
-        config_kwargs.pop('temp_dir')
-        return ConfigManager(**config_kwargs)
+    return ConfigManager(**_supported_kwargs(ConfigManager, config_kwargs))
 
 
 def _create_manager(resolved, logger):
@@ -92,13 +97,7 @@ def _create_manager(resolved, logger):
         'logger': logger,
         'terminal_streams': (os.sys.stderr, os.sys.stderr),
     }
-    try:
-        return PushProcessManager(**manager_kwargs)
-    except TypeError as error:
-        if 'unexpected keyword argument' not in str(error):
-            raise
-        manager_kwargs.pop('temp_dir')
-        return PushProcessManager(**manager_kwargs)
+    return PushProcessManager(**_supported_kwargs(PushProcessManager, manager_kwargs))
 
 
 def _cleanup_server(server):
