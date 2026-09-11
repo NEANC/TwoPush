@@ -41,6 +41,16 @@ class ServiceContext:
         self.value = value
 
 
+def _create_logger(resolved):
+    """按解析后的服务日志目录创建日志器。"""
+    return setup_gui_logger(log_dir=resolved.log_root)
+
+
+def _signal_exit_code(signum):
+    """将终止信号映射为命令行退出码。"""
+    return 128 + signum
+
+
 def _prepare_fallback_thread(server, previous_thread, logger):
     """停止首服务线程并以有界时间等待其退出。"""
     server.should_exit = True
@@ -142,15 +152,17 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
     if not options.server_mode:
         raise ValueError('服务入口需要 server_mode')
     protocol = ServerProtocolWriter(protocol_stream or os.sys.stdout)
-    logger = setup_gui_logger()
+    logger = None
     manager = None
     server = None
     control = None
     thread = None
+    signal_number = None
     first_error = None
     old_handlers = {}
     try:
         resolved = resolve_server_options(options, os.environ)
+        logger = _create_logger(resolved)
         from modules.server_options import probe_directory
         probe_directory(resolved.temp_dir, 'TEMP_DIR_UNAVAILABLE')
         probe_directory(resolved.log_root, 'LOG_DIR_UNAVAILABLE')
@@ -179,6 +191,9 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
 
         def stop_from_signal(signum, _frame):
             """记录首个系统信号并请求服务停止。"""
+            nonlocal signal_number
+            if signal_number is None:
+                signal_number = signum
             if not control.stop_requested:
                 control.first_error = 'signal'
             control.stop()
@@ -236,7 +251,7 @@ def _run_fastapi_server(options, protocol_stream=None, open_browser=False):
         if open_browser and launch_token:
             webbrowser.open(url)
         thread.join()
-        return 0
+        return _signal_exit_code(signal_number) if signal_number is not None else 0
     except ServerConfigError as error:
         first_error = error
         protocol.error(code=error.code, message=error.safe_message)
